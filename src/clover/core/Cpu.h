@@ -1,0 +1,103 @@
+//
+// Created by Zack Shrout on 6/28/26.
+// Copyright (c) 2026 BunnySoft. All rights reserved.
+//
+
+#pragma once
+
+#include "clover/core/Timing.h"
+
+#include <cstdint>
+
+namespace clover::core
+{
+    struct bus_t;
+    struct cpu_step_executor_t;
+    struct dma_t;
+    struct interrupt_controller_t;
+    struct ppu_step_result_t;
+
+    struct cpu_state_t
+    {
+        uint16_t pc{ 0 };
+        uint16_t sp{ 0x01ffu };
+        uint16_t a{ 0 };
+        uint16_t x{ 0 };
+        uint16_t y{ 0 };
+        uint16_t d{ 0 };
+        uint8_t p{ 0x34u };
+        uint8_t db{ 0 };
+        uint8_t pb{ 0 };
+        bool emulation_mode{ true };
+    };
+
+    struct cpu_io_t
+    {
+        bool hirq_enabled{ false };
+        bool virq_enabled{ false };
+        bool nmi_enabled{ false };
+        bool irq_enabled{ false };
+        bool nmi_flag{ false };
+        bool irq_flag{ false };
+        bool in_hblank{ false };
+        bool in_vblank{ false };
+        uint8_t nmi_hold_clocks{ 0 };
+        uint8_t irq_hold_clocks{ 0 };
+        uint16_t htime{ 0x01ffu };
+        uint16_t vtime{ 0x01ffu };
+    };
+
+    struct cpu_t
+    {
+    public:
+        void attach_interrupt_controller(interrupt_controller_t& interrupts) noexcept;
+        void power_on() noexcept;
+        void reset() noexcept;
+        [[nodiscard]] uint8_t dma_phase() const noexcept;
+        [[nodiscard]] timing_snapshot_t timing(const video_timing_t& video_timing) const noexcept;
+        [[nodiscard]] timing_snapshot_t delayed_timing(const video_timing_t& video_timing,
+                                                       master_clock_delta_t delay) const noexcept;
+        [[nodiscard]] uint8_t read_register(uint16_t address) noexcept;
+        void write_register(uint16_t address, uint8_t value) noexcept;
+        [[nodiscard]] hardware_slot_owner_t next_slot_owner(const dma_t& dma) const noexcept;
+        [[nodiscard]] cpu_step_result_t step(bus_t& bus,
+                                             const dma_t& dma,
+                                             interrupt_controller_t& interrupts) noexcept;
+        void on_dma_step(const dma_t& dma, interrupt_controller_t& interrupts) noexcept;
+        void on_ppu_step(master_clock_delta_t elapsed_master_clocks,
+                         const video_timing_t& video_timing,
+                         const ppu_step_result_t& ppu_step,
+                         dma_t& dma,
+                         interrupt_controller_t& interrupts) noexcept;
+        [[nodiscard]] const cpu_state_t& state() const noexcept;
+
+    private:
+        [[nodiscard]] bool irq_condition(const timing_snapshot_t& irq_timing,
+                                         const timing_snapshot_t& irq_gate_timing) const noexcept;
+        void repoll_irq_on_register_write(interrupt_controller_t& interrupts) noexcept;
+        void set_waiting(bool waiting) noexcept;
+        void set_stopped(bool stopped) noexcept;
+
+        cpu_state_t _state{};
+        cpu_io_t _io{};
+        master_clock_count_t _master_clock{ 0 };
+        raster_counter_t _counter{};
+        master_clock_delta_t _interrupt_poll_phase{ 0 };
+        timing_snapshot_t _last_timing{};
+        timing_snapshot_t _last_nmi_timing{};
+        timing_snapshot_t _last_irq_timing{};
+        timing_snapshot_t _last_irq_gate_timing{};
+        interrupt_controller_t* _interrupts{ nullptr };
+        bool _irq_condition_valid{ false };
+        bool _dma_active{ false };
+        bool _waiting{ false };
+        bool _wait_wake_idle_pending{ false };
+        bool _stopped{ false };
+        uint16_t _visible_scanlines{ k_ntsc_video_timing.visible_scanlines };
+
+        friend bool execute_system_opcode(uint8_t opcode,
+                                          cpu_t& cpu,
+                                          cpu_state_t& state,
+                                          cpu_step_executor_t& executor) noexcept;
+    };
+}

@@ -1,0 +1,2241 @@
+//
+// Created by Zack Shrout on 6/28/26.
+// Copyright (c) 2026 BunnySoft. All rights reserved.
+//
+
+#include "clover/core/Console.h"
+
+#include <cstdio>
+
+int main()
+{
+    const auto fail = [](const char* checkpoint) -> int
+    {
+        std::fprintf(stderr, "HardwareLoopTest failed at %s\n", checkpoint);
+        return 1;
+    };
+
+    clover::core::console_t console{};
+    console.power_on();
+    console.write_u8(0x7e1234u, 0x4au);
+    console.write_u8(0x7e1235u, 0x7cu);
+    console.write_u8(0x7e2000u, 0x81u);
+    console.write_u8(0x7e2001u, 0x00u);
+    console.write_u8(0x7e2002u, 0x21u);
+    console.write_u8(0x7e2100u, 0x99u);
+
+    console.write_u8(0x004200u, 0x90u);
+    console.write_u8(0x004207u, 0x10u);
+    console.write_u8(0x004208u, 0x00u);
+    console.write_u8(0x004300u, 0x40u);
+    console.write_u8(0x004301u, 0x19u);
+    console.write_u8(0x004302u, 0x00u);
+    console.write_u8(0x004303u, 0x20u);
+    console.write_u8(0x004304u, 0x7eu);
+    console.write_u8(0x004307u, 0x7eu);
+    console.write_u8(0x00420cu, 0x01u);
+    console.write_u8(0x004310u, 0x01u);
+    console.write_u8(0x004311u, 0x18u);
+    console.write_u8(0x004312u, 0x34u);
+    console.write_u8(0x004313u, 0x12u);
+    console.write_u8(0x004314u, 0x7eu);
+    console.write_u8(0x004315u, 0x02u);
+    console.write_u8(0x004316u, 0x00u);
+    console.write_u8(0x004317u, 0x40u);
+    console.write_u8(0x004318u, 0x78u);
+    console.write_u8(0x004319u, 0x56u);
+    console.write_u8(0x00431au, 0x81u);
+    console.write_u8(0x00431bu, 0xa5u);
+    console.write_u8(0x00420bu, 0x02u);
+
+    if (console.video_standard() != clover::core::video_standard_t::ntsc)
+        return fail("video_standard");
+
+    if (console.video_timing().scanlines_per_frame != 262)
+        return fail("scanlines_per_frame");
+
+    if (console.read_u8(0x004200u) != 0x90u)
+        return fail("nmitimen_readback");
+
+    if (console.read_u8(0x00420cu) != 0x01u)
+        return fail("hdmaen_readback");
+
+    if ((console.read_u8(0x004212u) & 0x40u) == 0)
+        return fail("hvbjoy_startup");
+
+    if (console.read_u8(0x004300u) != 0x40u
+        || console.read_u8(0x004301u) != 0x19u
+        || console.read_u8(0x004302u) != 0x00u
+        || console.read_u8(0x004303u) != 0x20u
+        || console.read_u8(0x004304u) != 0x7eu
+        || console.read_u8(0x004307u) != 0x7eu
+        || console.read_u8(0x004310u) != 0x01u
+        || console.read_u8(0x004311u) != 0x18u
+        || console.read_u8(0x004312u) != 0x34u
+        || console.read_u8(0x004313u) != 0x12u
+        || console.read_u8(0x004314u) != 0x7eu
+        || console.read_u8(0x004315u) != 0x02u
+        || console.read_u8(0x004316u) != 0x00u
+        || console.read_u8(0x004317u) != 0x40u
+        || console.read_u8(0x004318u) != 0x78u
+        || console.read_u8(0x004319u) != 0x56u
+        || console.read_u8(0x00431au) != 0x81u
+        || console.read_u8(0x00431bu) != 0xa5u
+        || console.read_u8(0x00431fu) != 0xa5u)
+    {
+        return fail("dma_register_roundtrip");
+    }
+
+    if (console.read_u8(0x00420bu) != 0x02u)
+        return fail("mdmaen_readback");
+
+    const clover::core::timing_snapshot_t initial_timing{ console.timing() };
+    const clover::core::timing_snapshot_t initial_cpu_timing{ console.cpu_timing() };
+    if (initial_timing.raster.scanline != 0 || initial_timing.raster.dot != 0)
+        return fail("initial_timing");
+
+    if (initial_cpu_timing.raster.scanline != 0 || initial_cpu_timing.raster.dot != 0)
+        return fail("initial_cpu_timing");
+
+    const clover::core::hardware_step_result_t first_step{ console.step_hardware() };
+    if (first_step.elapsed_master_clocks == 0)
+        return fail("first_step");
+
+    if (first_step.slot_owner != clover::core::hardware_slot_owner_t::cpu)
+        return fail("cpu_owns_dma_activation_edge");
+
+    const clover::core::timing_snapshot_t first_cpu_timing{ console.cpu_timing() };
+    if (first_cpu_timing.master_clock != console.timing().master_clock)
+        return fail("first_cpu_timing");
+
+    const clover::core::hardware_timing_snapshot_t first_snapshot{ console.capture_timing_snapshot() };
+    if (first_snapshot.cpu_timing.master_clock != first_snapshot.ppu_timing.master_clock)
+        return fail("first_snapshot");
+
+    bool saw_general_dma_slot{ first_step.slot_owner == clover::core::hardware_slot_owner_t::dma };
+    uint32_t general_dma_slots{ saw_general_dma_slot ? 1u : 0u };
+    while (console.general_dma_pending())
+    {
+        const clover::core::hardware_step_result_t step{ console.step_hardware() };
+        saw_general_dma_slot = saw_general_dma_slot
+            || step.slot_owner == clover::core::hardware_slot_owner_t::dma;
+        general_dma_slots += step.slot_owner == clover::core::hardware_slot_owner_t::dma ? 1u : 0u;
+    }
+
+    if (!saw_general_dma_slot)
+        return fail("general_dma_slot");
+
+    if (general_dma_slots < 2u)
+        return fail("general_dma_multistep");
+
+    if (console.read_u8(0x002118u) != 0x4au || console.read_u8(0x002119u) != 0x7cu)
+        return fail("general_dma_result");
+
+    bool saw_hblank{ false };
+    bool saw_hdma_trigger{ false };
+    bool saw_dma_slot{ false };
+    bool saw_irq_status{ false };
+    bool saw_irq_status_clear{ false };
+    while (console.timing().raster.scanline == 0)
+    {
+        const clover::core::hardware_step_result_t step{ console.step_hardware() };
+        saw_hblank = saw_hblank || step.ppu.entered_hblank;
+        saw_hdma_trigger = saw_hdma_trigger || step.ppu.hdma_transfer_triggered;
+        saw_dma_slot = saw_dma_slot || step.slot_owner == clover::core::hardware_slot_owner_t::dma;
+        const uint8_t timeup{ console.read_u8(0x004211u) };
+        saw_irq_status = saw_irq_status || (timeup & 0x80u) != 0;
+        saw_irq_status_clear = saw_irq_status_clear || (saw_irq_status && (timeup & 0x80u) == 0);
+        const clover::core::hardware_timing_snapshot_t snapshot{ console.capture_timing_snapshot() };
+        if (snapshot.cpu_timing_irq_delay.master_clock > snapshot.cpu_timing.master_clock)
+            return fail("snapshot_delay_order");
+        if (saw_hblank && saw_hdma_trigger)
+            break;
+    }
+
+    if (!saw_hblank || !saw_hdma_trigger)
+        return fail("hblank_hdma_trigger");
+
+    if (!saw_irq_status || !saw_irq_status_clear)
+        return fail("irq_status");
+
+    if (console.read_u8(0x004308u) != 0x03u || console.read_u8(0x004309u) != 0x20u)
+        return fail("hdma_table_address");
+
+    if (!console.hdma_pending())
+        return fail("hdma_pending");
+
+    while (console.hdma_pending())
+    {
+        const clover::core::hardware_step_result_t step{ console.step_hardware() };
+        saw_dma_slot = saw_dma_slot || step.slot_owner == clover::core::hardware_slot_owner_t::dma;
+    }
+
+    if (!saw_dma_slot)
+        return fail("hdma_dma_slot");
+
+    if (console.dma_activity() != clover::core::dma_activity_t::idle)
+        return fail("dma_idle");
+
+    if (console.read_u8(0x002119u) != 0x99u)
+        return fail("hdma_result");
+
+    if (console.read_u8(0x00430au) != 0x00u)
+        return fail("hdma_line_counter");
+
+    console.run_scanline();
+    const clover::core::timing_snapshot_t after_scanline{ console.timing() };
+    const clover::core::timing_snapshot_t after_scanline_cpu{ console.cpu_timing() };
+    if (after_scanline.raster.scanline == initial_timing.raster.scanline)
+        return fail("scanline_advanced");
+
+    if (after_scanline_cpu.raster.scanline != after_scanline.raster.scanline)
+        return fail("scanline_cpu_timing");
+
+    bool saw_vblank{ false };
+    bool saw_nmi{ false };
+    bool saw_rdnmi{ false };
+    bool saw_rdnmi_clear{ false };
+    bool saw_hvbjoy_vblank{ false };
+    while (console.frame_index() == 0)
+    {
+        const clover::core::hardware_step_result_t step{ console.step_hardware() };
+        saw_vblank = saw_vblank || step.ppu.entered_vblank;
+        saw_nmi = saw_nmi || console.interrupts().nmi_pending || console.interrupts().nmi_line;
+        if (saw_vblank)
+        {
+            const uint8_t rdnmi{ console.read_u8(0x004210u) };
+            saw_rdnmi = saw_rdnmi || (rdnmi & 0x80u) != 0;
+            saw_rdnmi_clear = saw_rdnmi_clear || (saw_rdnmi && (rdnmi & 0x80u) == 0);
+            saw_hvbjoy_vblank = saw_hvbjoy_vblank || (console.read_u8(0x004212u) & 0x80u) != 0;
+        }
+    }
+
+    if (!saw_vblank || !saw_nmi)
+        return fail("vblank_nmi");
+
+    if (!saw_rdnmi)
+        return fail("rdnmi_seen");
+
+    if (!saw_rdnmi_clear)
+        return fail("rdnmi_clear");
+
+    if (!saw_hvbjoy_vblank)
+        return fail("hvbjoy_vblank");
+
+    if (console.frame_index() != 1)
+        return fail("frame_index");
+
+    clover::core::console_t ntsc_vblank_console{};
+    ntsc_vblank_console.power_on();
+    uint16_t ntsc_vblank_scanline{ 0 };
+    while (true)
+    {
+        const clover::core::hardware_step_result_t step{ ntsc_vblank_console.step_hardware() };
+        if (!step.ppu.entered_vblank)
+            continue;
+
+        ntsc_vblank_scanline = step.ppu.timing.raster.scanline;
+        break;
+    }
+
+    if (ntsc_vblank_scanline != ntsc_vblank_console.video_timing().visible_scanlines)
+        return fail("ntsc_default_vblank_scanline");
+
+    clover::core::console_t overscan_vblank_console{};
+    overscan_vblank_console.power_on();
+    overscan_vblank_console.write_u8(0x002133u, 0x04u);
+    uint16_t overscan_vblank_scanline{ 0 };
+    while (true)
+    {
+        const clover::core::hardware_step_result_t step{ overscan_vblank_console.step_hardware() };
+        if (!step.ppu.entered_vblank)
+            continue;
+
+        overscan_vblank_scanline = step.ppu.timing.raster.scanline;
+        break;
+    }
+
+    if (overscan_vblank_scanline != overscan_vblank_console.video_timing().overscan_visible_scanlines)
+        return fail("overscan_vblank_scanline");
+
+    const clover::core::timing_snapshot_t after_frame{ console.timing() };
+    const clover::core::timing_snapshot_t after_frame_cpu{ console.cpu_timing() };
+    if (after_frame.raster.scanline > 1)
+        return fail("post_frame_timing");
+
+    if (after_frame_cpu.raster.scanline != after_frame.raster.scanline)
+        return fail("post_frame_cpu_timing");
+
+    clover::core::console_t timing_console{};
+    timing_console.power_on();
+    while (timing_console.timing().raster.scanline < 240)
+        static_cast<void>(timing_console.step_hardware());
+
+    if (timing_console.current_scanline_clocks() != timing_console.video_timing().master_clocks_per_scanline)
+        return fail("even_field_scanline_240");
+
+    while (timing_console.frame_index() == 0)
+        static_cast<void>(timing_console.step_hardware());
+
+    while (timing_console.timing().raster.scanline < 240)
+        static_cast<void>(timing_console.step_hardware());
+
+    if (timing_console.current_scanline_clocks() != timing_console.video_timing().short_scanline_clocks)
+        return fail("odd_field_scanline_240");
+
+    clover::core::console_t hblank_console{};
+    hblank_console.power_on();
+    bool saw_midline_non_hblank{ false };
+    while (hblank_console.timing().raster.scanline == 0 && hblank_console.timing().raster.dot < 1096)
+    {
+        static_cast<void>(hblank_console.step_hardware());
+        const clover::core::timing_snapshot_t timing{ hblank_console.timing() };
+        const uint8_t hvbjoy{ hblank_console.read_u8(0x004212u) };
+        if (timing.raster.dot > 2 && timing.raster.dot < 1096 && (hvbjoy & 0x40u) == 0)
+            saw_midline_non_hblank = true;
+    }
+
+    if (!saw_midline_non_hblank)
+        return fail("hvbjoy_midline");
+
+    if ((hblank_console.read_u8(0x004212u) & 0x40u) == 0)
+        return fail("hvbjoy_hblank_threshold");
+
+    clover::core::console_t hirq_console{};
+    hirq_console.power_on();
+    hirq_console.write_u8(0x004200u, 0x10u);
+    hirq_console.write_u8(0x004207u, 0x10u);
+    hirq_console.write_u8(0x004208u, 0x00u);
+
+    while ((hirq_console.read_u8(0x004211u) & 0x80u) == 0)
+    {
+        if (hirq_console.timing().raster.scanline != 0)
+            return fail("hirq_scanline");
+
+        static_cast<void>(hirq_console.step_hardware());
+    }
+
+    if (hirq_console.timing().raster.dot < 68)
+        return fail("hirq_target_dot");
+
+    clover::core::console_t hirq_entry_console{};
+    hirq_entry_console.power_on();
+    hirq_entry_console.write_u8(0x000000u, 0x58u);
+    hirq_entry_console.write_u8(0x000001u, 0xeau);
+    hirq_entry_console.write_u8(0x000002u, 0xeau);
+    hirq_entry_console.write_u8(0x000003u, 0xeau);
+    hirq_entry_console.write_u8(0x001234u, 0xeau);
+    hirq_entry_console.write_u8(0x00fffeu, 0x34u);
+    hirq_entry_console.write_u8(0x00ffffu, 0x12u);
+    hirq_entry_console.write_u8(0x004207u, 0x10u);
+    hirq_entry_console.write_u8(0x004208u, 0x00u);
+    hirq_entry_console.write_u8(0x004200u, 0x10u);
+
+    static_cast<void>(hirq_entry_console.step_hardware());
+    if (hirq_entry_console.cpu_state().p != 0x30u)
+        return fail("hirq_cli");
+
+    bool entered_hardware_irq{ false };
+    for (int step_index{ 0 }; step_index < 128; ++step_index)
+    {
+        static_cast<void>(hirq_entry_console.step_hardware());
+        entered_hardware_irq = hirq_entry_console.cpu_state().pc == 0x1234u;
+        if (entered_hardware_irq)
+            break;
+    }
+
+    if (!entered_hardware_irq)
+        return fail("hirq_entry");
+
+    if (hirq_entry_console.read_u8(0x0001fdu) != 0x20u)
+        return fail("hirq_stacked_status");
+
+    clover::core::console_t hirq_cli_deferral_console{};
+    hirq_cli_deferral_console.power_on();
+    hirq_cli_deferral_console.write_u8(0x000000u, 0x58u);
+    hirq_cli_deferral_console.write_u8(0x000001u, 0xeau);
+    hirq_cli_deferral_console.write_u8(0x000002u, 0xeau);
+    hirq_cli_deferral_console.write_u8(0x001234u, 0xeau);
+    hirq_cli_deferral_console.write_u8(0x00fffeu, 0x34u);
+    hirq_cli_deferral_console.write_u8(0x00ffffu, 0x12u);
+    hirq_cli_deferral_console.write_u8(0x004207u, 0x00u);
+    hirq_cli_deferral_console.write_u8(0x004208u, 0x00u);
+    hirq_cli_deferral_console.write_u8(0x004200u, 0x10u);
+
+    static_cast<void>(hirq_cli_deferral_console.step_hardware());
+    static_cast<void>(hirq_cli_deferral_console.step_hardware());
+    if (hirq_cli_deferral_console.cpu_state().pc != 0x0002u)
+        return fail("hirq_cli_defers_irq");
+
+    bool entered_deferred_irq{ false };
+    for (int step_index{ 0 }; step_index < 32; ++step_index)
+    {
+        static_cast<void>(hirq_cli_deferral_console.step_hardware());
+        entered_deferred_irq = hirq_cli_deferral_console.cpu_state().pc == 0x1234u;
+        if (entered_deferred_irq)
+            break;
+    }
+
+    if (!entered_deferred_irq)
+        return fail("hirq_cli_deferred_entry");
+
+    clover::core::console_t virq_console{};
+    virq_console.power_on();
+    while (virq_console.capture_timing_snapshot().cpu_timing_irq_delay.raster.scanline == 0)
+        static_cast<void>(virq_console.step_hardware());
+
+    const clover::core::hardware_timing_snapshot_t virq_snapshot{
+        virq_console.capture_timing_snapshot()
+    };
+    virq_console.write_u8(0x004209u, static_cast<uint8_t>(virq_snapshot.cpu_timing_irq_delay.raster.scanline & 0x00ffu));
+    virq_console.write_u8(0x00420au, static_cast<uint8_t>(virq_snapshot.cpu_timing_irq_delay.raster.scanline >> 8u));
+    virq_console.write_u8(0x004200u, 0x20u);
+
+    if ((virq_console.read_u8(0x004211u) & 0x80u) == 0)
+        return fail("virq_immediate_repoll");
+
+    clover::core::console_t nmi_console{};
+    nmi_console.power_on();
+    while (!nmi_console.capture_timing_snapshot().cpu_timing_nmi_delay.in_vblank)
+        static_cast<void>(nmi_console.step_hardware());
+
+    nmi_console.write_u8(0x004200u, 0x80u);
+    if ((nmi_console.read_u8(0x004210u) & 0x80u) == 0)
+        return fail("nmi_immediate_enable");
+
+    clover::core::console_t cpu_program_console{};
+    cpu_program_console.power_on();
+    cpu_program_console.write_u8(0x000000u, 0xa9u);
+    cpu_program_console.write_u8(0x000001u, 0x34u);
+    cpu_program_console.write_u8(0x000002u, 0xaau);
+    cpu_program_console.write_u8(0x000003u, 0xe8u);
+    cpu_program_console.write_u8(0x000004u, 0x18u);
+    cpu_program_console.write_u8(0x000005u, 0xfbu);
+    cpu_program_console.write_u8(0x000006u, 0xc2u);
+    cpu_program_console.write_u8(0x000007u, 0x30u);
+    cpu_program_console.write_u8(0x000008u, 0xa9u);
+    cpu_program_console.write_u8(0x000009u, 0x78u);
+    cpu_program_console.write_u8(0x00000au, 0x56u);
+    cpu_program_console.write_u8(0x00000bu, 0xa2u);
+    cpu_program_console.write_u8(0x00000cu, 0xbcu);
+    cpu_program_console.write_u8(0x00000du, 0x9au);
+    cpu_program_console.write_u8(0x00000eu, 0xe2u);
+    cpu_program_console.write_u8(0x00000fu, 0x10u);
+    cpu_program_console.write_u8(0x000010u, 0x80u);
+    cpu_program_console.write_u8(0x000011u, 0x01u);
+    cpu_program_console.write_u8(0x000012u, 0xeau);
+    cpu_program_console.write_u8(0x000013u, 0xeau);
+
+    static_cast<void>(cpu_program_console.step_hardware());
+    if (cpu_program_console.cpu_state().a != 0x0034u
+        || cpu_program_console.cpu_state().pc != 0x0002u
+        || (cpu_program_console.cpu_state().p & 0x02u) != 0)
+    {
+        return fail("cpu_lda_imm_8bit");
+    }
+
+    static_cast<void>(cpu_program_console.step_hardware());
+    if (cpu_program_console.cpu_state().x != 0x0034u
+        || cpu_program_console.cpu_state().pc != 0x0003u)
+    {
+        return fail("cpu_tax");
+    }
+
+    static_cast<void>(cpu_program_console.step_hardware());
+    if (cpu_program_console.cpu_state().x != 0x0035u
+        || cpu_program_console.cpu_state().pc != 0x0004u)
+    {
+        return fail("cpu_inx_8bit");
+    }
+
+    static_cast<void>(cpu_program_console.step_hardware());
+    if ((cpu_program_console.cpu_state().p & 0x01u) != 0
+        || cpu_program_console.cpu_state().pc != 0x0005u)
+    {
+        return fail("cpu_clc");
+    }
+
+    static_cast<void>(cpu_program_console.step_hardware());
+    if (cpu_program_console.cpu_state().emulation_mode
+        || cpu_program_console.cpu_state().pc != 0x0006u
+        || (cpu_program_console.cpu_state().p & 0x01u) == 0)
+    {
+        return fail("cpu_xce_native");
+    }
+
+    static_cast<void>(cpu_program_console.step_hardware());
+    if ((cpu_program_console.cpu_state().p & 0x30u) != 0x00u
+        || cpu_program_console.cpu_state().pc != 0x0008u)
+    {
+        return fail("cpu_rep_width");
+    }
+
+    static_cast<void>(cpu_program_console.step_hardware());
+    if (cpu_program_console.cpu_state().a != 0x5678u
+        || cpu_program_console.cpu_state().pc != 0x000bu)
+    {
+        return fail("cpu_lda_imm_16bit");
+    }
+
+    static_cast<void>(cpu_program_console.step_hardware());
+    if (cpu_program_console.cpu_state().x != 0x9abcu
+        || cpu_program_console.cpu_state().pc != 0x000eu)
+    {
+        return fail("cpu_ldx_imm_16bit");
+    }
+
+    static_cast<void>(cpu_program_console.step_hardware());
+    if ((cpu_program_console.cpu_state().p & 0x10u) == 0
+        || cpu_program_console.cpu_state().x != 0x00bcu
+        || cpu_program_console.cpu_state().pc != 0x0010u)
+    {
+        return fail("cpu_sep_index_width");
+    }
+
+    static_cast<void>(cpu_program_console.step_hardware());
+    if (cpu_program_console.cpu_state().pc != 0x0013u)
+        return fail("cpu_bra");
+
+    static_cast<void>(cpu_program_console.step_hardware());
+    if (cpu_program_console.cpu_state().pc != 0x0014u)
+        return fail("cpu_nop_after_bra");
+
+    clover::core::console_t cpu_substrate_console{};
+    cpu_substrate_console.power_on();
+    cpu_substrate_console.write_u8(0x000000u, 0xa9u);
+    cpu_substrate_console.write_u8(0x000001u, 0x12u);
+    cpu_substrate_console.write_u8(0x000002u, 0x85u);
+    cpu_substrate_console.write_u8(0x000003u, 0x40u);
+    cpu_substrate_console.write_u8(0x000004u, 0xa9u);
+    cpu_substrate_console.write_u8(0x000005u, 0x00u);
+    cpu_substrate_console.write_u8(0x000006u, 0xa5u);
+    cpu_substrate_console.write_u8(0x000007u, 0x40u);
+    cpu_substrate_console.write_u8(0x000008u, 0x48u);
+    cpu_substrate_console.write_u8(0x000009u, 0xa9u);
+    cpu_substrate_console.write_u8(0x00000au, 0x00u);
+    cpu_substrate_console.write_u8(0x00000bu, 0x68u);
+    cpu_substrate_console.write_u8(0x00000cu, 0x18u);
+    cpu_substrate_console.write_u8(0x00000du, 0x69u);
+    cpu_substrate_console.write_u8(0x00000eu, 0x05u);
+    cpu_substrate_console.write_u8(0x00000fu, 0x8du);
+    cpu_substrate_console.write_u8(0x000010u, 0x80u);
+    cpu_substrate_console.write_u8(0x000011u, 0x00u);
+    cpu_substrate_console.write_u8(0x000012u, 0xa9u);
+    cpu_substrate_console.write_u8(0x000013u, 0x00u);
+    cpu_substrate_console.write_u8(0x000014u, 0xadu);
+    cpu_substrate_console.write_u8(0x000015u, 0x80u);
+    cpu_substrate_console.write_u8(0x000016u, 0x00u);
+    cpu_substrate_console.write_u8(0x000017u, 0xf8u);
+    cpu_substrate_console.write_u8(0x000018u, 0xa9u);
+    cpu_substrate_console.write_u8(0x000019u, 0x09u);
+    cpu_substrate_console.write_u8(0x00001au, 0x18u);
+    cpu_substrate_console.write_u8(0x00001bu, 0x69u);
+    cpu_substrate_console.write_u8(0x00001cu, 0x01u);
+    cpu_substrate_console.write_u8(0x00001du, 0xd8u);
+    cpu_substrate_console.write_u8(0x00001eu, 0xeau);
+
+    for (int step_index{ 0 }; step_index < 2; ++step_index)
+        static_cast<void>(cpu_substrate_console.step_hardware());
+
+    if (cpu_substrate_console.read_u8(0x000040u) != 0x12u)
+        return fail("cpu_direct_store");
+
+    for (int step_index{ 0 }; step_index < 2; ++step_index)
+        static_cast<void>(cpu_substrate_console.step_hardware());
+
+    if (cpu_substrate_console.cpu_state().a != 0x0012u)
+        return fail("cpu_direct_load");
+
+    for (int step_index{ 0 }; step_index < 3; ++step_index)
+        static_cast<void>(cpu_substrate_console.step_hardware());
+
+    if (cpu_substrate_console.cpu_state().a != 0x0012u)
+        return fail("cpu_stack_pull");
+
+    for (int step_index{ 0 }; step_index < 2; ++step_index)
+        static_cast<void>(cpu_substrate_console.step_hardware());
+
+    if (cpu_substrate_console.cpu_state().a != 0x0017u)
+        return fail("cpu_adc_binary_8bit");
+
+    for (int step_index{ 0 }; step_index < 3; ++step_index)
+        static_cast<void>(cpu_substrate_console.step_hardware());
+
+    if (cpu_substrate_console.cpu_state().a != 0x0017u
+        || cpu_substrate_console.read_u8(0x000080u) != 0x17u)
+    {
+        return fail("cpu_absolute_store_load");
+    }
+
+    for (int step_index{ 0 }; step_index < 5; ++step_index)
+        static_cast<void>(cpu_substrate_console.step_hardware());
+
+    if (cpu_substrate_console.cpu_state().a != 0x0010u
+        || (cpu_substrate_console.cpu_state().p & 0x08u) != 0)
+    {
+        return fail("cpu_adc_decimal_8bit");
+    }
+
+    clover::core::console_t cpu_decimal_console{};
+    cpu_decimal_console.power_on();
+    cpu_decimal_console.write_u8(0x000000u, 0x18u);
+    cpu_decimal_console.write_u8(0x000001u, 0xfbu);
+    cpu_decimal_console.write_u8(0x000002u, 0xc2u);
+    cpu_decimal_console.write_u8(0x000003u, 0x20u);
+    cpu_decimal_console.write_u8(0x000004u, 0xa9u);
+    cpu_decimal_console.write_u8(0x000005u, 0x09u);
+    cpu_decimal_console.write_u8(0x000006u, 0x00u);
+    cpu_decimal_console.write_u8(0x000007u, 0xf8u);
+    cpu_decimal_console.write_u8(0x000008u, 0x18u);
+    cpu_decimal_console.write_u8(0x000009u, 0x69u);
+    cpu_decimal_console.write_u8(0x00000au, 0x01u);
+    cpu_decimal_console.write_u8(0x00000bu, 0x00u);
+    cpu_decimal_console.write_u8(0x00000cu, 0xd8u);
+    cpu_decimal_console.write_u8(0x00000du, 0xeau);
+
+    for (int step_index{ 0 }; step_index < 8; ++step_index)
+        static_cast<void>(cpu_decimal_console.step_hardware());
+
+    if (cpu_decimal_console.cpu_state().a != 0x0010u
+        || cpu_decimal_console.cpu_state().emulation_mode
+        || (cpu_decimal_console.cpu_state().p & 0x08u) != 0)
+    {
+        return fail("cpu_adc_decimal_16bit");
+    }
+
+    clover::core::console_t cpu_control_console{};
+    cpu_control_console.power_on();
+    cpu_control_console.write_u8(0x000000u, 0x38u);
+    cpu_control_console.write_u8(0x000001u, 0xa9u);
+    cpu_control_console.write_u8(0x000002u, 0x15u);
+    cpu_control_console.write_u8(0x000003u, 0xe9u);
+    cpu_control_console.write_u8(0x000004u, 0x05u);
+    cpu_control_console.write_u8(0x000005u, 0x29u);
+    cpu_control_console.write_u8(0x000006u, 0x0fu);
+    cpu_control_console.write_u8(0x000007u, 0x09u);
+    cpu_control_console.write_u8(0x000008u, 0x80u);
+    cpu_control_console.write_u8(0x000009u, 0x49u);
+    cpu_control_console.write_u8(0x00000au, 0x8fu);
+    cpu_control_console.write_u8(0x00000bu, 0xc9u);
+    cpu_control_console.write_u8(0x00000cu, 0x0fu);
+    cpu_control_console.write_u8(0x00000du, 0x08u);
+    cpu_control_console.write_u8(0x00000eu, 0x18u);
+    cpu_control_console.write_u8(0x00000fu, 0x28u);
+    cpu_control_console.write_u8(0x000010u, 0x20u);
+    cpu_control_console.write_u8(0x000011u, 0x20u);
+    cpu_control_console.write_u8(0x000012u, 0x00u);
+    cpu_control_console.write_u8(0x000013u, 0xeau);
+    cpu_control_console.write_u8(0x000020u, 0xa2u);
+    cpu_control_console.write_u8(0x000021u, 0x44u);
+    cpu_control_console.write_u8(0x000022u, 0xdau);
+    cpu_control_console.write_u8(0x000023u, 0xa2u);
+    cpu_control_console.write_u8(0x000024u, 0x00u);
+    cpu_control_console.write_u8(0x000025u, 0xfau);
+    cpu_control_console.write_u8(0x000026u, 0xe0u);
+    cpu_control_console.write_u8(0x000027u, 0x44u);
+    cpu_control_console.write_u8(0x000028u, 0x60u);
+
+    static_cast<void>(cpu_control_console.step_hardware());
+    if ((cpu_control_console.cpu_state().p & 0x01u) == 0)
+        return fail("cpu_sec");
+
+    for (int step_index{ 0 }; step_index < 6; ++step_index)
+        static_cast<void>(cpu_control_console.step_hardware());
+
+    if (cpu_control_console.cpu_state().a != 0x000fu
+        || (cpu_control_console.cpu_state().p & 0x01u) == 0
+        || (cpu_control_console.cpu_state().p & 0x02u) == 0)
+    {
+        return fail("cpu_logic_compare_sbc");
+    }
+
+    static_cast<void>(cpu_control_console.step_hardware());
+    const uint8_t pushed_status{ cpu_control_console.read_u8(0x0001ffu) };
+    if (pushed_status != cpu_control_console.cpu_state().p)
+        return fail("cpu_php");
+
+    for (int step_index{ 0 }; step_index < 3; ++step_index)
+        static_cast<void>(cpu_control_console.step_hardware());
+
+    if (cpu_control_console.cpu_state().pc != 0x0020u)
+        return fail("cpu_jsr");
+
+    for (int step_index{ 0 }; step_index < 5; ++step_index)
+        static_cast<void>(cpu_control_console.step_hardware());
+
+    if (cpu_control_console.cpu_state().x != 0x0044u
+        || (cpu_control_console.cpu_state().p & 0x01u) == 0
+        || (cpu_control_console.cpu_state().p & 0x02u) == 0)
+    {
+        return fail("cpu_stack_index_compare");
+    }
+
+    static_cast<void>(cpu_control_console.step_hardware());
+    if (cpu_control_console.cpu_state().pc != 0x0013u)
+        return fail("cpu_rts");
+
+    static_cast<void>(cpu_control_console.step_hardware());
+    if (cpu_control_console.cpu_state().pc != 0x0014u)
+        return fail("cpu_post_rts_nop");
+
+    clover::core::console_t cpu_special_console{};
+    cpu_special_console.power_on();
+    cpu_special_console.write_u8(0x000000u, 0x42u);
+    cpu_special_console.write_u8(0x000001u, 0x99u);
+    cpu_special_console.write_u8(0x000002u, 0x38u);
+    cpu_special_console.write_u8(0x000003u, 0xfbu);
+    cpu_special_console.write_u8(0x000004u, 0xc2u);
+    cpu_special_console.write_u8(0x000005u, 0x20u);
+    cpu_special_console.write_u8(0x000006u, 0xa9u);
+    cpu_special_console.write_u8(0x000007u, 0x34u);
+    cpu_special_console.write_u8(0x000008u, 0x12u);
+    cpu_special_console.write_u8(0x000009u, 0xebu);
+
+    static_cast<void>(cpu_special_console.step_hardware());
+    if (cpu_special_console.cpu_state().pc != 0x0002u)
+        return fail("cpu_wdm");
+
+    for (int step_index{ 0 }; step_index < 6; ++step_index)
+        static_cast<void>(cpu_special_console.step_hardware());
+
+    if (cpu_special_console.cpu_state().a != 0x3412u
+        || (cpu_special_console.cpu_state().p & 0x02u) != 0
+        || (cpu_special_console.cpu_state().p & 0x80u) != 0)
+    {
+        return fail("cpu_xba");
+    }
+
+    clover::core::console_t cpu_stp_console{};
+    cpu_stp_console.power_on();
+    cpu_stp_console.write_u8(0x000000u, 0xdbu);
+    cpu_stp_console.write_u8(0x000001u, 0xeau);
+
+    static_cast<void>(cpu_stp_console.step_hardware());
+    const clover::core::master_clock_count_t stopped_clock_before{ cpu_stp_console.master_clock() };
+    static_cast<void>(cpu_stp_console.step_hardware());
+    static_cast<void>(cpu_stp_console.step_hardware());
+    if (cpu_stp_console.cpu_state().pc != 0x0001u
+        || cpu_stp_console.master_clock() <= stopped_clock_before)
+    {
+        return fail("cpu_stp");
+    }
+
+    clover::core::console_t cpu_mvn_console{};
+    cpu_mvn_console.power_on();
+    cpu_mvn_console.write_u8(0x000000u, 0xa2u);
+    cpu_mvn_console.write_u8(0x000001u, 0x00u);
+    cpu_mvn_console.write_u8(0x000002u, 0xa0u);
+    cpu_mvn_console.write_u8(0x000003u, 0x00u);
+    cpu_mvn_console.write_u8(0x000004u, 0xa9u);
+    cpu_mvn_console.write_u8(0x000005u, 0x01u);
+    cpu_mvn_console.write_u8(0x000006u, 0x54u);
+    cpu_mvn_console.write_u8(0x000007u, 0x7fu);
+    cpu_mvn_console.write_u8(0x000008u, 0x7eu);
+    cpu_mvn_console.write_u8(0x7e0000u, 0xaau);
+    cpu_mvn_console.write_u8(0x7e0001u, 0xbbu);
+
+    for (int step_index{ 0 }; step_index < 5; ++step_index)
+        static_cast<void>(cpu_mvn_console.step_hardware());
+
+    if (cpu_mvn_console.read_u8(0x7f0000u) != 0xaau
+        || cpu_mvn_console.read_u8(0x7f0001u) != 0xbbu
+        || cpu_mvn_console.cpu_state().a != 0xffffu
+        || cpu_mvn_console.cpu_state().x != 0x0002u
+        || cpu_mvn_console.cpu_state().y != 0x0002u
+        || cpu_mvn_console.cpu_state().db != 0x7fu)
+    {
+        return fail("cpu_mvn");
+    }
+
+    clover::core::console_t cpu_mvp_console{};
+    cpu_mvp_console.power_on();
+    cpu_mvp_console.write_u8(0x000000u, 0xa2u);
+    cpu_mvp_console.write_u8(0x000001u, 0x01u);
+    cpu_mvp_console.write_u8(0x000002u, 0xa0u);
+    cpu_mvp_console.write_u8(0x000003u, 0x01u);
+    cpu_mvp_console.write_u8(0x000004u, 0xa9u);
+    cpu_mvp_console.write_u8(0x000005u, 0x01u);
+    cpu_mvp_console.write_u8(0x000006u, 0x44u);
+    cpu_mvp_console.write_u8(0x000007u, 0x7fu);
+    cpu_mvp_console.write_u8(0x000008u, 0x7eu);
+    cpu_mvp_console.write_u8(0x7e0000u, 0x11u);
+    cpu_mvp_console.write_u8(0x7e0001u, 0x22u);
+
+    for (int step_index{ 0 }; step_index < 5; ++step_index)
+        static_cast<void>(cpu_mvp_console.step_hardware());
+
+    if (cpu_mvp_console.read_u8(0x7f0000u) != 0x11u
+        || cpu_mvp_console.read_u8(0x7f0001u) != 0x22u
+        || cpu_mvp_console.cpu_state().a != 0xffffu
+        || cpu_mvp_console.cpu_state().x != 0x00ffu
+        || cpu_mvp_console.cpu_state().y != 0x00ffu
+        || cpu_mvp_console.cpu_state().db != 0x7fu)
+    {
+        return fail("cpu_mvp");
+    }
+
+    clover::core::console_t cpu_wai_console{};
+    cpu_wai_console.power_on();
+    cpu_wai_console.write_u8(0x000000u, 0x58u);
+    cpu_wai_console.write_u8(0x000001u, 0xcbu);
+    cpu_wai_console.write_u8(0x000002u, 0xeau);
+    cpu_wai_console.write_u8(0x001234u, 0xeau);
+    cpu_wai_console.write_u8(0x00fffeu, 0x34u);
+    cpu_wai_console.write_u8(0x00ffffu, 0x12u);
+    cpu_wai_console.write_u8(0x004207u, 0x10u);
+    cpu_wai_console.write_u8(0x004208u, 0x00u);
+    cpu_wai_console.write_u8(0x004200u, 0x10u);
+
+    static_cast<void>(cpu_wai_console.step_hardware());
+    static_cast<void>(cpu_wai_console.step_hardware());
+
+    bool saw_post_wake_idle{ false };
+    bool woke_on_irq{ false };
+    for (int step_index{ 0 }; step_index < 128; ++step_index)
+    {
+        static_cast<void>(cpu_wai_console.step_hardware());
+        saw_post_wake_idle = saw_post_wake_idle || cpu_wai_console.cpu_state().pc == 0x0002u;
+        woke_on_irq = cpu_wai_console.cpu_state().pc == 0x1234u;
+        if (woke_on_irq)
+            break;
+    }
+
+    if (!saw_post_wake_idle)
+        return fail("cpu_wai_wake_idle");
+
+    if (!woke_on_irq)
+        return fail("cpu_wai");
+
+    clover::core::console_t cpu_register_console{};
+    cpu_register_console.power_on();
+    cpu_register_console.write_u8(0x000000u, 0xa9u);
+    cpu_register_console.write_u8(0x000001u, 0x11u);
+    cpu_register_console.write_u8(0x000002u, 0xa8u);
+    cpu_register_console.write_u8(0x000003u, 0xc8u);
+    cpu_register_console.write_u8(0x000004u, 0x98u);
+    cpu_register_console.write_u8(0x000005u, 0xaau);
+    cpu_register_console.write_u8(0x000006u, 0xcau);
+    cpu_register_console.write_u8(0x000007u, 0x9bu);
+    cpu_register_console.write_u8(0x000008u, 0xbbu);
+    cpu_register_console.write_u8(0x000009u, 0x8au);
+    cpu_register_console.write_u8(0x00000au, 0xa0u);
+    cpu_register_console.write_u8(0x00000bu, 0x22u);
+    cpu_register_console.write_u8(0x00000cu, 0x84u);
+    cpu_register_console.write_u8(0x00000du, 0x50u);
+    cpu_register_console.write_u8(0x00000eu, 0xa2u);
+    cpu_register_console.write_u8(0x00000fu, 0x33u);
+    cpu_register_console.write_u8(0x000010u, 0x86u);
+    cpu_register_console.write_u8(0x000011u, 0x51u);
+    cpu_register_console.write_u8(0x000012u, 0x8cu);
+    cpu_register_console.write_u8(0x000013u, 0x90u);
+    cpu_register_console.write_u8(0x000014u, 0x00u);
+    cpu_register_console.write_u8(0x000015u, 0x8eu);
+    cpu_register_console.write_u8(0x000016u, 0x92u);
+    cpu_register_console.write_u8(0x000017u, 0x00u);
+    cpu_register_console.write_u8(0x000018u, 0xc0u);
+    cpu_register_console.write_u8(0x000019u, 0x22u);
+    cpu_register_console.write_u8(0x00001au, 0x88u);
+    cpu_register_console.write_u8(0x00001bu, 0xc0u);
+    cpu_register_console.write_u8(0x00001cu, 0x22u);
+    cpu_register_console.write_u8(0x00001du, 0xeau);
+
+    for (int step_index{ 0 }; step_index < 9; ++step_index)
+        static_cast<void>(cpu_register_console.step_hardware());
+
+    if (cpu_register_console.cpu_state().a != 0x0011u
+        || cpu_register_console.cpu_state().x != 0x0011u
+        || cpu_register_console.cpu_state().y != 0x0011u)
+    {
+        return fail("cpu_transfer_register_roundtrip");
+    }
+
+    for (int step_index{ 0 }; step_index < 6; ++step_index)
+        static_cast<void>(cpu_register_console.step_hardware());
+
+    if (cpu_register_console.read_u8(0x000050u) != 0x22u
+        || cpu_register_console.read_u8(0x000051u) != 0x33u
+        || cpu_register_console.read_u8(0x000090u) != 0x22u
+        || cpu_register_console.read_u8(0x000092u) != 0x33u)
+    {
+        return fail("cpu_index_store_paths");
+    }
+
+    static_cast<void>(cpu_register_console.step_hardware());
+    if ((cpu_register_console.cpu_state().p & 0x03u) != 0x03u)
+        return fail("cpu_cpy_equal");
+
+    static_cast<void>(cpu_register_console.step_hardware());
+    if (cpu_register_console.cpu_state().y != 0x0021u)
+        return fail("cpu_dey");
+
+    static_cast<void>(cpu_register_console.step_hardware());
+    if ((cpu_register_console.cpu_state().p & 0x01u) != 0
+        || (cpu_register_console.cpu_state().p & 0x80u) == 0
+        || cpu_register_console.cpu_state().pc != 0x001du)
+    {
+        return fail("cpu_cpy_less_than");
+    }
+
+    clover::core::console_t cpu_address_console{};
+    cpu_address_console.power_on();
+    cpu_address_console.write_u8(0x000040u, 0x03u);
+    cpu_address_console.write_u8(0x000041u, 0x05u);
+    cpu_address_console.write_u8(0x000050u, 0x05u);
+    cpu_address_console.write_u8(0x000080u, 0x11u);
+    cpu_address_console.write_u8(0x000081u, 0x22u);
+    cpu_address_console.write_u8(0x000030u, 0x80u);
+    cpu_address_console.write_u8(0x000031u, 0x00u);
+    cpu_address_console.write_u8(0x000091u, 0x00u);
+
+    cpu_address_console.write_u8(0x000000u, 0xa2u);
+    cpu_address_console.write_u8(0x000001u, 0x01u);
+    cpu_address_console.write_u8(0x000002u, 0xa0u);
+    cpu_address_console.write_u8(0x000003u, 0x01u);
+    cpu_address_console.write_u8(0x000004u, 0xb5u);
+    cpu_address_console.write_u8(0x000005u, 0x3fu);
+    cpu_address_console.write_u8(0x000006u, 0xbdu);
+    cpu_address_console.write_u8(0x000007u, 0x7fu);
+    cpu_address_console.write_u8(0x000008u, 0x00u);
+    cpu_address_console.write_u8(0x000009u, 0xb9u);
+    cpu_address_console.write_u8(0x00000au, 0x7fu);
+    cpu_address_console.write_u8(0x00000bu, 0x00u);
+    cpu_address_console.write_u8(0x00000cu, 0xb2u);
+    cpu_address_console.write_u8(0x00000du, 0x30u);
+    cpu_address_console.write_u8(0x00000eu, 0xa9u);
+    cpu_address_console.write_u8(0x00000fu, 0x10u);
+    cpu_address_console.write_u8(0x000010u, 0x15u);
+    cpu_address_console.write_u8(0x000011u, 0x40u);
+    cpu_address_console.write_u8(0x000012u, 0x3du);
+    cpu_address_console.write_u8(0x000013u, 0x7fu);
+    cpu_address_console.write_u8(0x000014u, 0x00u);
+    cpu_address_console.write_u8(0x000015u, 0x59u);
+    cpu_address_console.write_u8(0x000016u, 0x7fu);
+    cpu_address_console.write_u8(0x000017u, 0x00u);
+    cpu_address_console.write_u8(0x000018u, 0x18u);
+    cpu_address_console.write_u8(0x000019u, 0x72u);
+    cpu_address_console.write_u8(0x00001au, 0x30u);
+    cpu_address_console.write_u8(0x00001bu, 0x38u);
+    cpu_address_console.write_u8(0x00001cu, 0xf5u);
+    cpu_address_console.write_u8(0x00001du, 0x40u);
+    cpu_address_console.write_u8(0x00001eu, 0x9du);
+    cpu_address_console.write_u8(0x00001fu, 0x90u);
+    cpu_address_console.write_u8(0x000020u, 0x00u);
+    cpu_address_console.write_u8(0x000021u, 0xd2u);
+    cpu_address_console.write_u8(0x000022u, 0x30u);
+    cpu_address_console.write_u8(0x000023u, 0xe4u);
+    cpu_address_console.write_u8(0x000024u, 0x40u);
+    cpu_address_console.write_u8(0x000025u, 0xccu);
+    cpu_address_console.write_u8(0x000026u, 0x80u);
+    cpu_address_console.write_u8(0x000027u, 0x00u);
+    cpu_address_console.write_u8(0x000028u, 0xaeu);
+    cpu_address_console.write_u8(0x000029u, 0x80u);
+    cpu_address_console.write_u8(0x00002au, 0x00u);
+    cpu_address_console.write_u8(0x00002bu, 0xb4u);
+    cpu_address_console.write_u8(0x00002cu, 0x3fu);
+    cpu_address_console.write_u8(0x00002du, 0x92u);
+    cpu_address_console.write_u8(0x00002eu, 0x30u);
+    cpu_address_console.write_u8(0x00002fu, 0xeau);
+
+    for (int step_index{ 0 }; step_index < 6; ++step_index)
+        static_cast<void>(cpu_address_console.step_hardware());
+
+    if (cpu_address_console.cpu_state().a != 0x0011u
+        || cpu_address_console.cpu_state().x != 0x0001u
+        || cpu_address_console.cpu_state().y != 0x0001u)
+    {
+        return fail("cpu_direct_absolute_loads");
+    }
+
+    for (int step_index{ 0 }; step_index < 8; ++step_index)
+        static_cast<void>(cpu_address_console.step_hardware());
+
+    if (cpu_address_console.cpu_state().a != 0x000cu
+        || cpu_address_console.read_u8(0x000091u) != 0x00u)
+        return fail("cpu_direct_alu_path");
+
+    static_cast<void>(cpu_address_console.step_hardware());
+    if (cpu_address_console.read_u8(0x000091u) != 0x0cu)
+        return fail("cpu_absolute_indexed_store");
+
+    static_cast<void>(cpu_address_console.step_hardware());
+    if ((cpu_address_console.cpu_state().p & 0x01u) != 0
+        || (cpu_address_console.cpu_state().p & 0x80u) == 0)
+        return fail("cpu_cmp_direct");
+
+    static_cast<void>(cpu_address_console.step_hardware());
+    if ((cpu_address_console.cpu_state().p & 0x01u) != 0
+        || (cpu_address_console.cpu_state().p & 0x80u) == 0)
+        return fail("cpu_cpx_direct");
+
+    static_cast<void>(cpu_address_console.step_hardware());
+    if ((cpu_address_console.cpu_state().p & 0x01u) != 0
+        || (cpu_address_console.cpu_state().p & 0x80u) == 0)
+        return fail("cpu_cpy_absolute");
+
+    for (int step_index{ 0 }; step_index < 2; ++step_index)
+        static_cast<void>(cpu_address_console.step_hardware());
+
+    if (cpu_address_console.cpu_state().x != 0x0011u
+        || cpu_address_console.cpu_state().y != 0x0005u
+        || cpu_address_console.read_u8(0x000080u) != 0x11u)
+    {
+        return fail("cpu_post_compare_loads");
+    }
+
+    clover::core::console_t cpu_indirect_console{};
+    cpu_indirect_console.power_on();
+    cpu_indirect_console.write_u8(0x000041u, 0x80u);
+    cpu_indirect_console.write_u8(0x000042u, 0x00u);
+    cpu_indirect_console.write_u8(0x000050u, 0x80u);
+    cpu_indirect_console.write_u8(0x000051u, 0x00u);
+    cpu_indirect_console.write_u8(0x000060u, 0x90u);
+    cpu_indirect_console.write_u8(0x000061u, 0x00u);
+    cpu_indirect_console.write_u8(0x000062u, 0x00u);
+    cpu_indirect_console.write_u8(0x000070u, 0x90u);
+    cpu_indirect_console.write_u8(0x000071u, 0x00u);
+    cpu_indirect_console.write_u8(0x000072u, 0x00u);
+    cpu_indirect_console.write_u8(0x000080u, 0x11u);
+    cpu_indirect_console.write_u8(0x000082u, 0x22u);
+    cpu_indirect_console.write_u8(0x000090u, 0xf0u);
+    cpu_indirect_console.write_u8(0x000092u, 0x0fu);
+    cpu_indirect_console.write_u8(0x0000a0u, 0x01u);
+    cpu_indirect_console.write_u8(0x0000a1u, 0x77u);
+
+    cpu_indirect_console.write_u8(0x000000u, 0xa2u);
+    cpu_indirect_console.write_u8(0x000001u, 0x01u);
+    cpu_indirect_console.write_u8(0x000002u, 0xa0u);
+    cpu_indirect_console.write_u8(0x000003u, 0x02u);
+    cpu_indirect_console.write_u8(0x000004u, 0xa1u);
+    cpu_indirect_console.write_u8(0x000005u, 0x40u);
+    cpu_indirect_console.write_u8(0x000006u, 0x11u);
+    cpu_indirect_console.write_u8(0x000007u, 0x50u);
+    cpu_indirect_console.write_u8(0x000008u, 0x27u);
+    cpu_indirect_console.write_u8(0x000009u, 0x60u);
+    cpu_indirect_console.write_u8(0x00000au, 0x57u);
+    cpu_indirect_console.write_u8(0x00000bu, 0x70u);
+    cpu_indirect_console.write_u8(0x00000cu, 0x18u);
+    cpu_indirect_console.write_u8(0x00000du, 0x6fu);
+    cpu_indirect_console.write_u8(0x00000eu, 0xa0u);
+    cpu_indirect_console.write_u8(0x00000fu, 0x00u);
+    cpu_indirect_console.write_u8(0x000010u, 0x00u);
+    cpu_indirect_console.write_u8(0x000011u, 0x8fu);
+    cpu_indirect_console.write_u8(0x000012u, 0xb0u);
+    cpu_indirect_console.write_u8(0x000013u, 0x00u);
+    cpu_indirect_console.write_u8(0x000014u, 0x00u);
+    cpu_indirect_console.write_u8(0x000015u, 0xa9u);
+    cpu_indirect_console.write_u8(0x000016u, 0x55u);
+    cpu_indirect_console.write_u8(0x000017u, 0x91u);
+    cpu_indirect_console.write_u8(0x000018u, 0x50u);
+    cpu_indirect_console.write_u8(0x000019u, 0x97u);
+    cpu_indirect_console.write_u8(0x00001au, 0x70u);
+    cpu_indirect_console.write_u8(0x00001bu, 0x9fu);
+    cpu_indirect_console.write_u8(0x00001cu, 0xb0u);
+    cpu_indirect_console.write_u8(0x00001du, 0x00u);
+    cpu_indirect_console.write_u8(0x00001eu, 0x00u);
+    cpu_indirect_console.write_u8(0x00001fu, 0xbfu);
+    cpu_indirect_console.write_u8(0x000020u, 0xb0u);
+    cpu_indirect_console.write_u8(0x000021u, 0x00u);
+    cpu_indirect_console.write_u8(0x000022u, 0x00u);
+    cpu_indirect_console.write_u8(0x000023u, 0xd1u);
+    cpu_indirect_console.write_u8(0x000024u, 0x50u);
+    cpu_indirect_console.write_u8(0x000025u, 0xe1u);
+    cpu_indirect_console.write_u8(0x000026u, 0x40u);
+    cpu_indirect_console.write_u8(0x000027u, 0xeau);
+
+    for (int step_index{ 0 }; step_index < 9; ++step_index)
+        static_cast<void>(cpu_indirect_console.step_hardware());
+
+    if (cpu_indirect_console.cpu_state().a != 0x0040u
+        || cpu_indirect_console.read_u8(0x0000b0u) != 0x40u)
+    {
+        return fail("cpu_indirect_long_alu");
+    }
+
+    for (int step_index{ 0 }; step_index < 4; ++step_index)
+        static_cast<void>(cpu_indirect_console.step_hardware());
+
+    if (cpu_indirect_console.read_u8(0x000082u) != 0x55u
+        || cpu_indirect_console.read_u8(0x000092u) != 0x55u
+        || cpu_indirect_console.read_u8(0x0000b1u) != 0x55u)
+    {
+        return fail("cpu_indirect_long_stores");
+    }
+
+    for (int step_index{ 0 }; step_index < 2; ++step_index)
+        static_cast<void>(cpu_indirect_console.step_hardware());
+
+    if (cpu_indirect_console.cpu_state().a != 0x0055u
+        || (cpu_indirect_console.cpu_state().p & 0x03u) != 0x03u)
+    {
+        return fail("cpu_indirect_long_compare");
+    }
+
+    static_cast<void>(cpu_indirect_console.step_hardware());
+    if (cpu_indirect_console.cpu_state().a != 0x0044u
+        || (cpu_indirect_console.cpu_state().p & 0x01u) != 0x01u)
+    {
+        return fail("cpu_indirect_long_sbc");
+    }
+
+    clover::core::console_t cpu_branch_console{};
+    cpu_branch_console.power_on();
+    cpu_branch_console.write_u8(0x000000u, 0xa9u);
+    cpu_branch_console.write_u8(0x000001u, 0x80u);
+    cpu_branch_console.write_u8(0x000002u, 0x10u);
+    cpu_branch_console.write_u8(0x000003u, 0x01u);
+    cpu_branch_console.write_u8(0x000004u, 0x30u);
+    cpu_branch_console.write_u8(0x000005u, 0x01u);
+    cpu_branch_console.write_u8(0x000006u, 0xeau);
+    cpu_branch_console.write_u8(0x000007u, 0xa9u);
+    cpu_branch_console.write_u8(0x000008u, 0x00u);
+    cpu_branch_console.write_u8(0x000009u, 0xd0u);
+    cpu_branch_console.write_u8(0x00000au, 0x01u);
+    cpu_branch_console.write_u8(0x00000bu, 0xf0u);
+    cpu_branch_console.write_u8(0x00000cu, 0x01u);
+    cpu_branch_console.write_u8(0x00000du, 0xeau);
+    cpu_branch_console.write_u8(0x00000eu, 0x82u);
+    cpu_branch_console.write_u8(0x00000fu, 0x02u);
+    cpu_branch_console.write_u8(0x000010u, 0x00u);
+    cpu_branch_console.write_u8(0x000011u, 0xeau);
+    cpu_branch_console.write_u8(0x000012u, 0xeau);
+    cpu_branch_console.write_u8(0x000013u, 0xeau);
+
+    static_cast<void>(cpu_branch_console.step_hardware());
+    if (cpu_branch_console.cpu_state().a != 0x0080u
+        || cpu_branch_console.cpu_state().pc != 0x0002u
+        || (cpu_branch_console.cpu_state().p & 0x80u) == 0)
+    {
+        return fail("cpu_branch_setup_negative");
+    }
+
+    static_cast<void>(cpu_branch_console.step_hardware());
+    if (cpu_branch_console.cpu_state().pc != 0x0004u)
+        return fail("cpu_bpl_not_taken");
+
+    static_cast<void>(cpu_branch_console.step_hardware());
+    if (cpu_branch_console.cpu_state().pc != 0x0007u)
+        return fail("cpu_bmi_taken");
+
+    static_cast<void>(cpu_branch_console.step_hardware());
+    if (cpu_branch_console.cpu_state().a != 0x0000u
+        || (cpu_branch_console.cpu_state().p & 0x02u) == 0
+        || cpu_branch_console.cpu_state().pc != 0x0009u)
+    {
+        return fail("cpu_branch_setup_zero");
+    }
+
+    static_cast<void>(cpu_branch_console.step_hardware());
+    if (cpu_branch_console.cpu_state().pc != 0x000bu)
+        return fail("cpu_bne_not_taken");
+
+    static_cast<void>(cpu_branch_console.step_hardware());
+    if (cpu_branch_console.cpu_state().pc != 0x000eu)
+        return fail("cpu_beq_taken");
+
+    static_cast<void>(cpu_branch_console.step_hardware());
+    if (cpu_branch_console.cpu_state().pc != 0x0013u)
+        return fail("cpu_brl_taken");
+
+    static_cast<void>(cpu_branch_console.step_hardware());
+    if (cpu_branch_console.cpu_state().pc != 0x0014u)
+        return fail("cpu_post_brl_nop");
+
+    clover::core::console_t cpu_jump_console{};
+    cpu_jump_console.power_on();
+    cpu_jump_console.write_u8(0x000040u, 0x00u);
+    cpu_jump_console.write_u8(0x000041u, 0x12u);
+    cpu_jump_console.write_u8(0x000042u, 0x01u);
+    cpu_jump_console.write_u8(0x000050u, 0x20u);
+    cpu_jump_console.write_u8(0x000051u, 0x12u);
+    cpu_jump_console.write_u8(0x010064u, 0x10u);
+    cpu_jump_console.write_u8(0x010065u, 0x12u);
+    cpu_jump_console.write_u8(0x010074u, 0x30u);
+    cpu_jump_console.write_u8(0x010075u, 0x11u);
+
+    cpu_jump_console.write_u8(0x000000u, 0x22u);
+    cpu_jump_console.write_u8(0x000001u, 0x00u);
+    cpu_jump_console.write_u8(0x000002u, 0x10u);
+    cpu_jump_console.write_u8(0x000003u, 0x01u);
+    cpu_jump_console.write_u8(0x000004u, 0x5cu);
+    cpu_jump_console.write_u8(0x000005u, 0x00u);
+    cpu_jump_console.write_u8(0x000006u, 0x11u);
+    cpu_jump_console.write_u8(0x000007u, 0x01u);
+    cpu_jump_console.write_u8(0x000008u, 0xeau);
+
+    cpu_jump_console.write_u8(0x011000u, 0xa9u);
+    cpu_jump_console.write_u8(0x011001u, 0x5au);
+    cpu_jump_console.write_u8(0x011002u, 0x6bu);
+
+    cpu_jump_console.write_u8(0x011100u, 0xa2u);
+    cpu_jump_console.write_u8(0x011101u, 0x04u);
+    cpu_jump_console.write_u8(0x011102u, 0xfcu);
+    cpu_jump_console.write_u8(0x011103u, 0x70u);
+    cpu_jump_console.write_u8(0x011104u, 0x00u);
+    cpu_jump_console.write_u8(0x011105u, 0xdcu);
+    cpu_jump_console.write_u8(0x011106u, 0x40u);
+    cpu_jump_console.write_u8(0x011107u, 0x00u);
+
+    cpu_jump_console.write_u8(0x011130u, 0xa9u);
+    cpu_jump_console.write_u8(0x011131u, 0x33u);
+    cpu_jump_console.write_u8(0x011132u, 0x60u);
+
+    cpu_jump_console.write_u8(0x011200u, 0x7cu);
+    cpu_jump_console.write_u8(0x011201u, 0x60u);
+    cpu_jump_console.write_u8(0x011202u, 0x00u);
+
+    cpu_jump_console.write_u8(0x011210u, 0x6cu);
+    cpu_jump_console.write_u8(0x011211u, 0x50u);
+    cpu_jump_console.write_u8(0x011212u, 0x00u);
+
+    cpu_jump_console.write_u8(0x011220u, 0xeau);
+
+    static_cast<void>(cpu_jump_console.step_hardware());
+    if (cpu_jump_console.cpu_state().pb != 0x01u
+        || cpu_jump_console.cpu_state().pc != 0x1000u)
+    {
+        return fail("cpu_jsl_target");
+    }
+
+    static_cast<void>(cpu_jump_console.step_hardware());
+    if (cpu_jump_console.cpu_state().a != 0x005au
+        || cpu_jump_console.cpu_state().pc != 0x1002u)
+    {
+        return fail("cpu_jsl_subroutine_body");
+    }
+
+    static_cast<void>(cpu_jump_console.step_hardware());
+    if (cpu_jump_console.cpu_state().pb != 0x00u
+        || cpu_jump_console.cpu_state().pc != 0x0004u
+        || cpu_jump_console.cpu_state().a != 0x005au)
+    {
+        return fail("cpu_rtl_return");
+    }
+
+    static_cast<void>(cpu_jump_console.step_hardware());
+    if (cpu_jump_console.cpu_state().pb != 0x01u
+        || cpu_jump_console.cpu_state().pc != 0x1100u)
+    {
+        return fail("cpu_jml_immediate");
+    }
+
+    static_cast<void>(cpu_jump_console.step_hardware());
+    if (cpu_jump_console.cpu_state().x != 0x0004u
+        || cpu_jump_console.cpu_state().pc != 0x1102u)
+    {
+        return fail("cpu_jump_setup_index");
+    }
+
+    static_cast<void>(cpu_jump_console.step_hardware());
+    if (cpu_jump_console.cpu_state().pb != 0x01u
+        || cpu_jump_console.cpu_state().pc != 0x1130u)
+    {
+        return fail("cpu_jsr_indexed_indirect");
+    }
+
+    static_cast<void>(cpu_jump_console.step_hardware());
+    if (cpu_jump_console.cpu_state().a != 0x0033u
+        || cpu_jump_console.cpu_state().pc != 0x1132u)
+    {
+        return fail("cpu_jsr_indexed_indirect_body");
+    }
+
+    static_cast<void>(cpu_jump_console.step_hardware());
+    if (cpu_jump_console.cpu_state().pb != 0x01u
+        || cpu_jump_console.cpu_state().pc != 0x1105u)
+    {
+        return fail("cpu_rts_indexed_indirect_return");
+    }
+
+    static_cast<void>(cpu_jump_console.step_hardware());
+    if (cpu_jump_console.cpu_state().pb != 0x01u
+        || cpu_jump_console.cpu_state().pc != 0x1200u)
+    {
+        return fail("cpu_jml_indirect_long");
+    }
+
+    static_cast<void>(cpu_jump_console.step_hardware());
+    if (cpu_jump_console.cpu_state().pc != 0x1210u)
+        return fail("cpu_jmp_indexed_indirect");
+
+    static_cast<void>(cpu_jump_console.step_hardware());
+    if (cpu_jump_console.cpu_state().pc != 0x1220u)
+        return fail("cpu_jmp_indirect");
+
+    static_cast<void>(cpu_jump_console.step_hardware());
+    if (cpu_jump_console.cpu_state().pc != 0x1221u)
+        return fail("cpu_post_jump_nop");
+
+    clover::core::console_t cpu_mode_console{};
+    cpu_mode_console.power_on();
+    cpu_mode_console.write_u8(0x000000u, 0xc2u);
+    cpu_mode_console.write_u8(0x000001u, 0x30u);
+    cpu_mode_console.write_u8(0x000002u, 0xa9u);
+    cpu_mode_console.write_u8(0x000003u, 0x00u);
+    cpu_mode_console.write_u8(0x000004u, 0x48u);
+    cpu_mode_console.write_u8(0x000005u, 0x28u);
+    cpu_mode_console.write_u8(0x000006u, 0x58u);
+    cpu_mode_console.write_u8(0x000007u, 0x78u);
+    cpu_mode_console.write_u8(0x000008u, 0xeau);
+
+    static_cast<void>(cpu_mode_console.step_hardware());
+    if ((cpu_mode_console.cpu_state().p & 0x30u) != 0x30u)
+        return fail("cpu_rep_preserves_emulation_width");
+
+    for (int step_index{ 0 }; step_index < 2; ++step_index)
+        static_cast<void>(cpu_mode_console.step_hardware());
+
+    static_cast<void>(cpu_mode_console.step_hardware());
+    if ((cpu_mode_console.cpu_state().p & 0x30u) != 0x30u)
+        return fail("cpu_plp_preserves_emulation_width");
+
+    static_cast<void>(cpu_mode_console.step_hardware());
+    if ((cpu_mode_console.cpu_state().p & 0x04u) != 0)
+        return fail("cpu_cli");
+
+    static_cast<void>(cpu_mode_console.step_hardware());
+    if ((cpu_mode_console.cpu_state().p & 0x04u) == 0)
+        return fail("cpu_sei");
+
+    clover::core::console_t cpu_boundary_console{};
+    cpu_boundary_console.power_on();
+    cpu_boundary_console.write_u8(0x7e1234u, 0x33u);
+    cpu_boundary_console.write_u8(0x000000u, 0xeau);
+    cpu_boundary_console.write_u8(0x000001u, 0x5au);
+    cpu_boundary_console.write_u8(0x000002u, 0xaau);
+    cpu_boundary_console.write_u8(0x000003u, 0x6au);
+    cpu_boundary_console.write_u8(0x000004u, 0x7cu);
+
+    static_cast<void>(cpu_boundary_console.read_u8(0x7e1234u));
+    static_cast<void>(cpu_boundary_console.step_hardware());
+    if (cpu_boundary_console.read_u8(0x010000u) != 0x5au)
+        return fail("cpu_boundary_nop_read");
+
+    static_cast<void>(cpu_boundary_console.read_u8(0x7e1234u));
+    static_cast<void>(cpu_boundary_console.step_hardware());
+    if (cpu_boundary_console.read_u8(0x010000u) != 0x6au)
+        return fail("cpu_boundary_tax_read");
+
+    static_cast<void>(cpu_boundary_console.read_u8(0x7e1234u));
+    static_cast<void>(cpu_boundary_console.step_hardware());
+    if (cpu_boundary_console.read_u8(0x010000u) != 0x7cu)
+        return fail("cpu_boundary_accumulator_modify_read");
+
+    clover::core::console_t cpu_timing_console{};
+    cpu_timing_console.power_on();
+    cpu_timing_console.write_u8(0x000081u, 0x5au);
+    cpu_timing_console.write_u8(0x000100u, 0x66u);
+    cpu_timing_console.write_u8(0x000000u, 0xa2u);
+    cpu_timing_console.write_u8(0x000001u, 0x01u);
+    cpu_timing_console.write_u8(0x000002u, 0xbdu);
+    cpu_timing_console.write_u8(0x000003u, 0x80u);
+    cpu_timing_console.write_u8(0x000004u, 0x00u);
+    cpu_timing_console.write_u8(0x000005u, 0xbdu);
+    cpu_timing_console.write_u8(0x000006u, 0xffu);
+    cpu_timing_console.write_u8(0x000007u, 0x00u);
+
+    static_cast<void>(cpu_timing_console.step_hardware());
+    const clover::core::hardware_step_result_t timing_absx_no_cross{
+        cpu_timing_console.step_hardware()
+    };
+    const clover::core::hardware_step_result_t timing_absx_cross{
+        cpu_timing_console.step_hardware()
+    };
+
+    if (timing_absx_no_cross.elapsed_master_clocks != 24)
+        return fail("cpu_timing_absx_no_cross");
+
+    if (timing_absx_cross.elapsed_master_clocks != 30)
+        return fail("cpu_timing_absx_cross");
+
+    clover::core::console_t cpu_native_timing_console{};
+    cpu_native_timing_console.power_on();
+    cpu_native_timing_console.write_u8(0x000030u, 0x80u);
+    cpu_native_timing_console.write_u8(0x000031u, 0x00u);
+    cpu_native_timing_console.write_u8(0x000081u, 0x44u);
+    cpu_native_timing_console.write_u8(0x000000u, 0x38u);
+    cpu_native_timing_console.write_u8(0x000001u, 0xfbu);
+    cpu_native_timing_console.write_u8(0x000002u, 0xc2u);
+    cpu_native_timing_console.write_u8(0x000003u, 0x30u);
+    cpu_native_timing_console.write_u8(0x000004u, 0xe2u);
+    cpu_native_timing_console.write_u8(0x000005u, 0x20u);
+    cpu_native_timing_console.write_u8(0x000006u, 0xa2u);
+    cpu_native_timing_console.write_u8(0x000007u, 0x01u);
+    cpu_native_timing_console.write_u8(0x000008u, 0x00u);
+    cpu_native_timing_console.write_u8(0x000009u, 0xbdu);
+    cpu_native_timing_console.write_u8(0x00000au, 0x80u);
+    cpu_native_timing_console.write_u8(0x00000bu, 0x00u);
+    cpu_native_timing_console.write_u8(0x00000cu, 0xa0u);
+    cpu_native_timing_console.write_u8(0x00000du, 0x01u);
+    cpu_native_timing_console.write_u8(0x00000eu, 0x00u);
+    cpu_native_timing_console.write_u8(0x00000fu, 0xb1u);
+    cpu_native_timing_console.write_u8(0x000010u, 0x30u);
+
+    for (int step_index{ 0 }; step_index < 5; ++step_index)
+        static_cast<void>(cpu_native_timing_console.step_hardware());
+
+    const clover::core::hardware_step_result_t timing_native_absx{
+        cpu_native_timing_console.step_hardware()
+    };
+    const clover::core::hardware_step_result_t timing_native_indirect_y{
+        cpu_native_timing_console.step_hardware()
+    };
+    const clover::core::hardware_step_result_t timing_native_dp_indirect_y{
+        cpu_native_timing_console.step_hardware()
+    };
+
+    if (timing_native_absx.elapsed_master_clocks != 30)
+        return fail("cpu_timing_native_absx");
+
+    if (timing_native_indirect_y.elapsed_master_clocks != 18)
+        return fail("cpu_timing_native_ldy");
+
+    if (timing_native_dp_indirect_y.elapsed_master_clocks != 36)
+        return fail("cpu_timing_native_indirect_y");
+
+    clover::core::console_t cpu_stack_transfer_console{};
+    cpu_stack_transfer_console.power_on();
+    cpu_stack_transfer_console.write_u8(0x001264u, 0xefu);
+    cpu_stack_transfer_console.write_u8(0x001265u, 0xbeu);
+
+    cpu_stack_transfer_console.write_u8(0x000000u, 0xa2u);
+    cpu_stack_transfer_console.write_u8(0x000001u, 0x9au);
+    cpu_stack_transfer_console.write_u8(0x000002u, 0x9au);
+    cpu_stack_transfer_console.write_u8(0x000003u, 0xbau);
+    cpu_stack_transfer_console.write_u8(0x000004u, 0x18u);
+    cpu_stack_transfer_console.write_u8(0x000005u, 0xfbu);
+    cpu_stack_transfer_console.write_u8(0x000006u, 0xc2u);
+    cpu_stack_transfer_console.write_u8(0x000007u, 0x30u);
+    cpu_stack_transfer_console.write_u8(0x000008u, 0xa9u);
+    cpu_stack_transfer_console.write_u8(0x000009u, 0x34u);
+    cpu_stack_transfer_console.write_u8(0x00000au, 0x12u);
+    cpu_stack_transfer_console.write_u8(0x00000bu, 0x5bu);
+    cpu_stack_transfer_console.write_u8(0x00000cu, 0x7bu);
+    cpu_stack_transfer_console.write_u8(0x00000du, 0x1bu);
+    cpu_stack_transfer_console.write_u8(0x00000eu, 0x3bu);
+    cpu_stack_transfer_console.write_u8(0x00000fu, 0xa0u);
+    cpu_stack_transfer_console.write_u8(0x000010u, 0x78u);
+    cpu_stack_transfer_console.write_u8(0x000011u, 0x56u);
+    cpu_stack_transfer_console.write_u8(0x000012u, 0x5au);
+    cpu_stack_transfer_console.write_u8(0x000013u, 0xa0u);
+    cpu_stack_transfer_console.write_u8(0x000014u, 0x00u);
+    cpu_stack_transfer_console.write_u8(0x000015u, 0x00u);
+    cpu_stack_transfer_console.write_u8(0x000016u, 0x7au);
+    cpu_stack_transfer_console.write_u8(0x000017u, 0x0bu);
+    cpu_stack_transfer_console.write_u8(0x000018u, 0xa9u);
+    cpu_stack_transfer_console.write_u8(0x000019u, 0x00u);
+    cpu_stack_transfer_console.write_u8(0x00001au, 0x00u);
+    cpu_stack_transfer_console.write_u8(0x00001bu, 0x5bu);
+    cpu_stack_transfer_console.write_u8(0x00001cu, 0x2bu);
+    cpu_stack_transfer_console.write_u8(0x00001du, 0xf4u);
+    cpu_stack_transfer_console.write_u8(0x00001eu, 0xcdu);
+    cpu_stack_transfer_console.write_u8(0x00001fu, 0xabu);
+    cpu_stack_transfer_console.write_u8(0x000020u, 0xd4u);
+    cpu_stack_transfer_console.write_u8(0x000021u, 0x30u);
+    cpu_stack_transfer_console.write_u8(0x000022u, 0x62u);
+    cpu_stack_transfer_console.write_u8(0x000023u, 0x02u);
+    cpu_stack_transfer_console.write_u8(0x000024u, 0x00u);
+    cpu_stack_transfer_console.write_u8(0x000025u, 0xeau);
+    cpu_stack_transfer_console.write_u8(0x000026u, 0xeau);
+
+    for (int step_index{ 0 }; step_index < 3; ++step_index)
+        static_cast<void>(cpu_stack_transfer_console.step_hardware());
+
+    if (cpu_stack_transfer_console.cpu_state().sp != 0x019au
+        || cpu_stack_transfer_console.cpu_state().x != 0x009au)
+    {
+        return fail("cpu_txs_tsx_emulation");
+    }
+
+    for (int step_index{ 0 }; step_index < 8; ++step_index)
+        static_cast<void>(cpu_stack_transfer_console.step_hardware());
+
+    if (cpu_stack_transfer_console.cpu_state().d != 0x1234u
+        || cpu_stack_transfer_console.cpu_state().a != 0x1234u
+        || cpu_stack_transfer_console.cpu_state().sp != 0x1234u)
+    {
+        return fail("cpu_direct_stack_transfers");
+    }
+
+    for (int step_index{ 0 }; step_index < 5; ++step_index)
+        static_cast<void>(cpu_stack_transfer_console.step_hardware());
+
+    if (cpu_stack_transfer_console.cpu_state().y != 0x5678u
+        || cpu_stack_transfer_console.cpu_state().d != 0x1234u)
+    {
+        return fail("cpu_phy_ply_pld");
+    }
+
+    for (int step_index{ 0 }; step_index < 6; ++step_index)
+        static_cast<void>(cpu_stack_transfer_console.step_hardware());
+
+    if (cpu_stack_transfer_console.cpu_state().sp != 0x122eu
+        || cpu_stack_transfer_console.read_u8(0x001234u) != 0xabu
+        || cpu_stack_transfer_console.read_u8(0x001233u) != 0xcdu
+        || cpu_stack_transfer_console.read_u8(0x001232u) != 0xbeu
+        || cpu_stack_transfer_console.read_u8(0x001231u) != 0xefu
+        || cpu_stack_transfer_console.read_u8(0x001230u) != 0x00u
+        || cpu_stack_transfer_console.read_u8(0x00122fu) != 0x27u)
+    {
+        return fail("cpu_pea_pei_per");
+    }
+
+    clover::core::console_t cpu_bank_console{};
+    cpu_bank_console.power_on();
+    cpu_bank_console.write_u8(0x000000u, 0x5cu);
+    cpu_bank_console.write_u8(0x000001u, 0x00u);
+    cpu_bank_console.write_u8(0x000002u, 0x10u);
+    cpu_bank_console.write_u8(0x000003u, 0x01u);
+    cpu_bank_console.write_u8(0x011000u, 0x4bu);
+    cpu_bank_console.write_u8(0x011001u, 0xabu);
+    cpu_bank_console.write_u8(0x011002u, 0xeau);
+
+    static_cast<void>(cpu_bank_console.step_hardware());
+    if (cpu_bank_console.cpu_state().pb != 0x01u
+        || cpu_bank_console.cpu_state().pc != 0x1000u)
+    {
+        return fail("cpu_bank_jump_setup");
+    }
+
+    static_cast<void>(cpu_bank_console.step_hardware());
+    if (cpu_bank_console.read_u8(0x0001ffu) != 0x01u)
+        return fail("cpu_phk");
+
+    static_cast<void>(cpu_bank_console.step_hardware());
+    if (cpu_bank_console.cpu_state().db != 0x01u
+        || cpu_bank_console.cpu_state().sp != 0x01ffu)
+    {
+        return fail("cpu_plb");
+    }
+
+    clover::core::console_t cpu_interrupt_console{};
+    cpu_interrupt_console.power_on();
+    cpu_interrupt_console.write_u8(0x00fff4u, 0x00u);
+    cpu_interrupt_console.write_u8(0x00fff5u, 0x11u);
+    cpu_interrupt_console.write_u8(0x00fffeu, 0x00u);
+    cpu_interrupt_console.write_u8(0x00ffffu, 0x10u);
+
+    cpu_interrupt_console.write_u8(0x000000u, 0x00u);
+    cpu_interrupt_console.write_u8(0x000001u, 0xaau);
+    cpu_interrupt_console.write_u8(0x000002u, 0x02u);
+    cpu_interrupt_console.write_u8(0x000003u, 0xbbu);
+    cpu_interrupt_console.write_u8(0x000004u, 0xeau);
+
+    cpu_interrupt_console.write_u8(0x001000u, 0xa9u);
+    cpu_interrupt_console.write_u8(0x001001u, 0x44u);
+    cpu_interrupt_console.write_u8(0x001002u, 0x40u);
+
+    cpu_interrupt_console.write_u8(0x001100u, 0xa2u);
+    cpu_interrupt_console.write_u8(0x001101u, 0x55u);
+    cpu_interrupt_console.write_u8(0x001102u, 0x40u);
+
+    static_cast<void>(cpu_interrupt_console.step_hardware());
+    if (cpu_interrupt_console.cpu_state().pc != 0x1000u
+        || cpu_interrupt_console.cpu_state().sp != 0x01fcu
+        || cpu_interrupt_console.read_u8(0x0001ffu) != 0x00u
+        || cpu_interrupt_console.read_u8(0x0001feu) != 0x02u
+        || (cpu_interrupt_console.cpu_state().p & 0x04u) == 0)
+    {
+        std::fprintf(stderr,
+                     "cpu_brk_emulation_entry debug: PC=%04x SP=%04x [1ff]=%02x [1fe]=%02x [1fd]=%02x P=%02x\n",
+                     cpu_interrupt_console.cpu_state().pc,
+                     cpu_interrupt_console.cpu_state().sp,
+                     cpu_interrupt_console.read_u8(0x0001ffu),
+                     cpu_interrupt_console.read_u8(0x0001feu),
+                     cpu_interrupt_console.read_u8(0x0001fdu),
+                     cpu_interrupt_console.cpu_state().p);
+        return fail("cpu_brk_emulation_entry");
+    }
+
+    static_cast<void>(cpu_interrupt_console.step_hardware());
+    if (cpu_interrupt_console.cpu_state().a != 0x0044u)
+        return fail("cpu_brk_emulation_handler");
+
+    static_cast<void>(cpu_interrupt_console.step_hardware());
+    if (cpu_interrupt_console.cpu_state().pc != 0x0002u
+        || cpu_interrupt_console.cpu_state().sp != 0x01ffu)
+    {
+        return fail("cpu_rti_emulation_return");
+    }
+
+    static_cast<void>(cpu_interrupt_console.step_hardware());
+    if (cpu_interrupt_console.cpu_state().pc != 0x1100u
+        || cpu_interrupt_console.cpu_state().sp != 0x01fcu
+        || cpu_interrupt_console.read_u8(0x0001ffu) != 0x00u
+        || cpu_interrupt_console.read_u8(0x0001feu) != 0x04u)
+    {
+        return fail("cpu_cop_emulation_entry");
+    }
+
+    static_cast<void>(cpu_interrupt_console.step_hardware());
+    if (cpu_interrupt_console.cpu_state().x != 0x0055u)
+        return fail("cpu_cop_emulation_handler");
+
+    static_cast<void>(cpu_interrupt_console.step_hardware());
+    if (cpu_interrupt_console.cpu_state().pc != 0x0004u
+        || cpu_interrupt_console.cpu_state().sp != 0x01ffu)
+    {
+        return fail("cpu_cop_rti_emulation_return");
+    }
+
+    clover::core::console_t cpu_native_interrupt_console{};
+    cpu_native_interrupt_console.power_on();
+    cpu_native_interrupt_console.write_u8(0x00ffe4u, 0x10u);
+    cpu_native_interrupt_console.write_u8(0x00ffe5u, 0x12u);
+    cpu_native_interrupt_console.write_u8(0x00ffe6u, 0x00u);
+    cpu_native_interrupt_console.write_u8(0x00ffe7u, 0x12u);
+
+    cpu_native_interrupt_console.write_u8(0x000000u, 0x18u);
+    cpu_native_interrupt_console.write_u8(0x000001u, 0xfbu);
+    cpu_native_interrupt_console.write_u8(0x000002u, 0x00u);
+    cpu_native_interrupt_console.write_u8(0x000003u, 0xaau);
+    cpu_native_interrupt_console.write_u8(0x000004u, 0x02u);
+    cpu_native_interrupt_console.write_u8(0x000005u, 0xbbu);
+    cpu_native_interrupt_console.write_u8(0x000006u, 0xeau);
+
+    cpu_native_interrupt_console.write_u8(0x001200u, 0xa9u);
+    cpu_native_interrupt_console.write_u8(0x001201u, 0x66u);
+    cpu_native_interrupt_console.write_u8(0x001202u, 0x40u);
+
+    cpu_native_interrupt_console.write_u8(0x001210u, 0xa0u);
+    cpu_native_interrupt_console.write_u8(0x001211u, 0x77u);
+    cpu_native_interrupt_console.write_u8(0x001212u, 0x40u);
+
+    static_cast<void>(cpu_native_interrupt_console.step_hardware());
+    static_cast<void>(cpu_native_interrupt_console.step_hardware());
+    if (cpu_native_interrupt_console.cpu_state().emulation_mode)
+        return fail("cpu_native_interrupt_setup");
+
+    static_cast<void>(cpu_native_interrupt_console.step_hardware());
+    if (cpu_native_interrupt_console.cpu_state().pc != 0x1200u
+        || cpu_native_interrupt_console.cpu_state().sp != 0x01fbu
+        || cpu_native_interrupt_console.read_u8(0x0001ffu) != 0x00u
+        || cpu_native_interrupt_console.read_u8(0x0001feu) != 0x00u
+        || cpu_native_interrupt_console.read_u8(0x0001fdu) != 0x04u)
+    {
+        return fail("cpu_brk_native_entry");
+    }
+
+    static_cast<void>(cpu_native_interrupt_console.step_hardware());
+    if (cpu_native_interrupt_console.cpu_state().a != 0x0066u)
+        return fail("cpu_brk_native_handler");
+
+    static_cast<void>(cpu_native_interrupt_console.step_hardware());
+    if (cpu_native_interrupt_console.cpu_state().pc != 0x0004u
+        || cpu_native_interrupt_console.cpu_state().pb != 0x00u
+        || cpu_native_interrupt_console.cpu_state().sp != 0x01ffu)
+    {
+        return fail("cpu_rti_native_return");
+    }
+
+    static_cast<void>(cpu_native_interrupt_console.step_hardware());
+    if (cpu_native_interrupt_console.cpu_state().pc != 0x1210u
+        || cpu_native_interrupt_console.cpu_state().sp != 0x01fbu
+        || cpu_native_interrupt_console.read_u8(0x0001ffu) != 0x00u
+        || cpu_native_interrupt_console.read_u8(0x0001feu) != 0x00u
+        || cpu_native_interrupt_console.read_u8(0x0001fdu) != 0x06u)
+    {
+        return fail("cpu_cop_native_entry");
+    }
+
+    static_cast<void>(cpu_native_interrupt_console.step_hardware());
+    if (cpu_native_interrupt_console.cpu_state().y != 0x0077u)
+        return fail("cpu_cop_native_handler");
+
+    static_cast<void>(cpu_native_interrupt_console.step_hardware());
+    if (cpu_native_interrupt_console.cpu_state().pc != 0x0006u
+        || cpu_native_interrupt_console.cpu_state().pb != 0x00u
+        || cpu_native_interrupt_console.cpu_state().sp != 0x01ffu)
+    {
+        return fail("cpu_cop_rti_native_return");
+    }
+
+    clover::core::console_t cpu_hardware_irq_console{};
+    cpu_hardware_irq_console.power_on();
+    cpu_hardware_irq_console.write_u8(0x00fffeu, 0x00u);
+    cpu_hardware_irq_console.write_u8(0x00ffffu, 0x13u);
+    cpu_hardware_irq_console.write_u8(0x000000u, 0x58u);
+    cpu_hardware_irq_console.write_u8(0x000001u, 0xeau);
+    cpu_hardware_irq_console.write_u8(0x000002u, 0xeau);
+    cpu_hardware_irq_console.write_u8(0x000003u, 0xeau);
+    cpu_hardware_irq_console.write_u8(0x001300u, 0xa9u);
+    cpu_hardware_irq_console.write_u8(0x001301u, 0x99u);
+    cpu_hardware_irq_console.write_u8(0x001302u, 0x40u);
+    cpu_hardware_irq_console.write_u8(0x004200u, 0x10u);
+    cpu_hardware_irq_console.write_u8(0x004207u, 0x10u);
+    cpu_hardware_irq_console.write_u8(0x004208u, 0x00u);
+
+    for (int step_index{ 0 }; step_index < 2048; ++step_index)
+    {
+        static_cast<void>(cpu_hardware_irq_console.step_hardware());
+        if (cpu_hardware_irq_console.cpu_state().pc == 0x1300u)
+            break;
+    }
+
+    if (cpu_hardware_irq_console.cpu_state().pc != 0x1300u
+        || cpu_hardware_irq_console.cpu_state().sp != 0x01fcu
+        || cpu_hardware_irq_console.read_u8(0x0001ffu) != 0x00u
+        || cpu_hardware_irq_console.read_u8(0x0001feu) == 0x00u)
+    {
+        return fail("cpu_hardware_irq_emulation_entry");
+    }
+
+    static_cast<void>(cpu_hardware_irq_console.step_hardware());
+    if (cpu_hardware_irq_console.cpu_state().a != 0x0099u)
+        return fail("cpu_hardware_irq_handler");
+
+    clover::core::console_t cpu_modify_console{};
+    cpu_modify_console.power_on();
+    cpu_modify_console.write_u8(0x000040u, 0x81u);
+    cpu_modify_console.write_u8(0x000050u, 0x80u);
+    cpu_modify_console.write_u8(0x000060u, 0x80u);
+    cpu_modify_console.write_u8(0x000071u, 0x55u);
+
+    cpu_modify_console.write_u8(0x000000u, 0xa9u);
+    cpu_modify_console.write_u8(0x000001u, 0x40u);
+    cpu_modify_console.write_u8(0x000002u, 0x04u);
+    cpu_modify_console.write_u8(0x000003u, 0x50u);
+    cpu_modify_console.write_u8(0x000004u, 0x24u);
+    cpu_modify_console.write_u8(0x000005u, 0x50u);
+    cpu_modify_console.write_u8(0x000006u, 0x14u);
+    cpu_modify_console.write_u8(0x000007u, 0x50u);
+    cpu_modify_console.write_u8(0x000008u, 0xa9u);
+    cpu_modify_console.write_u8(0x000009u, 0x81u);
+    cpu_modify_console.write_u8(0x00000au, 0x06u);
+    cpu_modify_console.write_u8(0x00000bu, 0x40u);
+    cpu_modify_console.write_u8(0x00000cu, 0x26u);
+    cpu_modify_console.write_u8(0x00000du, 0x40u);
+    cpu_modify_console.write_u8(0x00000eu, 0x46u);
+    cpu_modify_console.write_u8(0x00000fu, 0x40u);
+    cpu_modify_console.write_u8(0x000010u, 0x66u);
+    cpu_modify_console.write_u8(0x000011u, 0x40u);
+    cpu_modify_console.write_u8(0x000012u, 0xc6u);
+    cpu_modify_console.write_u8(0x000013u, 0x40u);
+    cpu_modify_console.write_u8(0x000014u, 0xe6u);
+    cpu_modify_console.write_u8(0x000015u, 0x40u);
+    cpu_modify_console.write_u8(0x000016u, 0x0au);
+    cpu_modify_console.write_u8(0x000017u, 0x2au);
+    cpu_modify_console.write_u8(0x000018u, 0x4au);
+    cpu_modify_console.write_u8(0x000019u, 0x6au);
+    cpu_modify_console.write_u8(0x00001au, 0x3au);
+    cpu_modify_console.write_u8(0x00001bu, 0x1au);
+    cpu_modify_console.write_u8(0x00001cu, 0xa2u);
+    cpu_modify_console.write_u8(0x00001du, 0x01u);
+    cpu_modify_console.write_u8(0x00001eu, 0x34u);
+    cpu_modify_console.write_u8(0x00001fu, 0x5fu);
+    cpu_modify_console.write_u8(0x000020u, 0x74u);
+    cpu_modify_console.write_u8(0x000021u, 0x70u);
+
+    for (int step_index{ 0 }; step_index < 3; ++step_index)
+        static_cast<void>(cpu_modify_console.step_hardware());
+
+    if (cpu_modify_console.read_u8(0x000050u) != 0xc0u
+        || (cpu_modify_console.cpu_state().p & 0x02u) != 0)
+    {
+        return fail("cpu_tsb_direct");
+    }
+
+    static_cast<void>(cpu_modify_console.step_hardware());
+    if ((cpu_modify_console.cpu_state().p & 0xc0u) != 0xc0u
+        || (cpu_modify_console.cpu_state().p & 0x02u) != 0)
+    {
+        return fail("cpu_bit_direct");
+    }
+
+    static_cast<void>(cpu_modify_console.step_hardware());
+    if (cpu_modify_console.read_u8(0x000050u) != 0x80u
+        || (cpu_modify_console.cpu_state().p & 0x02u) != 0)
+    {
+        return fail("cpu_trb_direct");
+    }
+
+    for (int step_index{ 0 }; step_index < 7; ++step_index)
+        static_cast<void>(cpu_modify_console.step_hardware());
+
+    if (cpu_modify_console.read_u8(0x000040u) != 0x81u)
+        return fail("cpu_modify_direct_cycle");
+
+    for (int step_index{ 0 }; step_index < 5; ++step_index)
+        static_cast<void>(cpu_modify_console.step_hardware());
+
+    if (cpu_modify_console.cpu_state().a != 0x0081u
+        || (cpu_modify_console.cpu_state().p & 0x80u) == 0)
+        return fail("cpu_modify_accumulator_cycle");
+
+    for (int step_index{ 0 }; step_index < 3; ++step_index)
+        static_cast<void>(cpu_modify_console.step_hardware());
+
+    if ((cpu_modify_console.cpu_state().p & 0x80u) == 0
+        || (cpu_modify_console.cpu_state().p & 0x02u) != 0
+        || cpu_modify_console.read_u8(0x000071u) != 0x00u)
+    {
+        return fail("cpu_bit_direct_x_stz_direct_x");
+    }
+
+    clover::core::console_t cpu_modify_native_console{};
+    cpu_modify_native_console.power_on();
+    cpu_modify_native_console.write_u8(0x000080u, 0xf0u);
+    cpu_modify_native_console.write_u8(0x000081u, 0x00u);
+    cpu_modify_native_console.write_u8(0x000082u, 0x01u);
+    cpu_modify_native_console.write_u8(0x000083u, 0x80u);
+    cpu_modify_native_console.write_u8(0x000091u, 0x00u);
+    cpu_modify_native_console.write_u8(0x000092u, 0x40u);
+    cpu_modify_native_console.write_u8(0x0000a1u, 0x01u);
+    cpu_modify_native_console.write_u8(0x0000a2u, 0x80u);
+    cpu_modify_native_console.write_u8(0x0000b0u, 0x55u);
+    cpu_modify_native_console.write_u8(0x0000b1u, 0xaau);
+
+    cpu_modify_native_console.write_u8(0x000000u, 0x18u);
+    cpu_modify_native_console.write_u8(0x000001u, 0xfbu);
+    cpu_modify_native_console.write_u8(0x000002u, 0xc2u);
+    cpu_modify_native_console.write_u8(0x000003u, 0x20u);
+    cpu_modify_native_console.write_u8(0x000004u, 0xa9u);
+    cpu_modify_native_console.write_u8(0x000005u, 0x34u);
+    cpu_modify_native_console.write_u8(0x000006u, 0x12u);
+    cpu_modify_native_console.write_u8(0x000007u, 0x0cu);
+    cpu_modify_native_console.write_u8(0x000008u, 0x80u);
+    cpu_modify_native_console.write_u8(0x000009u, 0x00u);
+    cpu_modify_native_console.write_u8(0x00000au, 0x1cu);
+    cpu_modify_native_console.write_u8(0x00000bu, 0x80u);
+    cpu_modify_native_console.write_u8(0x00000cu, 0x00u);
+    cpu_modify_native_console.write_u8(0x00000du, 0x0eu);
+    cpu_modify_native_console.write_u8(0x00000eu, 0x82u);
+    cpu_modify_native_console.write_u8(0x00000fu, 0x00u);
+    cpu_modify_native_console.write_u8(0x000010u, 0x2eu);
+    cpu_modify_native_console.write_u8(0x000011u, 0x82u);
+    cpu_modify_native_console.write_u8(0x000012u, 0x00u);
+    cpu_modify_native_console.write_u8(0x000013u, 0x4eu);
+    cpu_modify_native_console.write_u8(0x000014u, 0x82u);
+    cpu_modify_native_console.write_u8(0x000015u, 0x00u);
+    cpu_modify_native_console.write_u8(0x000016u, 0x6eu);
+    cpu_modify_native_console.write_u8(0x000017u, 0x82u);
+    cpu_modify_native_console.write_u8(0x000018u, 0x00u);
+    cpu_modify_native_console.write_u8(0x000019u, 0xceu);
+    cpu_modify_native_console.write_u8(0x00001au, 0x82u);
+    cpu_modify_native_console.write_u8(0x00001bu, 0x00u);
+    cpu_modify_native_console.write_u8(0x00001cu, 0xeeu);
+    cpu_modify_native_console.write_u8(0x00001du, 0x82u);
+    cpu_modify_native_console.write_u8(0x00001eu, 0x00u);
+    cpu_modify_native_console.write_u8(0x00001fu, 0xa2u);
+    cpu_modify_native_console.write_u8(0x000020u, 0x01u);
+    cpu_modify_native_console.write_u8(0x000021u, 0x3cu);
+    cpu_modify_native_console.write_u8(0x000022u, 0x90u);
+    cpu_modify_native_console.write_u8(0x000023u, 0x00u);
+    cpu_modify_native_console.write_u8(0x000024u, 0x1eu);
+    cpu_modify_native_console.write_u8(0x000025u, 0xa0u);
+    cpu_modify_native_console.write_u8(0x000026u, 0x00u);
+    cpu_modify_native_console.write_u8(0x000027u, 0x3eu);
+    cpu_modify_native_console.write_u8(0x000028u, 0xa0u);
+    cpu_modify_native_console.write_u8(0x000029u, 0x00u);
+    cpu_modify_native_console.write_u8(0x00002au, 0x5eu);
+    cpu_modify_native_console.write_u8(0x00002bu, 0xa0u);
+    cpu_modify_native_console.write_u8(0x00002cu, 0x00u);
+    cpu_modify_native_console.write_u8(0x00002du, 0x7eu);
+    cpu_modify_native_console.write_u8(0x00002eu, 0xa0u);
+    cpu_modify_native_console.write_u8(0x00002fu, 0x00u);
+    cpu_modify_native_console.write_u8(0x000030u, 0xdeu);
+    cpu_modify_native_console.write_u8(0x000031u, 0xa0u);
+    cpu_modify_native_console.write_u8(0x000032u, 0x00u);
+    cpu_modify_native_console.write_u8(0x000033u, 0xfeu);
+    cpu_modify_native_console.write_u8(0x000034u, 0xa0u);
+    cpu_modify_native_console.write_u8(0x000035u, 0x00u);
+    cpu_modify_native_console.write_u8(0x000036u, 0x9cu);
+    cpu_modify_native_console.write_u8(0x000037u, 0xb0u);
+    cpu_modify_native_console.write_u8(0x000038u, 0x00u);
+
+    for (int step_index{ 0 }; step_index < 5; ++step_index)
+        static_cast<void>(cpu_modify_native_console.step_hardware());
+
+    if (cpu_modify_native_console.read_u8(0x000080u) != 0xf4u
+        || cpu_modify_native_console.read_u8(0x000081u) != 0x12u)
+    {
+        return fail("cpu_tsb_absolute_16bit");
+    }
+
+    static_cast<void>(cpu_modify_native_console.step_hardware());
+    if (cpu_modify_native_console.read_u8(0x000080u) != 0xc0u
+        || cpu_modify_native_console.read_u8(0x000081u) != 0x00u)
+    {
+        return fail("cpu_trb_absolute_16bit");
+    }
+
+    for (int step_index{ 0 }; step_index < 6; ++step_index)
+        static_cast<void>(cpu_modify_native_console.step_hardware());
+
+    if (cpu_modify_native_console.read_u8(0x000082u) != 0x01u
+        || cpu_modify_native_console.read_u8(0x000083u) != 0x80u)
+    {
+        return fail("cpu_modify_absolute_16bit_cycle");
+    }
+
+    for (int step_index{ 0 }; step_index < 2; ++step_index)
+        static_cast<void>(cpu_modify_native_console.step_hardware());
+
+    if ((cpu_modify_native_console.cpu_state().p & 0x40u) == 0
+        || (cpu_modify_native_console.cpu_state().p & 0x02u) == 0)
+    {
+        return fail("cpu_bit_absolute_x_16bit");
+    }
+
+    for (int step_index{ 0 }; step_index < 6; ++step_index)
+        static_cast<void>(cpu_modify_native_console.step_hardware());
+
+    if (cpu_modify_native_console.read_u8(0x0000a1u) != 0x01u
+        || cpu_modify_native_console.read_u8(0x0000a2u) != 0x80u)
+    {
+        return fail("cpu_modify_absolute_x_16bit_cycle");
+    }
+
+    static_cast<void>(cpu_modify_native_console.step_hardware());
+    if (cpu_modify_native_console.read_u8(0x0000b0u) != 0x00u
+        || cpu_modify_native_console.read_u8(0x0000b1u) != 0x00u)
+    {
+        return fail("cpu_stz_absolute_16bit");
+    }
+
+    clover::core::console_t cpu_stack_relative_console{};
+    cpu_stack_relative_console.power_on();
+    cpu_stack_relative_console.write_u8(0x0001f9u, 0x11u);
+    cpu_stack_relative_console.write_u8(0x0001fau, 0x22u);
+    cpu_stack_relative_console.write_u8(0x0001fbu, 0x80u);
+    cpu_stack_relative_console.write_u8(0x0001fcu, 0x00u);
+    cpu_stack_relative_console.write_u8(0x0001fdu, 0x00u);
+    cpu_stack_relative_console.write_u8(0x000080u, 0x33u);
+    cpu_stack_relative_console.write_u8(0x000082u, 0x0fu);
+    cpu_stack_relative_console.write_u8(0x000090u, 0x00u);
+    cpu_stack_relative_console.write_u8(0x000091u, 0x00u);
+
+    cpu_stack_relative_console.write_u8(0x000000u, 0xa2u);
+    cpu_stack_relative_console.write_u8(0x000001u, 0xf8u);
+    cpu_stack_relative_console.write_u8(0x000002u, 0x9au);
+    cpu_stack_relative_console.write_u8(0x000003u, 0xa0u);
+    cpu_stack_relative_console.write_u8(0x000004u, 0x02u);
+    cpu_stack_relative_console.write_u8(0x000005u, 0xa3u);
+    cpu_stack_relative_console.write_u8(0x000006u, 0x01u);
+    cpu_stack_relative_console.write_u8(0x000007u, 0x03u);
+    cpu_stack_relative_console.write_u8(0x000008u, 0x02u);
+    cpu_stack_relative_console.write_u8(0x000009u, 0x23u);
+    cpu_stack_relative_console.write_u8(0x00000au, 0x01u);
+    cpu_stack_relative_console.write_u8(0x00000bu, 0x43u);
+    cpu_stack_relative_console.write_u8(0x00000cu, 0x01u);
+    cpu_stack_relative_console.write_u8(0x00000du, 0x63u);
+    cpu_stack_relative_console.write_u8(0x00000eu, 0x01u);
+    cpu_stack_relative_console.write_u8(0x00000fu, 0x83u);
+    cpu_stack_relative_console.write_u8(0x000010u, 0x05u);
+    cpu_stack_relative_console.write_u8(0x000011u, 0xb3u);
+    cpu_stack_relative_console.write_u8(0x000012u, 0x03u);
+    cpu_stack_relative_console.write_u8(0x000013u, 0x13u);
+    cpu_stack_relative_console.write_u8(0x000014u, 0x03u);
+    cpu_stack_relative_console.write_u8(0x000015u, 0x33u);
+    cpu_stack_relative_console.write_u8(0x000016u, 0x03u);
+    cpu_stack_relative_console.write_u8(0x000017u, 0x53u);
+    cpu_stack_relative_console.write_u8(0x000018u, 0x03u);
+    cpu_stack_relative_console.write_u8(0x000019u, 0x73u);
+    cpu_stack_relative_console.write_u8(0x00001au, 0x03u);
+    cpu_stack_relative_console.write_u8(0x00001bu, 0x93u);
+    cpu_stack_relative_console.write_u8(0x00001cu, 0x03u);
+    cpu_stack_relative_console.write_u8(0x00001du, 0xc3u);
+    cpu_stack_relative_console.write_u8(0x00001eu, 0x01u);
+    cpu_stack_relative_console.write_u8(0x00001fu, 0xd3u);
+    cpu_stack_relative_console.write_u8(0x000020u, 0x03u);
+    cpu_stack_relative_console.write_u8(0x000021u, 0xe3u);
+    cpu_stack_relative_console.write_u8(0x000022u, 0x01u);
+    cpu_stack_relative_console.write_u8(0x000023u, 0xf3u);
+    cpu_stack_relative_console.write_u8(0x000024u, 0x03u);
+    cpu_stack_relative_console.write_u8(0x000025u, 0x99u);
+    cpu_stack_relative_console.write_u8(0x000026u, 0x90u);
+    cpu_stack_relative_console.write_u8(0x000027u, 0x00u);
+
+    for (int step_index{ 0 }; step_index < 9; ++step_index)
+        static_cast<void>(cpu_stack_relative_console.step_hardware());
+
+    if (cpu_stack_relative_console.cpu_state().a != 0x0011u
+        || cpu_stack_relative_console.read_u8(0x0001fdu) != 0x11u)
+        return fail("cpu_stack_relative_basic");
+
+    for (int step_index{ 0 }; step_index < 6; ++step_index)
+        static_cast<void>(cpu_stack_relative_console.step_hardware());
+
+    if (cpu_stack_relative_console.cpu_state().a != 0x000fu
+        || cpu_stack_relative_console.read_u8(0x000082u) != 0x0fu
+        || cpu_stack_relative_console.read_u8(0x000080u) != 0x33u)
+    {
+        return fail("cpu_stack_relative_indirect_store");
+    }
+
+    for (int step_index{ 0 }; step_index < 2; ++step_index)
+        static_cast<void>(cpu_stack_relative_console.step_hardware());
+
+    if ((cpu_stack_relative_console.cpu_state().p & 0x03u) != 0x03u
+        || cpu_stack_relative_console.cpu_state().a != 0x000fu)
+    {
+        return fail("cpu_stack_relative_compare");
+    }
+
+    for (int step_index{ 0 }; step_index < 3; ++step_index)
+        static_cast<void>(cpu_stack_relative_console.step_hardware());
+
+    if (cpu_stack_relative_console.cpu_state().a != 0x00eeu
+        || cpu_stack_relative_console.read_u8(0x000092u) != 0xeeu)
+    {
+        return fail("cpu_stack_relative_compare_sbc_sta_abs_y");
+    }
+
+    clover::core::console_t ppu_register_console{};
+    ppu_register_console.power_on();
+
+    ppu_register_console.write_u8(0x002100u, 0x8fu);
+    if (ppu_register_console.read_u8(0x002100u) != 0x8fu)
+        return fail("inidisp_roundtrip");
+
+    ppu_register_console.write_u8(0x002115u, 0x80u);
+    ppu_register_console.write_u8(0x002116u, 0x34u);
+    ppu_register_console.write_u8(0x002117u, 0x12u);
+    ppu_register_console.write_u8(0x002118u, 0x5au);
+    ppu_register_console.write_u8(0x002119u, 0x3cu);
+    ppu_register_console.write_u8(0x002116u, 0x34u);
+    ppu_register_console.write_u8(0x002117u, 0x12u);
+    if (ppu_register_console.read_u8(0x002139u) != 0x5au)
+        return fail("vram_read_low");
+    if (ppu_register_console.read_u8(0x00213au) != 0x3cu)
+        return fail("vram_read_high");
+
+    ppu_register_console.write_u8(0x002121u, 0x02u);
+    ppu_register_console.write_u8(0x002122u, 0x34u);
+    ppu_register_console.write_u8(0x002122u, 0x12u);
+    ppu_register_console.write_u8(0x002121u, 0x02u);
+    if (ppu_register_console.read_u8(0x00213bu) != 0x34u)
+        return fail("cgram_read_low");
+    if ((ppu_register_console.read_u8(0x00213bu) & 0x7fu) != 0x12u)
+        return fail("cgram_read_high");
+
+    ppu_register_console.write_u8(0x002102u, 0x00u);
+    ppu_register_console.write_u8(0x002103u, 0x00u);
+    ppu_register_console.write_u8(0x002104u, 0x78u);
+    ppu_register_console.write_u8(0x002104u, 0x56u);
+    ppu_register_console.write_u8(0x002102u, 0x00u);
+    ppu_register_console.write_u8(0x002103u, 0x00u);
+    if (ppu_register_console.read_u8(0x002138u) != 0x78u)
+        return fail("oam_read_low");
+    if (ppu_register_console.read_u8(0x002138u) != 0x56u)
+        return fail("oam_read_high");
+
+    clover::core::console_t ppu_mmio_restrict_console{};
+    ppu_mmio_restrict_console.power_on();
+    ppu_mmio_restrict_console.write_u8(0x002116u, 0x34u);
+    ppu_mmio_restrict_console.write_u8(0x002117u, 0x12u);
+    ppu_mmio_restrict_console.write_u8(0x002118u, 0x5au);
+    ppu_mmio_restrict_console.write_u8(0x002119u, 0x3cu);
+    ppu_mmio_restrict_console.write_u8(0x002100u, 0x80u);
+    ppu_mmio_restrict_console.write_u8(0x002116u, 0x34u);
+    ppu_mmio_restrict_console.write_u8(0x002117u, 0x12u);
+    if (ppu_mmio_restrict_console.read_u8(0x002139u) != 0x00u
+        || ppu_mmio_restrict_console.read_u8(0x00213au) != 0x00u)
+    {
+        return fail("vram_active_display_block");
+    }
+
+    clover::core::console_t ppu_cgram_restrict_console{};
+    ppu_cgram_restrict_console.power_on();
+    while (ppu_cgram_restrict_console.timing().raster.scanline == 0
+        || ppu_cgram_restrict_console.timing().raster.dot < 100)
+    {
+        static_cast<void>(ppu_cgram_restrict_console.step_hardware());
+    }
+    ppu_cgram_restrict_console.write_u8(0x002121u, 0x02u);
+    ppu_cgram_restrict_console.write_u8(0x002122u, 0x34u);
+    ppu_cgram_restrict_console.write_u8(0x002122u, 0x12u);
+    ppu_cgram_restrict_console.write_u8(0x002100u, 0x80u);
+    ppu_cgram_restrict_console.write_u8(0x002121u, 0x02u);
+    if (ppu_cgram_restrict_console.read_u8(0x00213bu) != 0x00u
+        || (ppu_cgram_restrict_console.read_u8(0x00213bu) & 0x7fu) != 0x00u)
+    {
+        return fail("cgram_active_display_block");
+    }
+
+    while (ppu_register_console.timing().raster.dot < 24)
+        static_cast<void>(ppu_register_console.step_hardware());
+
+    const clover::core::timing_snapshot_t latched_timing{ ppu_register_console.timing() };
+    static_cast<void>(ppu_register_console.read_u8(0x002137u));
+    const uint16_t latched_hcounter{
+        static_cast<uint16_t>(ppu_register_console.read_u8(0x00213cu)
+            | ((ppu_register_console.read_u8(0x00213cu) & 0x01u) << 8u))
+    };
+    const uint16_t latched_vcounter{
+        static_cast<uint16_t>(ppu_register_console.read_u8(0x00213du)
+            | ((ppu_register_console.read_u8(0x00213du) & 0x01u) << 8u))
+    };
+    const uint8_t stat78{ ppu_register_console.read_u8(0x00213fu) };
+    if ((stat78 & 0x40u) == 0)
+        return fail("stat78_counter_latch");
+
+    if (latched_hcounter != latched_timing.raster.dot || latched_vcounter != latched_timing.raster.scanline)
+        return fail("latched_counters");
+
+    ppu_register_console.write_u8(0x002105u, 0xb9u);
+    ppu_register_console.write_u8(0x002106u, 0xa5u);
+    ppu_register_console.write_u8(0x002107u, 0x29u);
+    ppu_register_console.write_u8(0x002108u, 0x3eu);
+    ppu_register_console.write_u8(0x00210bu, 0x54u);
+    ppu_register_console.write_u8(0x00210cu, 0x76u);
+    ppu_register_console.write_u8(0x00210du, 0x12u);
+    ppu_register_console.write_u8(0x00210du, 0x34u);
+    ppu_register_console.write_u8(0x00210eu, 0x56u);
+    ppu_register_console.write_u8(0x00210fu, 0x78u);
+    ppu_register_console.write_u8(0x00210fu, 0x9au);
+    ppu_register_console.write_u8(0x002110u, 0xbcu);
+    ppu_register_console.write_u8(0x002123u, 0xa5u);
+    ppu_register_console.write_u8(0x002124u, 0x5au);
+    ppu_register_console.write_u8(0x002125u, 0xc3u);
+    ppu_register_console.write_u8(0x002126u, 0x11u);
+    ppu_register_console.write_u8(0x002127u, 0x22u);
+    ppu_register_console.write_u8(0x002128u, 0x33u);
+    ppu_register_console.write_u8(0x002129u, 0x44u);
+    ppu_register_console.write_u8(0x00212au, 0xe4u);
+    ppu_register_console.write_u8(0x00212bu, 0x09u);
+    ppu_register_console.write_u8(0x00212cu, 0x15u);
+    ppu_register_console.write_u8(0x00212du, 0x0au);
+    ppu_register_console.write_u8(0x00212eu, 0x12u);
+    ppu_register_console.write_u8(0x00212fu, 0x04u);
+    ppu_register_console.write_u8(0x002130u, 0xb3u);
+    ppu_register_console.write_u8(0x002131u, 0xf5u);
+    ppu_register_console.write_u8(0x002132u, 0x2au);
+    ppu_register_console.write_u8(0x002132u, 0x4bu);
+    ppu_register_console.write_u8(0x002132u, 0x8cu);
+    ppu_register_console.write_u8(0x002133u, 0x0du);
+    ppu_register_console.write_u8(0x00211au, 0xc3u);
+
+    const clover::core::ppu_render_state_snapshot_t ppu_render_state{
+        ppu_register_console.ppu_render_state()
+    };
+    if (ppu_render_state.bg_mode != 1)
+        return fail("ppu_bg_mode");
+
+    if (!ppu_render_state.bg3_priority)
+        return fail("ppu_bg3_priority");
+
+    if (!ppu_render_state.backgrounds[0].large_tiles
+        || !ppu_render_state.backgrounds[1].large_tiles
+        || !ppu_render_state.backgrounds[3].large_tiles)
+    {
+        return fail("ppu_bg_large_tiles");
+    }
+
+    if (ppu_render_state.mosaic_size != 11
+        || ppu_render_state.backgrounds[0].screen_address != 0x2800u
+        || ppu_render_state.backgrounds[1].screen_address != 0x3c00u
+        || ppu_render_state.backgrounds[0].tiledata_address != 0x4000u
+        || ppu_render_state.backgrounds[3].tiledata_address != 0x7000u)
+    {
+        return fail("ppu_bg_layout_state");
+    }
+
+    if (!ppu_render_state.backgrounds[0].active
+        || !ppu_render_state.backgrounds[1].active
+        || !ppu_render_state.backgrounds[2].active
+        || ppu_render_state.backgrounds[3].active
+        || ppu_render_state.backgrounds[0].mode != clover::core::ppu_background_render_state_t::mode_t::bpp4
+        || ppu_render_state.backgrounds[1].mode != clover::core::ppu_background_render_state_t::mode_t::bpp4
+        || ppu_render_state.backgrounds[2].mode != clover::core::ppu_background_render_state_t::mode_t::bpp2
+        || ppu_render_state.backgrounds[2].priority[0] != 3u
+        || ppu_render_state.backgrounds[2].priority[1] != 11u)
+    {
+        return fail("ppu_mode_decode_state");
+    }
+
+    if (ppu_render_state.backgrounds[0].hoffset != 0x3412u
+        || ppu_render_state.backgrounds[0].voffset != 0x5634u
+        || ppu_render_state.backgrounds[1].hoffset != 0x9a78u
+        || ppu_render_state.backgrounds[1].voffset != 0xbc9au)
+    {
+        return fail("ppu_scroll_state");
+    }
+
+    if (!ppu_render_state.backgrounds[0].above_enabled
+        || !ppu_render_state.backgrounds[2].above_enabled
+        || !ppu_render_state.objects.above_enabled
+        || !ppu_render_state.backgrounds[1].below_enabled
+        || !ppu_render_state.backgrounds[3].below_enabled)
+    {
+        return fail("ppu_layer_enable_state");
+    }
+
+    if (!ppu_render_state.backgrounds[1].window_above_enabled
+        || !ppu_render_state.backgrounds[2].window_below_enabled
+        || !ppu_render_state.objects.window_above_enabled
+        || ppu_render_state.window.one_left != 0x11u
+        || ppu_render_state.window.two_right != 0x44u)
+    {
+        return fail("ppu_window_enable_state");
+    }
+
+    if (!ppu_render_state.color_math.direct_color
+        || !ppu_render_state.color_math.blend_mode
+        || !ppu_render_state.color_math.color_halve
+        || !ppu_render_state.color_math.bg_color_enable[0]
+        || !ppu_render_state.color_math.bg_color_enable[2]
+        || !ppu_render_state.color_math.obj_color_enable
+        || !ppu_render_state.color_math.backdrop_color_enable
+        || ppu_render_state.color_math.fixed_red != 10u
+        || ppu_render_state.color_math.fixed_green != 11u
+        || ppu_render_state.color_math.fixed_blue != 12u
+        || !ppu_render_state.pseudo_hires
+        || !ppu_render_state.overscan
+        || !ppu_render_state.interlace)
+    {
+        return fail("ppu_color_math_state");
+    }
+
+    ppu_register_console.write_u8(0x002105u, 0x05u);
+    ppu_register_console.write_u8(0x00211au, 0xc3u);
+    const clover::core::ppu_render_state_snapshot_t hires_render_state{
+        ppu_register_console.ppu_render_state()
+    };
+    if (!hires_render_state.hires
+        || hires_render_state.backgrounds[0].mode != clover::core::ppu_background_render_state_t::mode_t::bpp4
+        || hires_render_state.backgrounds[1].mode != clover::core::ppu_background_render_state_t::mode_t::bpp2
+        || hires_render_state.backgrounds[2].active
+        || hires_render_state.backgrounds[3].active
+        || hires_render_state.mode7_repeat != 3u
+        || !hires_render_state.mode7_hflip
+        || !hires_render_state.mode7_vflip)
+    {
+        return fail("ppu_hires_decode_state");
+    }
+
+    const clover::core::ppu_compositor_snapshot_t compositor_state{
+        ppu_register_console.ppu_compositor_state()
+    };
+    if (!compositor_state.hires
+        || !compositor_state.pseudo_hires
+        || !compositor_state.blend_mode
+        || !compositor_state.color_halve
+        || !compositor_state.direct_color
+        || !compositor_state.color_mode_subtract
+        || !compositor_state.backdrop_color_enable
+        || compositor_state.fixed_red != 10u
+        || compositor_state.fixed_green != 11u
+        || compositor_state.fixed_blue != 12u)
+    {
+        return fail("ppu_compositor_control_state");
+    }
+
+    for (const auto& background : compositor_state.backgrounds)
+    {
+        if (background.above.priority != 0
+            || background.above.palette != 0
+            || background.below.priority != 0
+            || background.below.palette != 0)
+        {
+            return fail("ppu_compositor_candidate_defaults");
+        }
+    }
+
+    if (compositor_state.objects.above.priority != 0
+        || compositor_state.objects.below.priority != 0)
+    {
+        return fail("ppu_object_candidate_defaults");
+    }
+
+    return 0;
+}

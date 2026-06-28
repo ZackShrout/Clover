@@ -1,0 +1,569 @@
+//
+// Created by Zack Shrout on 6/28/26.
+// Copyright (c) 2026 BunnySoft. All rights reserved.
+//
+
+#include "clover/core/Cpu.h"
+
+#include "clover/core/Bus.h"
+#include "clover/core/Dma.h"
+#include "clover/core/CpuInternal.h"
+#include "clover/core/Interrupts.h"
+
+namespace
+{
+    constexpr uint16_t k_cpu_hblank_start_dot{ 1096 };
+
+    enum class irq_timer_mode_t : uint8_t
+    {
+        none,
+        h_counter,
+        v_counter,
+        hv_counter
+    };
+
+    [[nodiscard]] bool crossed_irq_point(const clover::core::timing_snapshot_t& previous_timing,
+                                         const clover::core::timing_snapshot_t& current_timing,
+                                                uint16_t target_scanline,
+                                                uint16_t target_dot) noexcept
+    {
+        if (current_timing.raster.scanline < previous_timing.raster.scanline)
+        {
+            if (target_scanline >= previous_timing.raster.scanline)
+                return true;
+
+            if (target_scanline <= current_timing.raster.scanline && target_dot <= current_timing.raster.dot)
+                return true;
+
+            return false;
+        }
+
+        if (target_scanline < previous_timing.raster.scanline || target_scanline > current_timing.raster.scanline)
+            return false;
+
+        if (target_scanline == previous_timing.raster.scanline && target_dot < previous_timing.raster.dot)
+            return false;
+
+        if (target_scanline == current_timing.raster.scanline && target_dot > current_timing.raster.dot)
+            return false;
+
+        return previous_timing.master_clock != current_timing.master_clock;
+    }
+
+    [[nodiscard]] irq_timer_mode_t irq_timer_mode(const clover::core::cpu_io_t& io) noexcept
+    {
+        if (io.hirq_enabled && io.virq_enabled)
+            return irq_timer_mode_t::hv_counter;
+
+        if (io.hirq_enabled)
+            return irq_timer_mode_t::h_counter;
+
+        if (io.virq_enabled)
+            return irq_timer_mode_t::v_counter;
+
+        return irq_timer_mode_t::none;
+    }
+
+    [[nodiscard]] bool crossed_hirq_point(const clover::core::timing_snapshot_t& previous_timing,
+                                          const clover::core::timing_snapshot_t& current_timing,
+                                                 uint16_t target_dot) noexcept
+    {
+        if (crossed_irq_point(previous_timing,
+                              current_timing,
+                              previous_timing.raster.scanline,
+                              target_dot))
+        {
+            return true;
+        }
+
+        if (current_timing.raster.scanline != previous_timing.raster.scanline)
+        {
+            return crossed_irq_point(previous_timing,
+                                     current_timing,
+                                     current_timing.raster.scanline,
+                                     target_dot);
+        }
+
+        return false;
+    }
+
+    void decrement_hold(uint8_t& hold_clocks,
+                        clover::core::master_clock_delta_t elapsed_master_clocks) noexcept
+    {
+        if (hold_clocks == 0)
+            return;
+
+        if (elapsed_master_clocks >= hold_clocks)
+        {
+            hold_clocks = 0;
+            return;
+        }
+
+        hold_clocks = static_cast<uint8_t>(hold_clocks - elapsed_master_clocks);
+    }
+
+    [[nodiscard]] bool cpu_in_hblank(const clover::core::timing_snapshot_t& timing) noexcept
+    {
+        return timing.raster.dot <= 2u || timing.raster.dot >= k_cpu_hblank_start_dot;
+    }
+
+    [[nodiscard]] uint16_t hirq_target_dot(const clover::core::cpu_io_t& io) noexcept
+    {
+        const uint16_t htime{ static_cast<uint16_t>(io.htime & 0x01ffu) };
+        return static_cast<uint16_t>((htime + 1u) << 2u);
+    }
+
+} // anonymous namespace
+
+namespace clover::core
+{
+    void cpu_t::attach_interrupt_controller(interrupt_controller_t& interrupts) noexcept
+    {
+        _interrupts = &interrupts;
+    }
+
+    void cpu_t::power_on() noexcept
+    {
+        _state = {};
+        _state.sp = 0x01ffu;
+        _state.p = 0x34u;
+        _state.emulation_mode = true;
+        _io = {};
+        _io.in_hblank = true;
+        _io.htime = 0x01ffu;
+        _io.vtime = 0x01ffu;
+        _master_clock = 0;
+        _counter.reset();
+        _interrupt_poll_phase = 0;
+        _visible_scanlines = k_ntsc_video_timing.visible_scanlines;
+        _waiting = false;
+        _wait_wake_idle_pending = false;
+        _stopped = false;
+        _last_timing = _counter.snapshot(k_ntsc_video_timing, _visible_scanlines);
+        _last_nmi_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 2);
+        _last_irq_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 10);
+        _last_irq_gate_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 6);
+        _irq_condition_valid = false;
+        _dma_active = false;
+    }
+
+    void cpu_t::reset() noexcept
+    {
+        _state.pc = 0;
+        _state.sp = 0x01ffu;
+        _state.p = 0x34u;
+        _state.db = 0;
+        _state.pb = 0;
+        _state.emulation_mode = true;
+        _io = {};
+        _io.in_hblank = true;
+        _io.htime = 0x01ffu;
+        _io.vtime = 0x01ffu;
+        _master_clock = 0;
+        _counter.reset();
+        _interrupt_poll_phase = 0;
+        _visible_scanlines = k_ntsc_video_timing.visible_scanlines;
+        _waiting = false;
+        _wait_wake_idle_pending = false;
+        _stopped = false;
+        _last_timing = _counter.snapshot(k_ntsc_video_timing, _visible_scanlines);
+        _last_nmi_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 2);
+        _last_irq_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 10);
+        _last_irq_gate_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 6);
+        _irq_condition_valid = false;
+        _dma_active = false;
+    }
+
+    uint8_t cpu_t::dma_phase() const noexcept
+    {
+        return static_cast<uint8_t>(_master_clock & 7u);
+    }
+
+    timing_snapshot_t cpu_t::timing(const video_timing_t& video_timing) const noexcept
+    {
+        return _counter.snapshot(video_timing, _visible_scanlines);
+    }
+
+    timing_snapshot_t cpu_t::delayed_timing(const video_timing_t& video_timing,
+                                            master_clock_delta_t delay) const noexcept
+    {
+        return _counter.snapshot_delayed(video_timing, _visible_scanlines, delay);
+    }
+
+    bool cpu_t::irq_condition(const timing_snapshot_t& irq_timing,
+                              const timing_snapshot_t& irq_gate_timing) const noexcept
+    {
+        if (!_io.irq_enabled)
+            return false;
+
+        if (irq_gate_timing.raster.scanline == 0 && irq_gate_timing.raster.dot == 0)
+            return false;
+
+        if (_io.virq_enabled && irq_timing.raster.scanline != _io.vtime)
+            return false;
+
+        if (_io.hirq_enabled && irq_timing.raster.dot != hirq_target_dot(_io))
+            return false;
+
+        return true;
+    }
+
+    void cpu_t::repoll_irq_on_register_write(interrupt_controller_t& interrupts) noexcept
+    {
+        if (!_io.irq_enabled)
+        {
+            interrupts.clear_irq_status_line();
+            _irq_condition_valid = false;
+            return;
+        }
+
+        const bool current_condition{ irq_condition(_last_irq_timing, _last_irq_gate_timing) };
+        if (current_condition && !_irq_condition_valid)
+        {
+            _io.irq_flag = true;
+            _io.irq_hold_clocks = 4;
+            interrupts.assert_irq_line();
+        }
+
+        _irq_condition_valid = current_condition;
+    }
+
+    uint8_t cpu_t::read_register(uint16_t address) noexcept
+    {
+        switch (address)
+        {
+        case 0x4200u:
+        {
+            uint8_t value{ 0 };
+            value |= static_cast<uint8_t>(_io.hirq_enabled ? 0x10u : 0x00u);
+            value |= static_cast<uint8_t>(_io.virq_enabled ? 0x20u : 0x00u);
+            value |= static_cast<uint8_t>(_io.nmi_enabled ? 0x80u : 0x00u);
+            return value;
+        }
+        case 0x4207u:
+            return static_cast<uint8_t>(_io.htime & 0x00ffu);
+        case 0x4208u:
+            return static_cast<uint8_t>(_io.htime >> 8u);
+        case 0x4209u:
+            return static_cast<uint8_t>(_io.vtime & 0x00ffu);
+        case 0x420au:
+            return static_cast<uint8_t>(_io.vtime >> 8u);
+        case 0x4210u:
+        {
+            const uint8_t value{ static_cast<uint8_t>(0x02u | (_io.nmi_flag ? 0x80u : 0x00u)) };
+            if (_io.nmi_hold_clocks == 0)
+            {
+                _io.nmi_flag = false;
+                if (_interrupts != nullptr)
+                    _interrupts->clear_nmi_line();
+            }
+            return value;
+        }
+        case 0x4211u:
+        {
+            const uint8_t value{ static_cast<uint8_t>(_io.irq_flag ? 0x80u : 0x00u) };
+            if (_io.irq_hold_clocks == 0)
+            {
+                _io.irq_flag = false;
+                if (_interrupts != nullptr)
+                    _interrupts->clear_irq_status_line();
+            }
+            return value;
+        }
+        case 0x4212u:
+        {
+            uint8_t value{ 0 };
+            value |= static_cast<uint8_t>(_io.in_hblank ? 0x40u : 0x00u);
+            value |= static_cast<uint8_t>(_io.in_vblank ? 0x80u : 0x00u);
+            return value;
+        }
+        default:
+            return 0;
+        }
+    }
+
+    void cpu_t::write_register(uint16_t address, uint8_t value) noexcept
+    {
+        switch (address)
+        {
+        case 0x4200u:
+            if ((value & 0x80u) != 0 && !_io.nmi_enabled && _last_nmi_timing.in_vblank)
+            {
+                _io.nmi_flag = true;
+                _io.nmi_hold_clocks = 4;
+                if (_interrupts != nullptr)
+                    _interrupts->force_nmi_transition();
+            }
+            _io.hirq_enabled = (value & 0x10u) != 0;
+            _io.virq_enabled = (value & 0x20u) != 0;
+            _io.irq_enabled = _io.hirq_enabled || _io.virq_enabled;
+            _io.nmi_enabled = (value & 0x80u) != 0;
+            if (_interrupts != nullptr)
+            {
+                if (_io.virq_enabled && !_io.hirq_enabled && _interrupts->sample().irq_line)
+                    _interrupts->force_irq_transition();
+
+                if (_io.nmi_enabled && _interrupts->sample().nmi_line)
+                    _interrupts->force_nmi_transition();
+
+                repoll_irq_on_register_write(*_interrupts);
+                _interrupts->set_irq_lock();
+            }
+            return;
+        case 0x4207u:
+            _io.htime = static_cast<uint16_t>((_io.htime & 0x0100u) | value);
+            if (_interrupts != nullptr)
+                repoll_irq_on_register_write(*_interrupts);
+            return;
+        case 0x4208u:
+            _io.htime = static_cast<uint16_t>((_io.htime & 0x00ffu) | ((value & 0x01u) << 8u));
+            if (_interrupts != nullptr)
+                repoll_irq_on_register_write(*_interrupts);
+            return;
+        case 0x4209u:
+            _io.vtime = static_cast<uint16_t>((_io.vtime & 0x0100u) | value);
+            if (_interrupts != nullptr)
+                repoll_irq_on_register_write(*_interrupts);
+            return;
+        case 0x420au:
+            _io.vtime = static_cast<uint16_t>((_io.vtime & 0x00ffu) | ((value & 0x01u) << 8u));
+            if (_interrupts != nullptr)
+                repoll_irq_on_register_write(*_interrupts);
+            return;
+        default:
+            return;
+        }
+    }
+
+    hardware_slot_owner_t cpu_t::next_slot_owner(const dma_t& dma) const noexcept
+    {
+        return _dma_active && dma.has_pending_work()
+            ? hardware_slot_owner_t::dma
+            : hardware_slot_owner_t::cpu;
+    }
+
+    cpu_step_result_t cpu_t::step(bus_t& bus,
+                                  const dma_t& dma,
+                                  interrupt_controller_t& interrupts) noexcept
+    {
+        cpu_step_executor_t executor{ bus, interrupts };
+
+        if (_stopped)
+        {
+            executor.idle();
+            const cpu_step_result_t result{ executor.finish() };
+            _master_clock += result.master_clocks;
+            return result;
+        }
+
+        if (_wait_wake_idle_pending)
+        {
+            _wait_wake_idle_pending = false;
+            executor.idle();
+            const cpu_step_result_t result{ executor.finish() };
+            _master_clock += result.master_clocks;
+            return result;
+        }
+
+        if (_waiting)
+        {
+            const interrupt_state_t interrupt_state{ interrupts.sample() };
+            const bool wake_requested{ interrupt_state.nmi_pending
+                || interrupt_state.nmi_transition
+                || interrupt_state.irq_pending
+                || interrupt_state.irq_transition };
+
+            if (!wake_requested)
+            {
+                executor.idle();
+                const cpu_step_result_t result{ executor.finish() };
+                _master_clock += result.master_clocks;
+                return result;
+            }
+
+            _waiting = false;
+            _wait_wake_idle_pending = true;
+            executor.idle();
+            const cpu_step_result_t result{ executor.finish() };
+            _master_clock += result.master_clocks;
+            return result;
+        }
+
+        if (interrupts.irq_lock())
+        {
+            interrupts.clear_irq_lock();
+        }
+        else
+        {
+            if (interrupts.consume_nmi())
+            {
+                executor.idle();
+                enter_interrupt_handler(_state,
+                                        executor,
+                                        hardware_nmi_vector(_state),
+                                        false,
+                                        true);
+
+                const cpu_step_result_t result{ executor.finish() };
+                _master_clock += result.master_clocks;
+                return result;
+            }
+
+            if ((_state.p & k_status_irq_disable) == 0
+                && interrupts.consume_irq())
+            {
+                executor.idle();
+                enter_interrupt_handler(_state,
+                                        executor,
+                                        hardware_irq_vector(_state),
+                                        false,
+                                        true);
+
+                const cpu_step_result_t result{ executor.finish() };
+                _master_clock += result.master_clocks;
+                return result;
+            }
+        }
+
+        const uint8_t opcode{ executor.fetch_opcode(_state) };
+
+        if (!execute_load_opcode(opcode, _state, executor)
+            && !execute_jump_opcode(opcode, _state, executor)
+            && !execute_memory_opcode(opcode, _state, executor)
+            && !execute_transfer_opcode(opcode, _state, executor)
+            && !execute_stack_opcode(opcode, _state, executor)
+            && !execute_alu_opcode(opcode, _state, executor)
+            && !execute_modify_opcode(opcode, _state, executor)
+            && !execute_system_opcode(opcode, *this, _state, executor)
+            && !execute_branch_opcode(opcode, _state, executor))
+        {
+            // Keep the placeholder execution model explicit: one opcode fetch plus
+            // one trailing CPU cycle until real per-opcode timing lands.
+            executor.idle();
+        }
+
+        if (!executor.observed_opcode_edge())
+            interrupts.observe_opcode_edge();
+
+        const cpu_step_result_t result{ executor.finish() };
+        _master_clock += result.master_clocks;
+        if (dma.has_pending_work())
+            _dma_active = true;
+        return result;
+    }
+
+    void cpu_t::on_dma_step(const dma_t& dma, interrupt_controller_t& interrupts) noexcept
+    {
+        interrupts.set_irq_lock();
+        _dma_active = dma.has_pending_work();
+    }
+
+    void cpu_t::on_ppu_step(master_clock_delta_t elapsed_master_clocks,
+                            const video_timing_t& video_timing,
+                            const ppu_step_result_t& ppu_step,
+                            dma_t& dma,
+                            interrupt_controller_t& interrupts) noexcept
+    {
+        _interrupt_poll_phase = static_cast<master_clock_delta_t>(_interrupt_poll_phase + elapsed_master_clocks);
+        _counter.advance(elapsed_master_clocks, video_timing);
+        _visible_scanlines = ppu_step.visible_scanlines;
+        const timing_snapshot_t current_timing{ _counter.snapshot(video_timing, _visible_scanlines) };
+        const timing_snapshot_t nmi_timing{
+            _counter.snapshot_delayed(video_timing, _visible_scanlines, 2)
+        };
+        const timing_snapshot_t irq_timing{
+            _counter.snapshot_delayed(video_timing, _visible_scanlines, 10)
+        };
+        const timing_snapshot_t irq_gate_timing{
+            _counter.snapshot_delayed(video_timing, _visible_scanlines, 6)
+        };
+
+        decrement_hold(_io.nmi_hold_clocks, elapsed_master_clocks);
+        decrement_hold(_io.irq_hold_clocks, elapsed_master_clocks);
+
+        _io.in_hblank = cpu_in_hblank(current_timing);
+        _io.in_vblank = current_timing.in_vblank;
+
+        if (ppu_step.entered_frame_start)
+            interrupts.clear_nmi_line();
+
+        if (!_last_nmi_timing.in_vblank && nmi_timing.in_vblank)
+        {
+            _io.nmi_flag = true;
+            _io.nmi_hold_clocks = 4;
+            if (_io.nmi_enabled)
+                interrupts.assert_nmi_line();
+        }
+
+        const bool irq_gate_open{
+            irq_gate_timing.raster.scanline != 0 || irq_gate_timing.raster.dot != 0
+        };
+        const bool irq_condition_now{ irq_condition(irq_timing, irq_gate_timing) };
+        bool irq_edge{ false };
+        switch (irq_timer_mode(_io))
+        {
+        case irq_timer_mode_t::none:
+            break;
+        case irq_timer_mode_t::h_counter:
+            irq_edge = _io.irq_enabled
+                && irq_gate_open
+                && crossed_hirq_point(_last_irq_timing, irq_timing, hirq_target_dot(_io));
+            break;
+        case irq_timer_mode_t::v_counter:
+            irq_edge = _io.irq_enabled
+                && irq_gate_open
+                && crossed_irq_point(_last_irq_timing, irq_timing, _io.vtime, 0);
+            break;
+        case irq_timer_mode_t::hv_counter:
+            irq_edge = _io.irq_enabled
+                && irq_gate_open
+                && crossed_irq_point(_last_irq_timing, irq_timing, _io.vtime, hirq_target_dot(_io));
+            break;
+        }
+
+        if (irq_edge)
+        {
+            _io.irq_flag = true;
+            _io.irq_hold_clocks = 4;
+            interrupts.assert_irq_line();
+        }
+        else
+        {
+            interrupts.clear_irq_line();
+        }
+
+        if (ppu_step.hdma_setup_triggered)
+            dma.request_hdma_setup();
+
+        if (ppu_step.hdma_transfer_triggered)
+            dma.request_hdma_transfer();
+
+        while (_interrupt_poll_phase >= 4)
+        {
+            interrupts.advance_to_observation_point();
+            interrupts.latch_from_lines();
+            _interrupt_poll_phase = static_cast<master_clock_delta_t>(_interrupt_poll_phase - 4);
+        }
+
+        _last_timing = current_timing;
+        _last_nmi_timing = nmi_timing;
+        _last_irq_timing = irq_timing;
+        _last_irq_gate_timing = irq_gate_timing;
+        _irq_condition_valid = irq_condition_now;
+    }
+
+    const cpu_state_t& cpu_t::state() const noexcept
+    {
+        return _state;
+    }
+
+    void cpu_t::set_waiting(bool waiting) noexcept
+    {
+        _waiting = waiting;
+    }
+
+    void cpu_t::set_stopped(bool stopped) noexcept
+    {
+        _stopped = stopped;
+    }
+}

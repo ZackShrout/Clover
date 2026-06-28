@@ -139,10 +139,11 @@ namespace clover::core
         _waiting = false;
         _wait_wake_idle_pending = false;
         _stopped = false;
+        _interlace = false;
         _last_timing = _counter.snapshot(k_ntsc_video_timing, _visible_scanlines);
-        _last_nmi_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 2);
-        _last_irq_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 10);
-        _last_irq_gate_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 6);
+        _last_nmi_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 2, _interlace);
+        _last_irq_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 10, _interlace);
+        _last_irq_gate_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 6, _interlace);
         _irq_condition_valid = false;
         _dma_active = false;
     }
@@ -166,12 +167,21 @@ namespace clover::core
         _waiting = false;
         _wait_wake_idle_pending = false;
         _stopped = false;
+        _interlace = false;
         _last_timing = _counter.snapshot(k_ntsc_video_timing, _visible_scanlines);
-        _last_nmi_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 2);
-        _last_irq_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 10);
-        _last_irq_gate_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 6);
+        _last_nmi_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 2, _interlace);
+        _last_irq_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 10, _interlace);
+        _last_irq_gate_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 6, _interlace);
         _irq_condition_valid = false;
         _dma_active = false;
+    }
+
+    void cpu_t::load_reset_vector(bus_t& bus) noexcept
+    {
+        const uint8_t vector_low{ bus.read_u8(0x00fffcu) };
+        const uint8_t vector_high{ bus.read_u8(0x00fffdu) };
+        _state.pb = 0;
+        _state.pc = static_cast<uint16_t>(vector_low | (vector_high << 8u));
     }
 
     uint8_t cpu_t::dma_phase() const noexcept
@@ -187,7 +197,7 @@ namespace clover::core
     timing_snapshot_t cpu_t::delayed_timing(const video_timing_t& video_timing,
                                             master_clock_delta_t delay) const noexcept
     {
-        return _counter.snapshot_delayed(video_timing, _visible_scanlines, delay);
+        return _counter.snapshot_delayed(video_timing, _visible_scanlines, delay, _interlace);
     }
 
     bool cpu_t::irq_condition(const timing_snapshot_t& irq_timing,
@@ -313,6 +323,8 @@ namespace clover::core
         case 0x4207u:
             _io.htime = static_cast<uint16_t>((_io.htime & 0x0100u) | value);
             if (_interrupts != nullptr)
+                // Timer target writes repoll immediately without the extra
+                // $4200-style IRQ lock, matching the bsnes comparison model.
                 repoll_irq_on_register_write(*_interrupts);
             return;
         case 0x4208u:
@@ -447,6 +459,9 @@ namespace clover::core
 
         const cpu_step_result_t result{ executor.finish() };
         _master_clock += result.master_clocks;
+        // DMA requests raised by CPU MMIO writes become visible only after the
+        // current opcode retires, so the scheduler hands ownership to DMA on
+        // the following hardware slot rather than mid-instruction.
         if (dma.has_pending_work())
             _dma_active = true;
         return result;
@@ -465,17 +480,18 @@ namespace clover::core
                             interrupt_controller_t& interrupts) noexcept
     {
         _interrupt_poll_phase = static_cast<master_clock_delta_t>(_interrupt_poll_phase + elapsed_master_clocks);
-        _counter.advance(elapsed_master_clocks, video_timing);
+        _counter.advance(elapsed_master_clocks, video_timing, _interlace);
         _visible_scanlines = ppu_step.visible_scanlines;
+        _interlace = ppu_step.interlace;
         const timing_snapshot_t current_timing{ _counter.snapshot(video_timing, _visible_scanlines) };
         const timing_snapshot_t nmi_timing{
-            _counter.snapshot_delayed(video_timing, _visible_scanlines, 2)
+            _counter.snapshot_delayed(video_timing, _visible_scanlines, 2, _interlace)
         };
         const timing_snapshot_t irq_timing{
-            _counter.snapshot_delayed(video_timing, _visible_scanlines, 10)
+            _counter.snapshot_delayed(video_timing, _visible_scanlines, 10, _interlace)
         };
         const timing_snapshot_t irq_gate_timing{
-            _counter.snapshot_delayed(video_timing, _visible_scanlines, 6)
+            _counter.snapshot_delayed(video_timing, _visible_scanlines, 6, _interlace)
         };
 
         decrement_hold(_io.nmi_hold_clocks, elapsed_master_clocks);

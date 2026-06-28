@@ -7,12 +7,16 @@
 
 #include "clover/core/Apu.h"
 #include "clover/core/Bus.h"
+#include "clover/core/Cartridge.h"
 #include "clover/core/Cpu.h"
 #include "clover/core/Dma.h"
 #include "clover/core/FrameBuffer.h"
 #include "clover/core/Interrupts.h"
 #include "clover/core/Ppu.h"
 #include "clover/core/Scheduler.h"
+
+#include <cstddef>
+#include <span>
 
 namespace clover::core
 {
@@ -33,6 +37,7 @@ namespace clover::core
     public:
         void power_on() noexcept;
         void reset() noexcept;
+        [[nodiscard]] bool load_cartridge(std::span<const std::byte> rom_data) noexcept;
         [[nodiscard]] hardware_step_result_t step_hardware() noexcept;
         void run_scanline() noexcept;
         void run_frame() noexcept;
@@ -58,6 +63,7 @@ namespace clover::core
     private:
         scheduler_t _scheduler{};
         bus_t _bus{};
+        cartridge_t _cartridge{};
         cpu_t _cpu{};
         dma_t _dma{};
         interrupt_controller_t _interrupts{};

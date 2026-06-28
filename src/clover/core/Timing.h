@@ -33,19 +33,21 @@ namespace clover::core
         uint16_t hdma_setup_dot{ 12 };
 
         [[nodiscard]] constexpr master_clock_delta_t scanline_clocks(uint16_t scanline,
-                                                                     bool odd_field) const noexcept
+                                                                     bool odd_field,
+                                                                     bool interlace) const noexcept
         {
-            if (standard == video_standard_t::ntsc && odd_field && scanline == short_scanline)
+            if (standard == video_standard_t::ntsc && !interlace && odd_field && scanline == short_scanline)
                 return short_scanline_clocks;
 
             return master_clocks_per_scanline;
         }
 
-        [[nodiscard]] constexpr master_clock_delta_t master_clocks_per_frame(bool odd_field = false) const noexcept
+        [[nodiscard]] constexpr master_clock_delta_t master_clocks_per_frame(bool odd_field = false,
+                                                                             bool interlace = false) const noexcept
         {
             return static_cast<master_clock_delta_t>(
                 master_clocks_per_scanline * scanlines_per_frame
-                    - (standard == video_standard_t::ntsc && odd_field
+                    - (standard == video_standard_t::ntsc && !interlace && odd_field
                         ? master_clocks_per_scanline - short_scanline_clocks
                         : 0)
             );
@@ -88,14 +90,16 @@ namespace clover::core
             odd_field = false;
         }
 
-        void advance(master_clock_delta_t master_clocks, const video_timing_t& video_timing) noexcept
+        void advance(master_clock_delta_t master_clocks,
+                     const video_timing_t& video_timing,
+                     bool interlace) noexcept
         {
             master_clock += master_clocks;
 
             uint32_t next_dot{ static_cast<uint32_t>(dot) + master_clocks };
-            while (next_dot >= video_timing.scanline_clocks(scanline, odd_field))
+            while (next_dot >= video_timing.scanline_clocks(scanline, odd_field, interlace))
             {
-                next_dot -= video_timing.scanline_clocks(scanline, odd_field);
+                next_dot -= video_timing.scanline_clocks(scanline, odd_field, interlace);
                 ++scanline;
                 if (scanline >= video_timing.scanlines_per_frame)
                 {
@@ -107,12 +111,15 @@ namespace clover::core
             dot = static_cast<uint16_t>(next_dot);
         }
 
-        [[nodiscard]] master_clock_delta_t current_scanline_clocks(const video_timing_t& video_timing) const noexcept
+        [[nodiscard]] master_clock_delta_t current_scanline_clocks(const video_timing_t& video_timing,
+                                                                   bool interlace) const noexcept
         {
-            return video_timing.scanline_clocks(scanline, odd_field);
+            return video_timing.scanline_clocks(scanline, odd_field, interlace);
         }
 
-        void rewind(master_clock_delta_t master_clocks, const video_timing_t& video_timing) noexcept
+        void rewind(master_clock_delta_t master_clocks,
+                    const video_timing_t& video_timing,
+                    bool interlace) noexcept
         {
             if (master_clocks >= master_clock)
             {
@@ -144,16 +151,17 @@ namespace clover::core
                     --scanline;
                 }
 
-                dot = static_cast<uint16_t>(video_timing.scanline_clocks(scanline, odd_field));
+                dot = static_cast<uint16_t>(video_timing.scanline_clocks(scanline, odd_field, interlace));
             }
         }
 
         [[nodiscard]] timing_snapshot_t snapshot_delayed(const video_timing_t& video_timing,
                                                          uint16_t visible_scanlines,
-                                                         master_clock_delta_t delay) const noexcept
+                                                         master_clock_delta_t delay,
+                                                         bool interlace) const noexcept
         {
             raster_counter_t delayed{ *this };
-            delayed.rewind(delay, video_timing);
+            delayed.rewind(delay, video_timing, interlace);
             return delayed.snapshot(video_timing, visible_scanlines);
         }
 
@@ -193,6 +201,7 @@ namespace clover::core
     {
         timing_snapshot_t timing{};
         uint16_t visible_scanlines{ 225 };
+        bool interlace{ false };
         bool frame_complete{ false };
         bool entered_scanline{ false };
         bool entered_frame_start{ false };

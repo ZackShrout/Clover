@@ -53,6 +53,7 @@ namespace clover::core
         void attach_interrupt_controller(interrupt_controller_t& interrupts) noexcept;
         void power_on() noexcept;
         void reset() noexcept;
+        void load_reset_vector(bus_t& bus) noexcept;
         [[nodiscard]] uint8_t dma_phase() const noexcept;
         [[nodiscard]] timing_snapshot_t timing(const video_timing_t& video_timing) const noexcept;
         [[nodiscard]] timing_snapshot_t delayed_timing(const video_timing_t& video_timing,
@@ -94,6 +95,7 @@ namespace clover::core
         bool _wait_wake_idle_pending{ false };
         bool _stopped{ false };
         uint16_t _visible_scanlines{ k_ntsc_video_timing.visible_scanlines };
+        bool _interlace{ false };
 
         friend bool execute_system_opcode(uint8_t opcode,
                                           cpu_t& cpu,

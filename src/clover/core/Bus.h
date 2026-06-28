@@ -10,6 +10,7 @@
 
 namespace clover::core
 {
+    struct cartridge_t;
     struct cpu_t;
     struct dma_t;
     struct ppu_t;
@@ -20,8 +21,7 @@ namespace clover::core
         static constexpr uint32_t k_wram_base_address{ 0x7e0000u };
         static constexpr uint32_t k_wram_size{ 128 * 1024 };
         static constexpr uint32_t k_low_wram_mirror_size{ 0x2000u };
-        static constexpr uint32_t k_bootstrap_bank_zero_ram_size{ 64 * 1024u };
-
+        void connect_cartridge(cartridge_t& cartridge) noexcept;
         void connect_cpu(cpu_t& cpu) noexcept;
         void connect_ppu(ppu_t& ppu) noexcept;
         void connect_dma(dma_t& dma) noexcept;
@@ -35,10 +35,9 @@ namespace clover::core
         [[nodiscard]] static bool is_cpu_register_address(uint32_t address) noexcept;
         [[nodiscard]] static bool is_ppu_register_address(uint32_t address) noexcept;
         [[nodiscard]] static bool is_dma_register_address(uint32_t address) noexcept;
-        [[nodiscard]] static bool is_bootstrap_bank_zero_ram_address(uint32_t address) noexcept;
 
         std::array<uint8_t, k_wram_size> _wram{};
-        std::array<uint8_t, k_bootstrap_bank_zero_ram_size> _bootstrap_bank_zero_ram{};
+        cartridge_t* _cartridge{ nullptr };
         cpu_t* _cpu{ nullptr };
         dma_t* _dma{ nullptr };
         ppu_t* _ppu{ nullptr };

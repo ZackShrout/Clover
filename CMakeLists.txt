@@ -10,6 +10,7 @@ option(CLOVER_BUILD_SDL_FRONTEND "Build the SDL3 desktop frontend." OFF)
 set(CLOVER_CORE_SOURCES
     src/clover/core/Apu.cpp
     src/clover/core/Bus.cpp
+    src/clover/core/Cartridge.cpp
     src/clover/core/Console.cpp
     src/clover/core/Cpu.cpp
     src/clover/core/CpuOpsAlu.cpp

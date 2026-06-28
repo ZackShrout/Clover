@@ -327,6 +327,7 @@ namespace clover::core
         std::array<uint16_t, 256> _cgram{};
         video_timing_t _video_timing{ k_ntsc_video_timing };
         raster_counter_t _counter{};
+        bool _timing_interlace{ false };
         uint64_t _frame_counter{ 0 };
         ppu_display_state_t _display{};
         ppu_oam_state_t _oam_state{};

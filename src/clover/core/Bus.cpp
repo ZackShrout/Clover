@@ -5,6 +5,7 @@
 
 #include "clover/core/Bus.h"
 
+#include "clover/core/Cartridge.h"
 #include "clover/core/Cpu.h"
 #include "clover/core/Dma.h"
 #include "clover/core/Ppu.h"
@@ -13,6 +14,11 @@
 
 namespace clover::core
 {
+    void bus_t::connect_cartridge(cartridge_t& cartridge) noexcept
+    {
+        _cartridge = &cartridge;
+    }
+
     void bus_t::connect_cpu(cpu_t& cpu) noexcept
     {
         _cpu = &cpu;
@@ -31,7 +37,6 @@ namespace clover::core
     void bus_t::reset() noexcept
     {
         std::fill(_wram.begin(), _wram.end(), 0);
-        std::fill(_bootstrap_bank_zero_ram.begin(), _bootstrap_bank_zero_ram.end(), 0);
         _open_bus = 0;
     }
 
@@ -61,9 +66,9 @@ namespace clover::core
             return _open_bus;
         }
 
-        if (is_bootstrap_bank_zero_ram_address(address))
+        if (_cartridge != nullptr)
         {
-            _open_bus = _bootstrap_bank_zero_ram[address & 0xffffu];
+            _open_bus = _cartridge->read_u8(address);
             return _open_bus;
         }
 
@@ -95,8 +100,8 @@ namespace clover::core
         if (_cpu != nullptr && is_cpu_register_address(address))
             _cpu->write_register(static_cast<uint16_t>(address & 0xffffu), value);
 
-        if (is_bootstrap_bank_zero_ram_address(address))
-            _bootstrap_bank_zero_ram[address & 0xffffu] = value;
+        if (_cartridge != nullptr)
+            _cartridge->write_u8(address, value);
     }
 
     bool bus_t::is_wram_address(uint32_t address) noexcept
@@ -134,12 +139,5 @@ namespace clover::core
         const uint16_t register_address{ static_cast<uint16_t>(address & 0xffffu) };
         return (register_address >= 0x420bu && register_address <= 0x420cu)
             || (register_address >= 0x4300u && register_address <= 0x437fu);
-    }
-
-    bool bus_t::is_bootstrap_bank_zero_ram_address(uint32_t address) noexcept
-    {
-        // Temporary bring-up surface for vectors and synthetic CPU programs until
-        // cartridge mapping replaces it with a real bank-zero bus owner.
-        return (address & 0xff0000u) == 0x000000u;
     }
 }

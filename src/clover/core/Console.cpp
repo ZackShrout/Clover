@@ -9,13 +9,16 @@ namespace clover::core
 {
     void console_t::power_on() noexcept
     {
+        _bus.connect_cartridge(_cartridge);
         _bus.connect_cpu(_cpu);
         _bus.connect_ppu(_ppu);
         _bus.connect_dma(_dma);
         _cpu.attach_interrupt_controller(_interrupts);
         _scheduler.reset();
+        _cartridge.reset();
         _bus.reset();
         _cpu.power_on();
+        _cpu.load_reset_vector(_bus);
         _dma.reset();
         _interrupts.reset();
         _ppu.power_on();
@@ -29,11 +32,24 @@ namespace clover::core
         _scheduler.reset();
         _bus.reset();
         _cpu.reset();
+        _cpu.load_reset_vector(_bus);
         _dma.reset();
         _interrupts.reset();
         _ppu.reset();
         _apu.reset();
         _ppu.present(_framebuffer);
+    }
+
+    bool console_t::load_cartridge(std::span<const std::byte> rom_data) noexcept
+    {
+        const bool loaded{ _cartridge.load(rom_data) };
+        if (!loaded)
+            return false;
+
+        if (_powered_on)
+            reset();
+
+        return true;
     }
 
     hardware_step_result_t console_t::step_hardware() noexcept

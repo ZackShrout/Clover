@@ -97,7 +97,9 @@ namespace clover::core
             return false;
 
         const timing_snapshot_t snapshot{ timing() };
-        return snapshot.raster.scanline < active_visible_scanlines();
+        return snapshot.raster.scanline < active_visible_scanlines()
+            && !snapshot.in_hblank
+            && !snapshot.in_vblank;
     }
 
     bool ppu_t::display_active_for_vram() const noexcept
@@ -106,7 +108,9 @@ namespace clover::core
             return false;
 
         const timing_snapshot_t snapshot{ timing() };
-        return snapshot.raster.scanline < active_visible_scanlines();
+        return snapshot.raster.scanline < active_visible_scanlines()
+            && !snapshot.in_hblank
+            && !snapshot.in_vblank;
     }
 
     bool ppu_t::display_active_for_cgram() const noexcept
@@ -135,6 +139,7 @@ namespace clover::core
         std::fill(_oam.begin(), _oam.end(), 0);
         std::fill(_cgram.begin(), _cgram.end(), 0);
         _counter.reset();
+        _timing_interlace = false;
         _frame_counter = 0;
         _display = {};
         _oam_state = {};
@@ -672,6 +677,7 @@ namespace clover::core
             _screen_state.interlace = (value & 0x01u) != 0;
             _screen_state.overscan = (value & 0x04u) != 0;
             _screen_state.pseudo_hires = (value & 0x08u) != 0;
+            _timing_interlace = _screen_state.interlace;
             return;
         case 0x211au:
             _screen_state.mode7_hflip = (value & 0x01u) != 0;
@@ -687,11 +693,12 @@ namespace clover::core
     {
         const uint16_t previous_visible_scanlines{ active_visible_scanlines() };
         const timing_snapshot_t previous_timing{ timing() };
-        _counter.advance(master_clocks, _video_timing);
+        _counter.advance(master_clocks, _video_timing, _timing_interlace);
 
         ppu_step_result_t result{};
         result.timing = timing();
         result.visible_scanlines = active_visible_scanlines();
+        result.interlace = _timing_interlace;
         if (result.timing.raster.scanline < previous_timing.raster.scanline)
         {
             ++_frame_counter;
@@ -729,7 +736,7 @@ namespace clover::core
 
     master_clock_delta_t ppu_t::current_scanline_clocks() const noexcept
     {
-        return _counter.current_scanline_clocks(_video_timing);
+        return _counter.current_scanline_clocks(_video_timing, _timing_interlace);
     }
 
     ppu_render_state_snapshot_t ppu_t::render_state_snapshot() const noexcept

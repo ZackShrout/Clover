@@ -1,0 +1,35 @@
+# Build directories
+build/
+cmake-build-*/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+CTestTestfile.cmake
+Testing/
+Makefile
+cmake_install.cmake
+compile_commands.json
+
+# IDE files
+.idea/
+*.iml
+
+# macOS files
+.DS_Store
+
+# Editor swap and temp files
+*.swp
+*.swo
+*~
+
+# Generated binaries and libraries
+*.a
+*.dylib
+*.so
+*.o
+*.obj
+*.out
+
+# Local test and ROM content
+roms/local/

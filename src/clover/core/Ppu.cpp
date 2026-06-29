@@ -10,6 +10,7 @@
 namespace
 {
     constexpr std::array<uint8_t, 4> k_vram_increment_sizes{ 1, 32, 128, 128 };
+    constexpr uint16_t k_vram_word_mask{ 0x7fffu };
 
     void set_window_bits(bool& one_invert,
                          bool& one_enable,
@@ -82,6 +83,275 @@ namespace
         }
     }
 
+    [[nodiscard]] uint8_t screen_size_bit(uint8_t screen_size, uint8_t bit_index) noexcept
+    {
+        return static_cast<uint8_t>((screen_size >> bit_index) & 0x01u);
+    }
+
+    [[nodiscard]] uint8_t background_mode_index(clover::core::ppu_background_render_state_t::mode_t mode) noexcept
+    {
+        using mode_t = clover::core::ppu_background_render_state_t::mode_t;
+
+        switch (mode)
+        {
+        case mode_t::bpp2:
+            return 0u;
+        case mode_t::bpp4:
+            return 1u;
+        case mode_t::bpp8:
+            return 2u;
+        default:
+            return 0u;
+        }
+    }
+
+    struct background_addressing_t
+    {
+        uint16_t horizontal_source{ 0 };
+        uint16_t vertical_source{ 0 };
+        uint16_t tilemap_address{ 0 };
+    };
+
+    struct background_geometry_t
+    {
+        bool hires{ false };
+        bool large_tiles{ false };
+        uint8_t screen_size{ 0 };
+        uint16_t screen_address{ 0 };
+    };
+
+    struct background_address_window_t
+    {
+        uint16_t horizontal_mask{ 0 };
+        uint16_t vertical_mask{ 0 };
+        uint8_t horizontal_tile_shift{ 0 };
+        uint8_t vertical_tile_shift{ 0 };
+        uint16_t hscreen{ 0 };
+        uint16_t vscreen{ 0 };
+    };
+
+    [[nodiscard]] background_address_window_t build_background_address_window(
+        const background_geometry_t& geometry,
+        bool offset_cache_lookup) noexcept
+    {
+        const uint16_t width{ static_cast<uint16_t>(256u << (geometry.hires ? 1u : 0u)) };
+        const uint16_t horizontal_span{
+            static_cast<uint16_t>(width << (geometry.large_tiles ? 1u : 0u))
+        };
+        const uint16_t vertical_span{
+            static_cast<uint16_t>(256u << (geometry.large_tiles ? 1u : 0u)
+                << screen_size_bit(geometry.screen_size, 1u))
+        };
+
+        return {
+            .horizontal_mask = static_cast<uint16_t>(
+                (horizontal_span << screen_size_bit(geometry.screen_size, 0u)) - 1u),
+            .vertical_mask = static_cast<uint16_t>(vertical_span - 1u),
+            .horizontal_tile_shift = static_cast<uint8_t>(
+                offset_cache_lookup
+                    ? (geometry.hires ? 3u : (geometry.large_tiles ? 4u : 3u))
+                    : (geometry.hires ? 4u : (geometry.large_tiles ? 4u : 3u))),
+            .vertical_tile_shift = static_cast<uint8_t>(geometry.large_tiles ? 4u : 3u),
+            .hscreen = static_cast<uint16_t>(
+                screen_size_bit(geometry.screen_size, 0u) != 0 ? (32u << 5u) : 0u),
+            .vscreen = static_cast<uint16_t>(
+                screen_size_bit(geometry.screen_size, 1u) != 0
+                    ? static_cast<uint16_t>(32u << (5u + screen_size_bit(geometry.screen_size, 0u)))
+                    : 0u)
+        };
+    }
+
+    [[nodiscard]] background_addressing_t compute_background_addressing(
+        const background_geometry_t& geometry,
+        const background_address_window_t& window,
+        uint16_t horizontal_source,
+        uint16_t vertical_source) noexcept
+    {
+        horizontal_source &= window.horizontal_mask;
+        vertical_source &= window.vertical_mask;
+
+        const uint16_t htile{ static_cast<uint16_t>(horizontal_source >> window.horizontal_tile_shift) };
+        const uint16_t vtile{ static_cast<uint16_t>(vertical_source >> window.vertical_tile_shift) };
+        uint16_t tile_offset{
+            static_cast<uint16_t>((htile & 0x001fu) | ((vtile & 0x001fu) << 5u))
+        };
+        if ((htile & 0x0020u) != 0)
+            tile_offset = static_cast<uint16_t>(tile_offset + window.hscreen);
+        if ((vtile & 0x0020u) != 0)
+            tile_offset = static_cast<uint16_t>(tile_offset + window.vscreen);
+
+        return {
+            .horizontal_source = horizontal_source,
+            .vertical_source = vertical_source,
+            .tilemap_address = static_cast<uint16_t>((geometry.screen_address + tile_offset) & k_vram_word_mask)
+        };
+    }
+
+    [[nodiscard]] uint16_t background_vertical_pixel(uint16_t evaluation_scanline,
+                                                     uint16_t mosaic_vertical_offset,
+                                                     bool hires,
+                                                     bool interlace,
+                                                     bool odd_field,
+                                                     bool mosaic_enabled) noexcept
+    {
+        const bool interlace_field_offset{ hires && interlace && odd_field && !mosaic_enabled };
+        return static_cast<uint16_t>(
+            static_cast<uint16_t>(
+                (evaluation_scanline << (hires && interlace ? 1u : 0u))
+                | (interlace_field_offset ? 0x0001u : 0x0000u))
+            - static_cast<uint16_t>(mosaic_vertical_offset << (hires && interlace ? 1u : 0u))
+        );
+    }
+
+    [[nodiscard]] uint16_t decode_bitplane_pair(uint16_t data, bool reverse_bits) noexcept
+    {
+        if (reverse_bits)
+        {
+            data = static_cast<uint16_t>((data >> 4u & 0x0f0fu) | (data << 4u & 0xf0f0u));
+            data = static_cast<uint16_t>((data >> 2u & 0x3333u) | (data << 2u & 0xccccu));
+            data = static_cast<uint16_t>((data >> 1u & 0x5555u) | (data << 1u & 0xaaaau));
+        }
+
+        return static_cast<uint16_t>(
+            ((((static_cast<uint64_t>(static_cast<uint8_t>(data >> 0u)) * 0x0101010101010101ull)
+                & 0x8040201008040201ull) * 0x0102040810204081ull >> 49u) & 0x5555u)
+            | ((((static_cast<uint64_t>(static_cast<uint8_t>(data >> 8u)) * 0x0101010101010101ull)
+                & 0x8040201008040201ull) * 0x0102040810204081ull >> 48u) & 0xaaaau)
+        );
+    }
+
+    [[nodiscard]] uint8_t extract_row_pair_pixel(uint16_t row_data, uint8_t fine_x) noexcept
+    {
+        return static_cast<uint8_t>((row_data >> (fine_x << 1u)) & 0x03u);
+    }
+
+    [[nodiscard]] bool window_test(bool one_enable,
+                                   bool one,
+                                   bool two_enable,
+                                   bool two,
+                                   uint8_t mask) noexcept
+    {
+        if (!one_enable)
+            return two && two_enable;
+
+        if (!two_enable)
+            return one;
+
+        switch (mask & 0x03u)
+        {
+        case 0u:
+            return one || two;
+        case 1u:
+            return one && two;
+        case 2u:
+            return one != two;
+        case 3u:
+            return one == two;
+        default:
+            return false;
+        }
+    }
+
+    [[nodiscard]] bool window_hit(uint8_t x,
+                                  uint8_t one_left,
+                                  uint8_t one_right,
+                                  uint8_t two_left,
+                                  uint8_t two_right,
+                                  bool one_invert,
+                                  bool one_enable,
+                                  bool two_invert,
+                                  bool two_enable,
+                                  uint8_t mask) noexcept
+    {
+        const bool one{
+            one_enable
+                && ((x >= one_left && x <= one_right) != one_invert)
+        };
+        const bool two{
+            two_enable
+                && ((x >= two_left && x <= two_right) != two_invert)
+        };
+
+        return window_test(one_enable, one, two_enable, two, mask);
+    }
+
+    [[nodiscard]] clover::core::ppu_pixel_source_t background_pixel_source(uint8_t background_index) noexcept
+    {
+        using source_t = clover::core::ppu_pixel_source_t;
+
+        switch (background_index)
+        {
+        case 0u:
+            return source_t::background_1;
+        case 1u:
+            return source_t::background_2;
+        case 2u:
+            return source_t::background_3;
+        case 3u:
+            return source_t::background_4;
+        default:
+            return source_t::none;
+        }
+    }
+
+    [[nodiscard]] bool source_allows_color_math(const clover::core::ppu_pixel_candidate_t& candidate,
+                                                bool backdrop_color_enable) noexcept
+    {
+        using source_t = clover::core::ppu_pixel_source_t;
+
+        switch (candidate.source)
+        {
+        case source_t::background_1:
+        case source_t::background_2:
+        case source_t::background_3:
+        case source_t::background_4:
+            return candidate.color_math_enabled;
+        case source_t::objects:
+            return candidate.color_math_enabled && candidate.palette >= 192u;
+        case source_t::backdrop:
+            return backdrop_color_enable;
+        case source_t::none:
+        default:
+            return false;
+        }
+    }
+
+    [[nodiscard]] uint16_t direct_color(uint8_t palette, uint8_t palette_group) noexcept
+    {
+        return static_cast<uint16_t>(
+            ((palette << 7u) & 0x6000u)
+            + ((palette_group << 10u) & 0x1000u)
+            + ((palette << 4u) & 0x0380u)
+            + ((palette_group << 5u) & 0x0040u)
+            + ((palette << 2u) & 0x001cu)
+            + ((palette_group << 1u) & 0x0002u));
+    }
+
+    [[nodiscard]] uint16_t blend_colors(uint16_t lhs,
+                                        uint16_t rhs,
+                                        bool subtract,
+                                        bool halve) noexcept
+    {
+        if (!subtract)
+        {
+            if (!halve)
+            {
+                const uint32_t sum{ static_cast<uint32_t>(lhs) + static_cast<uint32_t>(rhs) };
+                const uint32_t carry{ (sum - ((lhs ^ rhs) & 0x0421u)) & 0x8420u };
+                return static_cast<uint16_t>((sum - carry) | (carry - (carry >> 5u)));
+            }
+
+            return static_cast<uint16_t>((lhs + rhs - ((lhs ^ rhs) & 0x0421u)) >> 1u);
+        }
+
+        const uint32_t diff{ static_cast<uint32_t>(lhs) - static_cast<uint32_t>(rhs) + 0x8420u };
+        const uint32_t borrow{ (diff - ((lhs ^ rhs) & 0x8420u)) & 0x8420u };
+        if (!halve)
+            return static_cast<uint16_t>((diff - borrow) & (borrow - (borrow >> 5u)));
+
+        return static_cast<uint16_t>((((diff - borrow) & (borrow - (borrow >> 5u))) & 0x7bdeu) >> 1u);
+    }
+
 } // anonymous namespace
 
 namespace clover::core
@@ -142,11 +412,13 @@ namespace clover::core
         _timing_interlace = false;
         _frame_counter = 0;
         _display = {};
+        _display.disabled = true;
         _oam_state = {};
         _bg_state = {};
         _scroll_latches = {};
         _mosaic_state = {};
         _window_state = {};
+        _background_layer_state = {};
         _object_layer_state = {};
         _color_math_state = {};
         _screen_state = {};
@@ -156,6 +428,7 @@ namespace clover::core
         _vram_state.increment_size = 1;
         _cgram_state = {};
         _counter_latch = {};
+        _external_latch_enabled = false;
         _ppu1_mdr = 0;
         _ppu2_mdr = 0;
         _oam_state.latched_address = 0;
@@ -209,13 +482,738 @@ namespace clover::core
         if (display_active_for_oam())
             address = _oam_state.latched_address;
 
-        _oam[address % _oam.size()] = value;
+        const uint16_t decoded_address{ static_cast<uint16_t>(address % _oam.size()) };
+        _oam[decoded_address] = value;
+
+        if ((decoded_address & 0x0200u) == 0)
+        {
+            decode_oam_object(static_cast<uint8_t>(decoded_address >> 2u));
+            return;
+        }
+
+        decode_oam_group(static_cast<uint8_t>(decoded_address & 0x001fu));
+    }
+
+    void ppu_t::decode_oam_object(uint8_t object_index) noexcept
+    {
+        auto& object{ _object_layer_state.objects[object_index & 0x7fu] };
+        const uint16_t base_address{ static_cast<uint16_t>((object_index & 0x7fu) << 2u) };
+        object.x = static_cast<uint16_t>((object.x & 0x0100u) | _oam[base_address]);
+        object.y = _oam[base_address + 1u];
+        object.character = _oam[base_address + 2u];
+
+        const uint8_t attributes{ _oam[base_address + 3u] };
+        object.nameselect = (attributes & 0x01u) != 0;
+        object.palette = static_cast<uint8_t>((attributes >> 1u) & 0x07u);
+        object.priority = static_cast<uint8_t>((attributes >> 4u) & 0x03u);
+        object.hflip = (attributes & 0x40u) != 0;
+        object.vflip = (attributes & 0x80u) != 0;
+        object.width = object_width(object.size_select);
+        object.height = object_height(object.size_select);
+    }
+
+    void ppu_t::decode_oam_group(uint8_t group_index) noexcept
+    {
+        const uint16_t address{ static_cast<uint16_t>(0x0200u | (group_index & 0x001fu)) };
+        const uint8_t data{ _oam[address] };
+        const uint8_t base_object{ static_cast<uint8_t>((group_index & 0x1fu) << 2u) };
+
+        for (uint8_t offset{ 0 }; offset < 4u; ++offset)
+        {
+            auto& object{ _object_layer_state.objects[(base_object + offset) & 0x7fu] };
+            object.x = static_cast<uint16_t>((object.x & 0x00ffu)
+                | (((data >> (offset << 1u)) & 0x01u) << 8u));
+            object.size_select = ((data >> ((offset << 1u) + 1u)) & 0x01u) != 0;
+            object.width = object_width(object.size_select);
+            object.height = object_height(object.size_select);
+        }
+    }
+
+    uint8_t ppu_t::object_width(bool size_select) const noexcept
+    {
+        static constexpr std::array<uint8_t, 8> k_small_width{ 8, 8, 8, 16, 16, 32, 16, 16 };
+        static constexpr std::array<uint8_t, 8> k_large_width{ 16, 32, 64, 32, 64, 64, 32, 32 };
+        return size_select ? k_large_width[_object_layer_state.base_size] : k_small_width[_object_layer_state.base_size];
+    }
+
+    uint8_t ppu_t::object_height(bool size_select) const noexcept
+    {
+        static constexpr std::array<uint8_t, 8> k_small_height{ 8, 8, 8, 16, 16, 32, 32, 32 };
+        static constexpr std::array<uint8_t, 8> k_large_height{ 16, 32, 64, 32, 64, 64, 64, 32 };
+        if (!size_select)
+        {
+            if (_object_layer_state.interlace && _object_layer_state.base_size >= 6u)
+                return 16u;
+
+            return k_small_height[_object_layer_state.base_size];
+        }
+
+        return k_large_height[_object_layer_state.base_size];
+    }
+
+    bool ppu_t::object_on_scanline(const ppu_object_render_state_t::decoded_object_t& object,
+                                   uint16_t scanline) const noexcept
+    {
+        if (object.x > 256u && static_cast<uint16_t>(object.x + object.width - 1u) < 512u)
+            return false;
+
+        uint16_t height{ object.height };
+        if (_object_layer_state.interlace)
+            height = static_cast<uint16_t>(height >> 1u);
+
+        if (scanline >= object.y && scanline < static_cast<uint16_t>(object.y + height))
+            return true;
+
+        return static_cast<uint16_t>(object.y + height) >= 256u
+            && scanline < static_cast<uint16_t>((object.y + height) & 0x00ffu);
+    }
+
+    void ppu_t::evaluate_background_scanline(uint16_t scanline) noexcept
+    {
+        for (uint8_t background_index{ 0 }; background_index < 4u; ++background_index)
+        {
+            auto& background{ _background_layer_state[background_index] };
+            background.evaluation_scanline = scanline;
+            background.tile_count = 0;
+            background.offset_hoffset.fill(0);
+            background.offset_voffset.fill(0);
+            background.samples.fill({});
+            background.tiles.fill({});
+        }
+
+        if (_display.disabled || scanline == 0u || scanline >= active_visible_scanlines())
+            return;
+
+        populate_background_offset_cache(scanline);
+
+        for (uint8_t background_index{ 0 }; background_index < 4u; ++background_index)
+        {
+            if (!_bg_state.active[background_index]
+                || _bg_state.render_mode[background_index] == ppu_background_render_state_t::mode_t::mode7
+                || _bg_state.render_mode[background_index] == ppu_background_render_state_t::mode_t::inactive)
+            {
+                continue;
+            }
+
+            evaluate_background_tiles(background_index);
+            fetch_background_tile_rows(background_index);
+            synthesize_background_layer_candidate(background_index);
+        }
+    }
+
+    void ppu_t::populate_background_offset_cache(uint16_t scanline) noexcept
+    {
+        if (_bg_state.mode != 2u && _bg_state.mode != 4u && _bg_state.mode != 6u)
+            return;
+
+        auto& background{ _background_layer_state[2] };
+        const background_geometry_t geometry{
+            .hires = _screen_state.hires,
+            .large_tiles = _bg_state.large_tiles[2],
+            .screen_size = _bg_state.screen_size[2],
+            .screen_address = _bg_state.screen_address[2]
+        };
+        const background_address_window_t window{
+            build_background_address_window(geometry, true)
+        };
+
+        for (uint8_t tile_slot{ 0 }; tile_slot < background.offset_hoffset.size(); ++tile_slot)
+        {
+            const uint16_t screen_x{ static_cast<uint16_t>(tile_slot << 3u) };
+            const uint16_t hires_hoffset{
+                static_cast<uint16_t>(_bg_state.hoffset[2] << (geometry.hires ? 1u : 0u))
+            };
+            const uint16_t horizontal_source{
+                static_cast<uint16_t>(screen_x + (hires_hoffset & ~0x0007u))
+            };
+            background.offset_hoffset[tile_slot] = _vram[
+                compute_background_addressing(geometry, window, horizontal_source, _bg_state.voffset[2]).tilemap_address
+            ];
+            background.offset_voffset[tile_slot] = _vram[
+                compute_background_addressing(
+                    geometry,
+                    window,
+                    horizontal_source,
+                    static_cast<uint16_t>(_bg_state.voffset[2] + 8u)).tilemap_address
+            ];
+        }
+
+        background.evaluation_scanline = scanline;
+    }
+
+    void ppu_t::evaluate_background_tiles(uint8_t background_index) noexcept
+    {
+        auto& background{ _background_layer_state[background_index] };
+        const uint8_t mode_index{ background_mode_index(_bg_state.render_mode[background_index]) };
+        const background_geometry_t geometry{
+            .hires = _screen_state.hires,
+            .large_tiles = _bg_state.large_tiles[background_index],
+            .screen_size = _bg_state.screen_size[background_index],
+            .screen_address = _bg_state.screen_address[background_index]
+        };
+        const background_address_window_t window{
+            build_background_address_window(geometry, false)
+        };
+        const uint16_t mosaic_vertical_offset{
+            static_cast<uint16_t>(_mosaic_state.enabled[background_index] ? mosaic_voffset() : 0u)
+        };
+        const uint16_t base_vertical_pixel{
+            background_vertical_pixel(_background_layer_state[background_index].evaluation_scanline,
+                                      mosaic_vertical_offset,
+                                      geometry.hires,
+                                      _screen_state.interlace,
+                                      _counter.odd_field,
+                                      _mosaic_state.enabled[background_index])
+        };
+        const uint16_t base_vertical_source{
+            static_cast<uint16_t>(base_vertical_pixel
+                + _bg_state.voffset[background_index])
+        };
+
+        const uint16_t character_mask{ static_cast<uint16_t>(k_vram_word_mask >> (3u + mode_index)) };
+        const uint16_t character_index{
+            static_cast<uint16_t>(_bg_state.tiledata_address[background_index] >> (3u + mode_index))
+        };
+        const uint8_t palette_size_shift{ static_cast<uint8_t>(2u << mode_index) };
+        const uint8_t palette_offset{
+            static_cast<uint8_t>(_bg_state.mode == 0u ? static_cast<uint8_t>(background_index << 5u) : 0u)
+        };
+        const bool offset_per_tile_mode{
+            _bg_state.mode == 2u || _bg_state.mode == 4u || _bg_state.mode == 6u
+        };
+        const bool apply_offset_lookup{ offset_per_tile_mode && background_index < 2u };
+
+        for (uint8_t tile_slot{ 0 }; tile_slot < background.tiles.size(); ++tile_slot)
+        {
+            const uint16_t screen_x{ static_cast<uint16_t>(tile_slot << 3u) };
+            const uint16_t hires_hoffset{
+                static_cast<uint16_t>(_bg_state.hoffset[background_index] << (geometry.hires ? 1u : 0u))
+            };
+            uint16_t horizontal_source{ static_cast<uint16_t>(screen_x + hires_hoffset) };
+            uint16_t vertical_source{ base_vertical_source };
+
+            if (apply_offset_lookup)
+            {
+                const uint16_t hlookup{ _background_layer_state[2].offset_hoffset[tile_slot] };
+                const uint16_t vlookup{ _background_layer_state[2].offset_voffset[tile_slot] };
+                const uint16_t valid_mask{ static_cast<uint16_t>(1u << (13u + background_index)) };
+
+                if (_bg_state.mode == 4u)
+                {
+                    if ((hlookup & valid_mask) != 0)
+                    {
+                        if ((hlookup & 0x8000u) == 0)
+                            horizontal_source = static_cast<uint16_t>(screen_x + (hlookup & ~0x0007u) + (hires_hoffset & 0x0007u));
+                        else
+                            vertical_source = static_cast<uint16_t>(base_vertical_pixel + hlookup);
+                    }
+                }
+                else
+                {
+                    if ((hlookup & valid_mask) != 0)
+                        horizontal_source = static_cast<uint16_t>(screen_x + (hlookup & ~0x0007u) + (hires_hoffset & 0x0007u));
+                    if ((vlookup & valid_mask) != 0)
+                        vertical_source = static_cast<uint16_t>(base_vertical_pixel + vlookup);
+                }
+            }
+
+            const auto addressing{
+                compute_background_addressing(geometry, window, horizontal_source, vertical_source)
+            };
+
+            auto& tile{ background.tiles[tile_slot] };
+            tile.screen_x = screen_x;
+            tile.source_x = addressing.horizontal_source;
+            tile.source_y = addressing.vertical_source;
+            tile.tilemap_address = addressing.tilemap_address;
+            tile.tilemap_entry = _vram[tile.tilemap_address];
+            tile.tiledata_address = _bg_state.tiledata_address[background_index];
+            tile.palette_group = static_cast<uint8_t>((tile.tilemap_entry >> 10u) & 0x07u);
+            tile.priority = _bg_state.priority[background_index][(tile.tilemap_entry >> 13u) & 0x01u];
+            tile.hmirror = (tile.tilemap_entry & 0x4000u) != 0;
+            tile.vmirror = (tile.tilemap_entry & 0x8000u) != 0;
+            tile.character = static_cast<uint16_t>(tile.tilemap_entry & 0x03ffu);
+            tile.fine_x = static_cast<uint8_t>(addressing.horizontal_source & 0x07u);
+            tile.fine_y = static_cast<uint8_t>(addressing.vertical_source & 0x07u);
+
+            const bool hires_character_select{ geometry.hires };
+            const bool large_tile_horizontal_select{ geometry.large_tiles };
+            if ((hires_character_select || large_tile_horizontal_select)
+                && (((addressing.horizontal_source & 0x0008u) != 0u) != tile.hmirror))
+            {
+                tile.character = static_cast<uint16_t>(tile.character + 1u);
+            }
+            if (geometry.large_tiles && (((addressing.vertical_source & 0x0008u) != 0u) != tile.vmirror))
+                tile.character = static_cast<uint16_t>(tile.character + 16u);
+
+            if (tile.vmirror)
+                tile.fine_y = static_cast<uint8_t>(tile.fine_y ^ 0x07u);
+
+            const uint16_t origin{
+                static_cast<uint16_t>((tile.character + character_index) & character_mask)
+            };
+            tile.vram_address = static_cast<uint16_t>((origin << (3u + mode_index)) + tile.fine_y);
+            tile.palette_base = static_cast<uint8_t>(palette_offset + (tile.palette_group << palette_size_shift));
+        }
+
+        background.tile_count = static_cast<uint8_t>(background.tiles.size());
+    }
+
+    void ppu_t::fetch_background_tile_rows(uint8_t background_index) noexcept
+    {
+        auto& background{ _background_layer_state[background_index] };
+        const uint8_t mode_index{ background_mode_index(_bg_state.render_mode[background_index]) };
+        const uint8_t row_pair_count{ static_cast<uint8_t>(1u << mode_index) };
+
+        for (uint8_t tile_slot{ 0 }; tile_slot < background.tile_count; ++tile_slot)
+        {
+            auto& tile{ background.tiles[tile_slot] };
+            tile.row_pair_count = row_pair_count;
+            for (uint8_t pair_index{ 0 }; pair_index < row_pair_count; ++pair_index)
+            {
+                tile.row_data[pair_index] = decode_bitplane_pair(
+                    _vram[(tile.vram_address + (pair_index << 3u)) & k_vram_word_mask],
+                    !tile.hmirror);
+            }
+        }
+    }
+
+    void ppu_t::synthesize_background_layer_candidate(uint8_t background_index) noexcept
+    {
+        auto& background{ _background_layer_state[background_index] };
+        if (background.tile_count == 0u)
+            return;
+
+        for (uint8_t tile_index{ 0 }; tile_index < background.tile_count; ++tile_index)
+        {
+            const auto& tile{ background.tiles[tile_index] };
+            for (uint8_t sample_x{ 0 }; sample_x < background.samples.size(); ++sample_x)
+            {
+                if (sample_x < tile.screen_x || sample_x >= tile.screen_x + 8u)
+                    continue;
+
+                const uint8_t lane_fine_x{ static_cast<uint8_t>(sample_x - tile.screen_x) };
+                uint8_t color{ 0 };
+                for (uint8_t pair_index{ 0 }; pair_index < tile.row_pair_count; ++pair_index)
+                {
+                    color |= static_cast<uint8_t>(extract_row_pair_pixel(tile.row_data[pair_index], lane_fine_x)
+                        << (pair_index << 1u));
+                }
+
+                if (color == 0u)
+                    continue;
+
+                const ppu_pixel_candidate_t candidate{
+                    .priority = tile.priority,
+                    .palette = static_cast<uint8_t>(tile.palette_base + color),
+                    .palette_group = tile.palette_group,
+                    .color_math_enabled = _color_math_state.bg_color_enable[background_index],
+                    .source = background_pixel_source(background_index)
+                };
+
+                if (candidate.priority >= background.samples[sample_x].priority)
+                    background.samples[sample_x] = candidate;
+            }
+        }
+
+        auto& layer{ _compositor_state.backgrounds[background_index] };
+        for (uint8_t sample_x{ 0 }; sample_x < background.samples.size(); ++sample_x)
+        {
+            if (_bg_state.above_enabled[background_index])
+                layer.above_samples[sample_x] = background.samples[sample_x];
+            if (_bg_state.below_enabled[background_index])
+                layer.below_samples[sample_x] = background.samples[sample_x];
+        }
+
+        layer.above = layer.above_samples[0];
+        layer.below = layer.below_samples[0];
+    }
+
+    void ppu_t::evaluate_object_scanline(uint16_t scanline) noexcept
+    {
+        _object_layer_state.evaluation_scanline = scanline;
+        _object_layer_state.evaluation_first_sprite = _object_layer_state.first_sprite;
+        _object_layer_state.evaluation_count = 0;
+        _object_layer_state.evaluation_indices.fill(0);
+        _object_layer_state.tile_count = 0;
+        _object_layer_state.tiles.fill({});
+
+        if (_display.disabled || scanline >= active_visible_scanlines() - 1u)
+            return;
+
+        uint8_t visible_count{ 0 };
+        for (uint16_t index{ 0 }; index < 128u; ++index)
+        {
+            const uint8_t sprite_index{
+                static_cast<uint8_t>((_object_layer_state.evaluation_first_sprite + index) & 0x7fu)
+            };
+
+            if (!object_on_scanline(_object_layer_state.objects[sprite_index], scanline))
+                continue;
+
+            if (visible_count < _object_layer_state.evaluation_indices.size())
+                _object_layer_state.evaluation_indices[visible_count] = sprite_index;
+
+            ++visible_count;
+        }
+
+        _object_layer_state.evaluation_count = std::min<uint8_t>(visible_count, 32u);
+        _object_layer_state.range_over = visible_count > 32u;
+        evaluate_object_tiles();
+        fetch_object_tile_rows();
+        synthesize_object_layer_candidate();
+    }
+
+    void ppu_t::evaluate_object_tiles() noexcept
+    {
+        uint8_t total_tile_count{ 0 };
+        _object_layer_state.time_over = false;
+
+        for (int object_slot{ static_cast<int>(_object_layer_state.evaluation_count) - 1 };
+             object_slot >= 0;
+             --object_slot)
+        {
+            const uint8_t object_index{ _object_layer_state.evaluation_indices[static_cast<size_t>(object_slot)] };
+            const auto& object{ _object_layer_state.objects[object_index] };
+            const uint8_t tile_width{ static_cast<uint8_t>(object.width >> 3u) };
+            const uint16_t masked_x{ static_cast<uint16_t>(object.x & 0x01ffu) };
+            uint16_t source_y{
+                static_cast<uint16_t>((_object_layer_state.evaluation_scanline - object.y) & 0x00ffu)
+            };
+            if (_object_layer_state.interlace)
+                source_y = static_cast<uint16_t>(source_y << 1u);
+
+            if (object.vflip)
+            {
+                if (object.width == object.height)
+                {
+                    source_y = static_cast<uint16_t>(object.height - 1u - source_y);
+                }
+                else if (source_y < object.width)
+                {
+                    source_y = static_cast<uint16_t>(object.width - 1u - source_y);
+                }
+                else
+                {
+                    source_y = static_cast<uint16_t>(object.width + (object.width - 1u) - (source_y - object.width));
+                }
+            }
+
+            uint16_t tiledata_address{ _object_layer_state.tiledata_address };
+            if (object.nameselect)
+                tiledata_address = static_cast<uint16_t>(tiledata_address + ((1u + _object_layer_state.nameselect) << 12u));
+
+            const uint16_t character_x{ static_cast<uint16_t>(object.character & 0x0fu) };
+            const uint16_t character_y{
+                static_cast<uint16_t>(((object.character >> 4u) + (source_y >> 3u)) & 0x0fu)
+            };
+
+            for (uint8_t tx{ 0 }; tx < tile_width; ++tx)
+            {
+                const uint16_t tile_x{ static_cast<uint16_t>((masked_x + (tx << 3u)) & 0x01ffu) };
+                if (masked_x != 256u && tile_x >= 256u && tile_x + 7u < 512u)
+                    continue;
+
+                if (total_tile_count >= _object_layer_state.tiles.size())
+                {
+                    _object_layer_state.tile_count = total_tile_count;
+                    _object_layer_state.time_over = true;
+                    return;
+                }
+
+                auto& tile{ _object_layer_state.tiles[total_tile_count] };
+                tile.object_index = object_index;
+                tile.x = tile_x;
+                tile.tile_x = object.hflip
+                    ? static_cast<uint8_t>(tile_width - 1u - tx)
+                    : tx;
+                tile.source_y = static_cast<uint8_t>(source_y & 0x00ffu);
+                tile.fine_y = static_cast<uint8_t>(source_y & 0x07u);
+                tile.tiledata_address = tiledata_address;
+                const uint16_t pos{
+                    static_cast<uint16_t>(tiledata_address
+                        + (((character_y << 4u) + ((character_x + tile.tile_x) & 0x0fu)) << 4u))
+                };
+                tile.vram_address = static_cast<uint16_t>((pos & 0xfff0u) + tile.fine_y);
+                tile.palette_base = static_cast<uint8_t>(128u + (object.palette << 4u));
+                tile.priority = object.priority;
+                tile.hflip = object.hflip;
+                ++total_tile_count;
+            }
+        }
+
+        _object_layer_state.tile_count = total_tile_count;
+    }
+
+    void ppu_t::fetch_object_tile_rows() noexcept
+    {
+        for (uint8_t tile_index{ 0 }; tile_index < _object_layer_state.tile_count; ++tile_index)
+        {
+            auto& tile{ _object_layer_state.tiles[tile_index] };
+            tile.row_pair_count = 2u;
+            tile.row_data[0] = decode_bitplane_pair(_vram[tile.vram_address & k_vram_word_mask], !tile.hflip);
+            tile.row_data[1] = decode_bitplane_pair(
+                _vram[(tile.vram_address + 8u) & k_vram_word_mask],
+                !tile.hflip);
+        }
+    }
+
+    void ppu_t::synthesize_object_layer_candidate() noexcept
+    {
+        for (uint8_t tile_index{ 0 }; tile_index < _object_layer_state.tile_count; ++tile_index)
+        {
+            const auto& tile{ _object_layer_state.tiles[tile_index] };
+            const int16_t screen_x{
+                static_cast<int16_t>(
+                    tile.x >= 256u
+                        ? static_cast<int32_t>(tile.x) - 512
+                        : static_cast<int32_t>(tile.x))
+            };
+            if (screen_x >= 8)
+                continue;
+
+            for (uint8_t sample_x{ 0 }; sample_x < 8u; ++sample_x)
+            {
+                if (sample_x < screen_x || sample_x >= screen_x + 8)
+                    continue;
+
+                const uint8_t lane_fine_x{ static_cast<uint8_t>(sample_x - screen_x) };
+                const uint8_t color{
+                    static_cast<uint8_t>(extract_row_pair_pixel(tile.row_data[0], lane_fine_x)
+                        | (extract_row_pair_pixel(tile.row_data[1], lane_fine_x) << 2u))
+                };
+                if (color == 0u)
+                    continue;
+
+                const ppu_pixel_candidate_t candidate{
+                    .priority = _object_layer_state.priority[tile.priority],
+                    .palette = static_cast<uint8_t>(tile.palette_base + color),
+                    .palette_group = 0u,
+                    .color_math_enabled = _color_math_state.obj_color_enable,
+                    .source = ppu_pixel_source_t::objects
+                };
+
+                if (_object_layer_state.above_enabled
+                    && candidate.priority > _compositor_state.objects.above_samples[sample_x].priority)
+                {
+                    _compositor_state.objects.above_samples[sample_x] = candidate;
+                }
+                if (_object_layer_state.below_enabled
+                    && candidate.priority > _compositor_state.objects.below_samples[sample_x].priority)
+                {
+                    _compositor_state.objects.below_samples[sample_x] = candidate;
+                }
+            }
+        }
+
+        _compositor_state.objects.above = _compositor_state.objects.above_samples[0];
+        _compositor_state.objects.below = _compositor_state.objects.below_samples[0];
+    }
+
+    void ppu_t::apply_window_masks() noexcept
+    {
+        for (uint8_t sample_x{ 0 }; sample_x < 8u; ++sample_x)
+        {
+            const uint8_t x{ sample_x };
+
+            for (uint8_t background_index{ 0 }; background_index < 4u; ++background_index)
+            {
+                const bool background_window_hit{
+                    window_hit(x,
+                               _window_state.one_left,
+                               _window_state.one_right,
+                               _window_state.two_left,
+                               _window_state.two_right,
+                               _window_state.one_invert[background_index],
+                               _window_state.one_enable[background_index],
+                               _window_state.two_invert[background_index],
+                               _window_state.two_enable[background_index],
+                               _bg_state.window_mask[background_index])
+                };
+
+                auto& background{ _compositor_state.backgrounds[background_index] };
+                if (background_window_hit && _bg_state.window_above_enabled[background_index])
+                    background.above_samples[sample_x] = {};
+                if (background_window_hit && _bg_state.window_below_enabled[background_index])
+                    background.below_samples[sample_x] = {};
+            }
+
+            const bool object_window_hit{
+                window_hit(x,
+                           _window_state.one_left,
+                           _window_state.one_right,
+                           _window_state.two_left,
+                           _window_state.two_right,
+                           _window_state.one_invert[4],
+                           _window_state.one_enable[4],
+                           _window_state.two_invert[4],
+                           _window_state.two_enable[4],
+                           _window_state.object_mask)
+            };
+            if (object_window_hit && _object_layer_state.window_above_enabled)
+                _compositor_state.objects.above_samples[sample_x] = {};
+            if (object_window_hit && _object_layer_state.window_below_enabled)
+                _compositor_state.objects.below_samples[sample_x] = {};
+
+            const bool color_window_hit{
+                window_hit(x,
+                           _window_state.one_left,
+                           _window_state.one_right,
+                           _window_state.two_left,
+                           _window_state.two_right,
+                           _window_state.one_invert[5],
+                           _window_state.one_enable[5],
+                           _window_state.two_invert[5],
+                           _window_state.two_enable[5],
+                           _window_state.color_mask)
+            };
+            const std::array<bool, 4> color_enable{
+                true,
+                color_window_hit,
+                !color_window_hit,
+                false
+            };
+            _compositor_state.color_enable_above[sample_x] =
+                color_enable[_window_state.color_mask_above & 0x03u];
+            _compositor_state.color_enable_below[sample_x] =
+                color_enable[_window_state.color_mask_below & 0x03u];
+        }
+
+        for (auto& background : _compositor_state.backgrounds)
+        {
+            background.above = background.above_samples[0];
+            background.below = background.below_samples[0];
+        }
+        _compositor_state.objects.above = _compositor_state.objects.above_samples[0];
+        _compositor_state.objects.below = _compositor_state.objects.below_samples[0];
+    }
+
+    void ppu_t::resolve_compositor_candidates() noexcept
+    {
+        _compositor_state.above = {};
+        _compositor_state.below = {};
+        _compositor_state.above_samples.fill({});
+        _compositor_state.below_samples.fill({});
+
+        for (uint8_t sample_x{ 0 }; sample_x < 8u; ++sample_x)
+        {
+            for (uint8_t background_index{ 0 }; background_index < 4u; ++background_index)
+            {
+                const auto& background{ _compositor_state.backgrounds[background_index] };
+                if (background.above_samples[sample_x].priority > _compositor_state.above_samples[sample_x].priority)
+                    _compositor_state.above_samples[sample_x] = background.above_samples[sample_x];
+                if (background.below_samples[sample_x].priority > _compositor_state.below_samples[sample_x].priority)
+                    _compositor_state.below_samples[sample_x] = background.below_samples[sample_x];
+            }
+
+            if (_compositor_state.objects.above_samples[sample_x].priority
+                > _compositor_state.above_samples[sample_x].priority)
+            {
+                _compositor_state.above_samples[sample_x] = _compositor_state.objects.above_samples[sample_x];
+            }
+
+            if (_compositor_state.objects.below_samples[sample_x].priority
+                > _compositor_state.below_samples[sample_x].priority)
+            {
+                _compositor_state.below_samples[sample_x] = _compositor_state.objects.below_samples[sample_x];
+            }
+        }
+
+        _compositor_state.above = _compositor_state.above_samples[0];
+        _compositor_state.below = _compositor_state.below_samples[0];
+    }
+
+    void ppu_t::resolve_color_math_state() noexcept
+    {
+        for (uint8_t sample_x{ 0 }; sample_x < 8u; ++sample_x)
+        {
+            const auto& above_candidate{ _compositor_state.above_samples[sample_x] };
+            const auto& below_candidate{ _compositor_state.below_samples[sample_x] };
+
+            const bool above_transparent{ above_candidate.priority == 0u };
+            const bool below_transparent{ below_candidate.priority == 0u };
+            _compositor_state.above_transparent[sample_x] = above_transparent;
+            _compositor_state.below_transparent[sample_x] = below_transparent;
+
+            ppu_pixel_candidate_t math_source{
+                .source = ppu_pixel_source_t::backdrop
+            };
+            if (!above_transparent)
+                math_source = above_candidate;
+
+            bool math_enabled{
+                source_allows_color_math(math_source, _color_math_state.backdrop_color_enable)
+                && _compositor_state.color_enable_below[sample_x]
+            };
+            const bool uses_subscreen{
+                math_enabled
+                && _color_math_state.blend_mode
+                && !above_transparent
+                && !below_transparent
+            };
+            const bool uses_fixed_color{ math_enabled && !uses_subscreen };
+            const bool color_halve_active{
+                math_enabled
+                && _color_math_state.color_halve
+                && !above_transparent
+            };
+
+            const auto resolve_candidate_color = [this](const ppu_pixel_candidate_t& candidate) noexcept -> uint16_t
+            {
+                if (candidate.priority == 0u)
+                    return _cgram[0];
+
+                if (_color_math_state.direct_color
+                    && candidate.source == ppu_pixel_source_t::background_1
+                    && (_bg_state.mode == 3u || _bg_state.mode == 4u || _bg_state.mode == 7u))
+                {
+                    return direct_color(candidate.palette, candidate.palette_group);
+                }
+
+                return _cgram[candidate.palette];
+            };
+
+            const uint16_t above_color{
+                above_transparent ? _cgram[0] : resolve_candidate_color(above_candidate)
+            };
+            const uint16_t below_color{
+                below_transparent ? _cgram[0] : resolve_candidate_color(below_candidate)
+            };
+            const uint16_t fixed_color{
+                static_cast<uint16_t>(
+                    (_color_math_state.fixed_blue << 10u)
+                    | (_color_math_state.fixed_green << 5u)
+                    | _color_math_state.fixed_red)
+            };
+            const uint16_t math_rhs_color{ uses_subscreen ? below_color : fixed_color };
+            const uint16_t visible_above_color{
+                static_cast<uint16_t>(
+                    _compositor_state.color_enable_above[sample_x] ? above_color : 0u)
+            };
+            const uint16_t output_color{
+                math_enabled
+                    ? blend_colors(visible_above_color,
+                                   math_rhs_color,
+                                   _color_math_state.color_mode_subtract,
+                                   color_halve_active)
+                    : visible_above_color
+            };
+
+            _compositor_state.math_enable[sample_x] = math_enabled;
+            _compositor_state.math_uses_subscreen[sample_x] = uses_subscreen;
+            _compositor_state.math_uses_fixed_color[sample_x] = uses_fixed_color;
+            _compositor_state.color_halve_active[sample_x] = color_halve_active;
+            _compositor_state.above_color[sample_x] = above_color;
+            _compositor_state.below_color[sample_x] = below_color;
+            _compositor_state.math_rhs_color[sample_x] = math_rhs_color;
+            _compositor_state.output_color[sample_x] = output_color;
+        }
     }
 
     uint8_t ppu_t::read_cgram_byte(bool high_byte, uint8_t address) const noexcept
     {
         if (display_active_for_cgram())
-            address = _cgram_state.address;
+            return 0;
 
         const uint16_t color{ _cgram[address] };
         if (high_byte)
@@ -227,9 +1225,46 @@ namespace clover::core
     void ppu_t::write_cgram_word(uint8_t address, uint16_t value) noexcept
     {
         if (display_active_for_cgram())
-            address = _cgram_state.address;
+            return;
 
         _cgram[address] = static_cast<uint16_t>(value & 0x7fffu);
+    }
+
+    void ppu_t::reset_oam_address() noexcept
+    {
+        _oam_state.address = static_cast<uint16_t>(_oam_state.base_address & 0x03ffu);
+        _oam_state.latched_address = _oam_state.address;
+        _object_layer_state.first_sprite = _oam_state.priority
+            ? static_cast<uint8_t>((_oam_state.address >> 2u) & 0x7fu)
+            : 0u;
+    }
+
+    bool ppu_t::mosaic_enabled() const noexcept
+    {
+        return _mosaic_state.enabled[0]
+            || _mosaic_state.enabled[1]
+            || _mosaic_state.enabled[2]
+            || _mosaic_state.enabled[3];
+    }
+
+    uint8_t ppu_t::mosaic_voffset() const noexcept
+    {
+        return _mosaic_state.vcounter > _mosaic_state.size
+            ? 0u
+            : static_cast<uint8_t>(_mosaic_state.size - _mosaic_state.vcounter);
+    }
+
+    void ppu_t::advance_mosaic_scanline(uint16_t scanline) noexcept
+    {
+        if (scanline == 1u)
+            _mosaic_state.vcounter = mosaic_enabled() ? static_cast<uint8_t>(_mosaic_state.size + 1u) : 0u;
+
+        if (_mosaic_state.vcounter != 0u)
+        {
+            --_mosaic_state.vcounter;
+            if (_mosaic_state.vcounter == 0u)
+                _mosaic_state.vcounter = mosaic_enabled() ? _mosaic_state.size : 0u;
+        }
     }
 
     void ppu_t::latch_counters() noexcept
@@ -240,6 +1275,16 @@ namespace clover::core
         _counter_latch.counters_latched = true;
         _counter_latch.hcounter_high_read = false;
         _counter_latch.vcounter_high_read = false;
+    }
+
+    void ppu_t::latch_counters_external() noexcept
+    {
+        latch_counters();
+    }
+
+    void ppu_t::set_external_latch_enabled(bool enabled) noexcept
+    {
+        _external_latch_enabled = enabled;
     }
 
     void ppu_t::clear_compositor_state() noexcept
@@ -259,6 +1304,7 @@ namespace clover::core
             _bg_state.active[index] = false;
             _bg_state.priority[index] = { 0, 0 };
         }
+        _object_layer_state.priority = { 0, 0, 0, 0 };
 
         switch (_bg_state.mode)
         {
@@ -269,15 +1315,25 @@ namespace clover::core
             _bg_state.priority[1] = { 7, 10 };
             _bg_state.priority[2] = { 2, 5 };
             _bg_state.priority[3] = { 1, 4 };
+            _object_layer_state.priority = { 3, 6, 9, 12 };
             break;
         case 1u:
             _bg_state.render_mode[0] = mode_t::bpp4;
             _bg_state.render_mode[1] = mode_t::bpp4;
             _bg_state.render_mode[2] = mode_t::bpp2;
             _bg_state.active = { true, true, true, false };
-            _bg_state.priority[0] = { 7, 10 };
-            _bg_state.priority[1] = { 6, 9 };
-            _bg_state.priority[2] = _bg_state.bg3_priority ? std::array<uint8_t, 2>{ 3, 11 } : std::array<uint8_t, 2>{ 1, 3 };
+            _bg_state.priority[0] = _bg_state.bg3_priority
+                ? std::array<uint8_t, 2>{ 5, 8 }
+                : std::array<uint8_t, 2>{ 6, 9 };
+            _bg_state.priority[1] = _bg_state.bg3_priority
+                ? std::array<uint8_t, 2>{ 4, 7 }
+                : std::array<uint8_t, 2>{ 5, 8 };
+            _bg_state.priority[2] = _bg_state.bg3_priority
+                ? std::array<uint8_t, 2>{ 1, 10 }
+                : std::array<uint8_t, 2>{ 1, 3 };
+            _object_layer_state.priority = _bg_state.bg3_priority
+                ? std::array<uint8_t, 4>{ 2, 3, 6, 9 }
+                : std::array<uint8_t, 4>{ 2, 4, 7, 10 };
             break;
         case 2u:
             _bg_state.render_mode[0] = mode_t::bpp4;
@@ -285,6 +1341,7 @@ namespace clover::core
             _bg_state.active = { true, true, false, false };
             _bg_state.priority[0] = { 3, 7 };
             _bg_state.priority[1] = { 1, 5 };
+            _object_layer_state.priority = { 2, 4, 6, 8 };
             break;
         case 3u:
             _bg_state.render_mode[0] = mode_t::bpp8;
@@ -292,6 +1349,7 @@ namespace clover::core
             _bg_state.active = { true, true, false, false };
             _bg_state.priority[0] = { 3, 7 };
             _bg_state.priority[1] = { 1, 5 };
+            _object_layer_state.priority = { 2, 4, 6, 8 };
             break;
         case 4u:
             _bg_state.render_mode[0] = mode_t::bpp8;
@@ -299,6 +1357,7 @@ namespace clover::core
             _bg_state.active = { true, true, false, false };
             _bg_state.priority[0] = { 3, 7 };
             _bg_state.priority[1] = { 1, 5 };
+            _object_layer_state.priority = { 2, 4, 6, 8 };
             break;
         case 5u:
             _bg_state.render_mode[0] = mode_t::bpp4;
@@ -306,11 +1365,13 @@ namespace clover::core
             _bg_state.active = { true, true, false, false };
             _bg_state.priority[0] = { 3, 7 };
             _bg_state.priority[1] = { 1, 5 };
+            _object_layer_state.priority = { 2, 4, 6, 8 };
             break;
         case 6u:
             _bg_state.render_mode[0] = mode_t::bpp4;
             _bg_state.active = { true, false, false, false };
             _bg_state.priority[0] = { 2, 5 };
+            _object_layer_state.priority = { 1, 3, 4, 6 };
             break;
         case 7u:
             _bg_state.render_mode[0] = mode_t::mode7;
@@ -321,7 +1382,10 @@ namespace clover::core
                 _bg_state.render_mode[1] = mode_t::mode7;
                 _bg_state.active[1] = true;
                 _bg_state.priority[1] = { 1, 5 };
+                _object_layer_state.priority = { 2, 4, 6, 7 };
             }
+            else
+                _object_layer_state.priority = { 1, 3, 4, 5 };
             break;
         default:
             break;
@@ -402,7 +1466,7 @@ namespace clover::core
             _counter_latch.hcounter_high_read = false;
             _counter_latch.vcounter_high_read = false;
             _ppu2_mdr = static_cast<uint8_t>(0x03u
-                | (_counter_latch.counters_latched ? 0x40u : 0x00u)
+                | ((!_external_latch_enabled || _counter_latch.counters_latched) ? 0x40u : 0x00u)
                 | (_counter.odd_field ? 0x80u : 0x00u));
             _counter_latch.counters_latched = false;
             return _ppu2_mdr;
@@ -421,20 +1485,31 @@ namespace clover::core
 
         switch (address)
         {
+        case 0x2101u:
+            _object_layer_state.tiledata_address = static_cast<uint16_t>((value & 0x07u) << 13u);
+            _object_layer_state.nameselect = static_cast<uint8_t>((value >> 3u) & 0x03u);
+            _object_layer_state.base_size = static_cast<uint8_t>((value >> 5u) & 0x07u);
+            for (auto& object : _object_layer_state.objects)
+            {
+                object.width = object_width(object.size_select);
+                object.height = object_height(object.size_select);
+            }
+            return;
         case 0x2100u:
+            if (_display.disabled && timing().raster.scanline == active_visible_scanlines())
+                reset_oam_address();
+
             _display.brightness = static_cast<uint8_t>(value & 0x0fu);
             _display.disabled = (value & 0x80u) != 0;
             return;
         case 0x2102u:
             _oam_state.base_address = static_cast<uint16_t>((_oam_state.base_address & 0x0200u) | (value << 1u));
-            _oam_state.address = _oam_state.base_address;
-            _oam_state.latched_address = _oam_state.address;
+            reset_oam_address();
             return;
         case 0x2103u:
             _oam_state.base_address = static_cast<uint16_t>((_oam_state.base_address & 0x01feu) | ((value & 0x01u) << 9u));
             _oam_state.priority = (value & 0x80u) != 0;
-            _oam_state.address = _oam_state.base_address;
-            _oam_state.latched_address = _oam_state.address;
+            reset_oam_address();
             return;
         case 0x2104u:
         {
@@ -469,12 +1544,17 @@ namespace clover::core
             decode_render_state();
             return;
         case 0x2106u:
+        {
+            const bool mosaic_was_enabled{ mosaic_enabled() };
             _mosaic_state.enabled[0] = (value & 0x01u) != 0;
             _mosaic_state.enabled[1] = (value & 0x02u) != 0;
             _mosaic_state.enabled[2] = (value & 0x04u) != 0;
             _mosaic_state.enabled[3] = (value & 0x08u) != 0;
             _mosaic_state.size = static_cast<uint8_t>((value >> 4u) + 1u);
+            if (!mosaic_was_enabled && mosaic_enabled())
+                _mosaic_state.vcounter = static_cast<uint8_t>(_mosaic_state.size + 1u);
             return;
+        }
         case 0x2107u:
         case 0x2108u:
         case 0x2109u:
@@ -563,6 +1643,35 @@ namespace clover::core
             write_vram_byte(true, value);
             if (_vram_state.increment_on_high)
                 _vram_state.address = static_cast<uint16_t>(_vram_state.address + _vram_state.increment_size);
+            return;
+        case 0x211au:
+            _screen_state.mode7_hflip = (value & 0x01u) != 0;
+            _screen_state.mode7_vflip = (value & 0x02u) != 0;
+            _screen_state.mode7_repeat = static_cast<uint8_t>((value >> 6u) & 0x03u);
+            return;
+        case 0x211bu:
+            _screen_state.mode7_a = static_cast<uint16_t>((value << 8u) | _scroll_latches.mode7);
+            _scroll_latches.mode7 = value;
+            return;
+        case 0x211cu:
+            _screen_state.mode7_b = static_cast<uint16_t>((value << 8u) | _scroll_latches.mode7);
+            _scroll_latches.mode7 = value;
+            return;
+        case 0x211du:
+            _screen_state.mode7_c = static_cast<uint16_t>((value << 8u) | _scroll_latches.mode7);
+            _scroll_latches.mode7 = value;
+            return;
+        case 0x211eu:
+            _screen_state.mode7_d = static_cast<uint16_t>((value << 8u) | _scroll_latches.mode7);
+            _scroll_latches.mode7 = value;
+            return;
+        case 0x211fu:
+            _screen_state.mode7_x = static_cast<uint16_t>((value << 8u) | _scroll_latches.mode7);
+            _scroll_latches.mode7 = value;
+            return;
+        case 0x2120u:
+            _screen_state.mode7_y = static_cast<uint16_t>((value << 8u) | _scroll_latches.mode7);
+            _scroll_latches.mode7 = value;
             return;
         case 0x2121u:
             _cgram_state.address = value;
@@ -678,11 +1787,9 @@ namespace clover::core
             _screen_state.overscan = (value & 0x04u) != 0;
             _screen_state.pseudo_hires = (value & 0x08u) != 0;
             _timing_interlace = _screen_state.interlace;
-            return;
-        case 0x211au:
-            _screen_state.mode7_hflip = (value & 0x01u) != 0;
-            _screen_state.mode7_vflip = (value & 0x02u) != 0;
-            _screen_state.mode7_repeat = static_cast<uint8_t>((value >> 6u) & 0x03u);
+            _object_layer_state.interlace = (value & 0x02u) != 0;
+            for (auto& object : _object_layer_state.objects)
+                object.height = object_height(object.size_select);
             return;
         default:
             return;
@@ -708,13 +1815,28 @@ namespace clover::core
 
         result.entered_scanline = result.timing.raster.scanline != previous_timing.raster.scanline;
         if (result.entered_scanline)
+        {
+            if (result.timing.raster.scanline == 0u)
+            {
+                _object_layer_state.time_over = false;
+                _object_layer_state.range_over = false;
+            }
             clear_compositor_state();
+            advance_mosaic_scanline(result.timing.raster.scanline);
+            evaluate_background_scanline(result.timing.raster.scanline);
+            evaluate_object_scanline(result.timing.raster.scanline);
+            apply_window_masks();
+            resolve_compositor_candidates();
+            resolve_color_math_state();
+        }
         result.entered_frame_start = result.frame_complete
             || crossed_raster_point(previous_timing, result.timing, 0, 0);
         result.entered_hblank = !previous_timing.in_hblank && result.timing.in_hblank;
         const bool was_in_vblank{ previous_timing.raster.scanline >= previous_visible_scanlines };
         const bool now_in_vblank{ result.timing.raster.scanline >= result.visible_scanlines };
         result.entered_vblank = !was_in_vblank && now_in_vblank;
+        if (result.entered_vblank && !_display.disabled)
+            reset_oam_address();
         result.nmi_requested = result.entered_vblank;
         result.hdma_setup_triggered = crossed_raster_point(previous_timing,
                                                            result.timing,
@@ -748,11 +1870,20 @@ namespace clover::core
         snapshot.bg3_priority = _bg_state.bg3_priority;
         snapshot.hires = _screen_state.hires;
         snapshot.mosaic_size = _mosaic_state.size;
+        for (size_t index{ 0 }; index < 4; ++index)
+            snapshot.mosaic_enabled[index] = _mosaic_state.enabled[index];
+        snapshot.mosaic_voffset = mosaic_voffset();
         snapshot.pseudo_hires = _screen_state.pseudo_hires;
         snapshot.overscan = _screen_state.overscan;
         snapshot.interlace = _screen_state.interlace;
         snapshot.mode7_hoffset = _scroll_latches.mode7_hoffset;
         snapshot.mode7_voffset = _scroll_latches.mode7_voffset;
+        snapshot.mode7_a = _screen_state.mode7_a;
+        snapshot.mode7_b = _screen_state.mode7_b;
+        snapshot.mode7_c = _screen_state.mode7_c;
+        snapshot.mode7_d = _screen_state.mode7_d;
+        snapshot.mode7_x = _screen_state.mode7_x;
+        snapshot.mode7_y = _screen_state.mode7_y;
         snapshot.mode7_repeat = _screen_state.mode7_repeat;
         snapshot.mode7_hflip = _screen_state.mode7_hflip;
         snapshot.mode7_vflip = _screen_state.mode7_vflip;
@@ -774,6 +1905,16 @@ namespace clover::core
             snapshot.backgrounds[index].window_mask = _bg_state.window_mask[index];
             snapshot.backgrounds[index].hoffset = _bg_state.hoffset[index];
             snapshot.backgrounds[index].voffset = _bg_state.voffset[index];
+            snapshot.backgrounds[index].evaluation_scanline = _background_layer_state[index].evaluation_scanline;
+            snapshot.backgrounds[index].tile_count = _background_layer_state[index].tile_count;
+            for (size_t sample_index{ 0 }; sample_index < std::size(snapshot.backgrounds[index].samples); ++sample_index)
+                snapshot.backgrounds[index].samples[sample_index] = _background_layer_state[index].samples[sample_index];
+            for (size_t tile_index{ 0 }; tile_index < snapshot.backgrounds[index].tile_count
+                && tile_index < std::size(snapshot.backgrounds[index].tiles);
+                ++tile_index)
+            {
+                snapshot.backgrounds[index].tiles[tile_index] = _background_layer_state[index].tiles[tile_index];
+            }
         }
 
         snapshot.objects.above_enabled = _object_layer_state.above_enabled;
@@ -781,6 +1922,29 @@ namespace clover::core
         snapshot.objects.window_above_enabled = _object_layer_state.window_above_enabled;
         snapshot.objects.window_below_enabled = _object_layer_state.window_below_enabled;
         snapshot.objects.window_mask = _window_state.object_mask;
+        snapshot.objects.tiledata_address = _object_layer_state.tiledata_address;
+        snapshot.objects.nameselect = _object_layer_state.nameselect;
+        snapshot.objects.base_size = _object_layer_state.base_size;
+        snapshot.objects.first_sprite = _object_layer_state.first_sprite;
+        snapshot.objects.interlace = _object_layer_state.interlace;
+        snapshot.objects.range_over = _object_layer_state.range_over;
+        snapshot.objects.time_over = _object_layer_state.time_over;
+        snapshot.objects.evaluation_scanline = _object_layer_state.evaluation_scanline;
+        snapshot.objects.evaluation_first_sprite = _object_layer_state.evaluation_first_sprite;
+        snapshot.objects.evaluation_count = _object_layer_state.evaluation_count;
+        snapshot.objects.tile_count = _object_layer_state.tile_count;
+        for (size_t index{ 0 }; index < 4; ++index)
+        {
+            snapshot.objects.priority[index] = _object_layer_state.priority[index];
+            snapshot.objects.evaluation_indices[index] = _object_layer_state.evaluation_indices[index];
+            snapshot.objects.tiles[index] = _object_layer_state.tiles[index];
+            snapshot.objects.samples[index] = _object_layer_state.objects[index];
+        }
+        for (size_t index{ 4 }; index < 8; ++index)
+        {
+            snapshot.objects.evaluation_indices[index] = _object_layer_state.evaluation_indices[index];
+            snapshot.objects.tiles[index] = _object_layer_state.tiles[index];
+        }
 
         snapshot.color_math.direct_color = _color_math_state.direct_color;
         snapshot.color_math.blend_mode = _color_math_state.blend_mode;
@@ -825,6 +1989,25 @@ namespace clover::core
         snapshot.fixed_red = _color_math_state.fixed_red;
         snapshot.fixed_green = _color_math_state.fixed_green;
         snapshot.fixed_blue = _color_math_state.fixed_blue;
+        snapshot.above = _compositor_state.above;
+        snapshot.below = _compositor_state.below;
+        for (size_t sample_index{ 0 }; sample_index < std::size(snapshot.above_samples); ++sample_index)
+        {
+            snapshot.above_samples[sample_index] = _compositor_state.above_samples[sample_index];
+            snapshot.below_samples[sample_index] = _compositor_state.below_samples[sample_index];
+            snapshot.color_enable_above[sample_index] = _compositor_state.color_enable_above[sample_index];
+            snapshot.color_enable_below[sample_index] = _compositor_state.color_enable_below[sample_index];
+            snapshot.math_enable[sample_index] = _compositor_state.math_enable[sample_index];
+            snapshot.math_uses_subscreen[sample_index] = _compositor_state.math_uses_subscreen[sample_index];
+            snapshot.math_uses_fixed_color[sample_index] = _compositor_state.math_uses_fixed_color[sample_index];
+            snapshot.color_halve_active[sample_index] = _compositor_state.color_halve_active[sample_index];
+            snapshot.above_transparent[sample_index] = _compositor_state.above_transparent[sample_index];
+            snapshot.below_transparent[sample_index] = _compositor_state.below_transparent[sample_index];
+            snapshot.above_color[sample_index] = _compositor_state.above_color[sample_index];
+            snapshot.below_color[sample_index] = _compositor_state.below_color[sample_index];
+            snapshot.math_rhs_color[sample_index] = _compositor_state.math_rhs_color[sample_index];
+            snapshot.output_color[sample_index] = _compositor_state.output_color[sample_index];
+        }
         for (size_t index{ 0 }; index < 4; ++index)
             snapshot.backgrounds[index] = _compositor_state.backgrounds[index];
         snapshot.objects = _compositor_state.objects;

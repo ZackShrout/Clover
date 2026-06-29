@@ -55,6 +55,7 @@ namespace clover::core
         [[nodiscard]] hardware_timing_snapshot_t capture_timing_snapshot() const noexcept;
         [[nodiscard]] ppu_render_state_snapshot_t ppu_render_state() const noexcept;
         [[nodiscard]] ppu_compositor_snapshot_t ppu_compositor_state() const noexcept;
+        [[nodiscard]] uint8_t open_bus() const noexcept;
         [[nodiscard]] interrupt_state_t interrupts() const noexcept;
         [[nodiscard]] bool hdma_pending() const noexcept;
         [[nodiscard]] bool general_dma_pending() const noexcept;

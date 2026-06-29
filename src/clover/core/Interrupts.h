@@ -32,6 +32,7 @@ namespace clover::core
         void assert_irq_line() noexcept;
         void clear_irq_line() noexcept;
         void clear_irq_status_line() noexcept;
+        void cancel_irq_delivery() noexcept;
         void force_irq_transition() noexcept;
         void advance_to_observation_point() noexcept;
         void latch_from_lines() noexcept;

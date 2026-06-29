@@ -181,7 +181,7 @@ namespace clover::core
         void write_u8(uint32_t address, uint8_t value) noexcept
         {
             _master_clocks = static_cast<master_clock_delta_t>(_master_clocks + k_cpu_bus_cycle_clocks);
-            _bus.write_u8(address, value);
+            _bus.write_cpu_u8(address, value);
         }
 
         [[nodiscard]] uint8_t fetch_opcode(cpu_state_t& state) noexcept
@@ -807,16 +807,38 @@ namespace clover::core
             _master_clocks = static_cast<master_clock_delta_t>(_master_clocks + k_cpu_bus_cycle_clocks);
         }
 
-        void idle_opcode_boundary(const cpu_state_t& state) noexcept
+        void commit_cpu_writes() noexcept
+        {
+            _bus.commit_cpu_writes();
+        }
+
+        void observe_opcode_edge() noexcept
         {
             _interrupts.observe_opcode_edge();
             _observed_opcode_edge = true;
+        }
+
+        void retire_instruction() noexcept
+        {
+            commit_cpu_writes();
+            observe_opcode_edge();
+            _retired_instruction = true;
+        }
+
+        void retire_opcode_boundary(const cpu_state_t& state) noexcept
+        {
+            retire_instruction();
             static_cast<void>(read_u8(program_address(state)));
         }
 
         [[nodiscard]] bool observed_opcode_edge() const noexcept
         {
             return _observed_opcode_edge;
+        }
+
+        [[nodiscard]] bool retired_instruction() const noexcept
+        {
+            return _retired_instruction;
         }
 
         [[nodiscard]] cpu_step_result_t finish() const noexcept
@@ -829,6 +851,7 @@ namespace clover::core
         interrupt_controller_t& _interrupts;
         master_clock_delta_t _master_clocks{ 0 };
         bool _observed_opcode_edge{ false };
+        bool _retired_instruction{ false };
     };
 
     inline void enter_interrupt_handler(cpu_state_t& state,
@@ -858,6 +881,7 @@ namespace clover::core
         const uint8_t vector_high{ executor.read_u8(static_cast<uint16_t>(vector + 1u)) };
         state.pb = 0;
         state.pc = static_cast<uint16_t>(vector_low | (vector_high << 8u));
+        executor.retire_instruction();
     }
 
     inline void return_from_interrupt(cpu_state_t& state,
@@ -870,6 +894,7 @@ namespace clover::core
         state.pc = executor.pull_u16(state);
         if (!state.emulation_mode)
             state.pb = executor.pull_u8(state);
+        executor.retire_instruction();
     }
 
     [[nodiscard]] inline uint16_t adc_binary(uint16_t lhs,

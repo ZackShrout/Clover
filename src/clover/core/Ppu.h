@@ -13,6 +13,17 @@
 
 namespace clover::core
 {
+    enum class ppu_pixel_source_t : uint8_t
+    {
+        none,
+        background_1,
+        background_2,
+        background_3,
+        background_4,
+        objects,
+        backdrop
+    };
+
     enum class ppu_debug_view_t : uint8_t
     {
         composed,
@@ -31,6 +42,15 @@ namespace clover::core
         ppu_debug_view_t debug_view{ ppu_debug_view_t::composed };
     };
 
+    struct ppu_pixel_candidate_t
+    {
+        uint8_t priority{ 0 };
+        uint8_t palette{ 0 };
+        uint8_t palette_group{ 0 };
+        bool color_math_enabled{ false };
+        ppu_pixel_source_t source{ ppu_pixel_source_t::none };
+    };
+
     struct ppu_background_render_state_t
     {
         enum class mode_t : uint8_t
@@ -40,6 +60,27 @@ namespace clover::core
             bpp8,
             mode7,
             inactive
+        };
+
+        struct tile_candidate_t
+        {
+            uint16_t screen_x{ 0 };
+            uint16_t source_x{ 0 };
+            uint16_t source_y{ 0 };
+            uint16_t tilemap_address{ 0 };
+            uint16_t tilemap_entry{ 0 };
+            uint16_t tiledata_address{ 0 };
+            uint16_t vram_address{ 0 };
+            uint16_t character{ 0 };
+            uint8_t fine_x{ 0 };
+            uint8_t fine_y{ 0 };
+            uint8_t palette_base{ 0 };
+            uint8_t palette_group{ 0 };
+            uint8_t priority{ 0 };
+            uint8_t row_pair_count{ 0 };
+            uint16_t row_data[4]{ 0, 0, 0, 0 };
+            bool hmirror{ false };
+            bool vmirror{ false };
         };
 
         mode_t mode{ mode_t::inactive };
@@ -56,15 +97,65 @@ namespace clover::core
         uint8_t window_mask{ 0 };
         uint16_t hoffset{ 0 };
         uint16_t voffset{ 0 };
+        uint16_t evaluation_scanline{ 0 };
+        uint8_t tile_count{ 0 };
+        ppu_pixel_candidate_t samples[8]{};
+        tile_candidate_t tiles[8]{};
     };
 
     struct ppu_object_render_state_t
     {
+        struct decoded_object_t
+        {
+            uint16_t x{ 0 };
+            uint8_t y{ 0 };
+            uint8_t character{ 0 };
+            bool nameselect{ false };
+            bool vflip{ false };
+            bool hflip{ false };
+            uint8_t priority{ 0 };
+            uint8_t palette{ 0 };
+            bool size_select{ false };
+            uint8_t width{ 0 };
+            uint8_t height{ 0 };
+        };
+
+        struct tile_candidate_t
+        {
+            uint8_t object_index{ 0 };
+            uint16_t x{ 0 };
+            uint8_t tile_x{ 0 };
+            uint8_t source_y{ 0 };
+            uint8_t fine_y{ 0 };
+            uint16_t tiledata_address{ 0 };
+            uint16_t vram_address{ 0 };
+            uint8_t palette_base{ 0 };
+            uint8_t priority{ 0 };
+            uint8_t row_pair_count{ 0 };
+            uint16_t row_data[2]{ 0, 0 };
+            bool hflip{ false };
+        };
+
+        uint16_t tiledata_address{ 0 };
+        uint8_t nameselect{ 0 };
+        uint8_t base_size{ 0 };
+        uint8_t first_sprite{ 0 };
+        uint8_t priority[4]{ 0, 0, 0, 0 };
+        bool interlace{ false };
+        bool range_over{ false };
+        bool time_over{ false };
         bool above_enabled{ false };
         bool below_enabled{ false };
         bool window_above_enabled{ false };
         bool window_below_enabled{ false };
         uint8_t window_mask{ 0 };
+        uint16_t evaluation_scanline{ 0 };
+        uint8_t evaluation_first_sprite{ 0 };
+        uint8_t evaluation_count{ 0 };
+        uint8_t evaluation_indices[8]{ 0, 0, 0, 0, 0, 0, 0, 0 };
+        uint8_t tile_count{ 0 };
+        tile_candidate_t tiles[8]{};
+        decoded_object_t samples[4]{};
     };
 
     struct ppu_color_math_render_state_t
@@ -96,18 +187,12 @@ namespace clover::core
         uint8_t two_right{ 0 };
     };
 
-    struct ppu_pixel_candidate_t
-    {
-        uint8_t priority{ 0 };
-        uint8_t palette{ 0 };
-        uint8_t palette_group{ 0 };
-        bool color_math_enabled{ false };
-    };
-
     struct ppu_layer_compositor_state_t
     {
         ppu_pixel_candidate_t above{};
         ppu_pixel_candidate_t below{};
+        ppu_pixel_candidate_t above_samples[8]{};
+        ppu_pixel_candidate_t below_samples[8]{};
     };
 
     struct ppu_compositor_snapshot_t
@@ -122,6 +207,22 @@ namespace clover::core
         uint8_t fixed_red{ 0 };
         uint8_t fixed_green{ 0 };
         uint8_t fixed_blue{ 0 };
+        ppu_pixel_candidate_t above{};
+        ppu_pixel_candidate_t below{};
+        ppu_pixel_candidate_t above_samples[8]{};
+        ppu_pixel_candidate_t below_samples[8]{};
+        bool color_enable_above[8]{};
+        bool color_enable_below[8]{};
+        bool math_enable[8]{};
+        bool math_uses_subscreen[8]{};
+        bool math_uses_fixed_color[8]{};
+        bool color_halve_active[8]{};
+        bool above_transparent[8]{};
+        bool below_transparent[8]{};
+        uint16_t above_color[8]{};
+        uint16_t below_color[8]{};
+        uint16_t math_rhs_color[8]{};
+        uint16_t output_color[8]{};
         ppu_layer_compositor_state_t backgrounds[4]{};
         ppu_layer_compositor_state_t objects{};
     };
@@ -134,11 +235,19 @@ namespace clover::core
         bool bg3_priority{ false };
         bool hires{ false };
         uint8_t mosaic_size{ 1 };
+        bool mosaic_enabled[4]{ false, false, false, false };
+        uint8_t mosaic_voffset{ 0 };
         bool pseudo_hires{ false };
         bool overscan{ false };
         bool interlace{ false };
         uint16_t mode7_hoffset{ 0 };
         uint16_t mode7_voffset{ 0 };
+        uint16_t mode7_a{ 0 };
+        uint16_t mode7_b{ 0 };
+        uint16_t mode7_c{ 0 };
+        uint16_t mode7_d{ 0 };
+        uint16_t mode7_x{ 0 };
+        uint16_t mode7_y{ 0 };
         uint8_t mode7_repeat{ 0 };
         bool mode7_hflip{ false };
         bool mode7_vflip{ false };
@@ -157,6 +266,8 @@ namespace clover::core
         [[nodiscard]] const video_timing_t& video_timing() const noexcept;
         [[nodiscard]] uint8_t read_register(uint16_t address) noexcept;
         void write_register(uint16_t address, uint8_t value) noexcept;
+        void latch_counters_external() noexcept;
+        void set_external_latch_enabled(bool enabled) noexcept;
         [[nodiscard]] ppu_step_result_t step(master_clock_delta_t master_clocks) noexcept;
         [[nodiscard]] timing_snapshot_t timing() const noexcept;
         [[nodiscard]] master_clock_delta_t current_scanline_clocks() const noexcept;
@@ -175,8 +286,30 @@ namespace clover::core
         void write_vram_byte(bool high_byte, uint8_t value) noexcept;
         [[nodiscard]] uint8_t read_oam_byte(uint16_t address) const noexcept;
         void write_oam_byte(uint16_t address, uint8_t value) noexcept;
+        void decode_oam_object(uint8_t object_index) noexcept;
+        void decode_oam_group(uint8_t group_index) noexcept;
+        [[nodiscard]] uint8_t object_width(bool size_select) const noexcept;
+        [[nodiscard]] uint8_t object_height(bool size_select) const noexcept;
+        [[nodiscard]] bool object_on_scanline(const ppu_object_render_state_t::decoded_object_t& object,
+                                              uint16_t scanline) const noexcept;
+        void evaluate_background_scanline(uint16_t scanline) noexcept;
+        void populate_background_offset_cache(uint16_t scanline) noexcept;
+        void evaluate_background_tiles(uint8_t background_index) noexcept;
+        void fetch_background_tile_rows(uint8_t background_index) noexcept;
+        void synthesize_background_layer_candidate(uint8_t background_index) noexcept;
+        void evaluate_object_scanline(uint16_t scanline) noexcept;
+        void evaluate_object_tiles() noexcept;
+        void fetch_object_tile_rows() noexcept;
+        void synthesize_object_layer_candidate() noexcept;
+        void apply_window_masks() noexcept;
+        void resolve_compositor_candidates() noexcept;
+        void resolve_color_math_state() noexcept;
         [[nodiscard]] uint8_t read_cgram_byte(bool high_byte, uint8_t address) const noexcept;
         void write_cgram_word(uint8_t address, uint16_t value) noexcept;
+        void reset_oam_address() noexcept;
+        [[nodiscard]] bool mosaic_enabled() const noexcept;
+        [[nodiscard]] uint8_t mosaic_voffset() const noexcept;
+        void advance_mosaic_scanline(uint16_t scanline) noexcept;
         void latch_counters() noexcept;
         void decode_render_state() noexcept;
         void clear_compositor_state() noexcept;
@@ -187,6 +320,8 @@ namespace clover::core
             bool disabled{ false };
             uint8_t brightness{ 0 };
         };
+
+        bool _external_latch_enabled{ false };
 
         struct ppu_oam_state_t
         {
@@ -237,6 +372,7 @@ namespace clover::core
         {
             std::array<bool, 4> enabled{};
             uint8_t size{ 1 };
+            uint8_t vcounter{ 0 };
         };
 
         struct ppu_window_state_t
@@ -257,10 +393,40 @@ namespace clover::core
 
         struct ppu_object_layer_state_t
         {
+            using decoded_object_t = ppu_object_render_state_t::decoded_object_t;
+            using tile_candidate_t = ppu_object_render_state_t::tile_candidate_t;
+
+            uint8_t base_size{ 0 };
+            uint8_t nameselect{ 0 };
+            uint16_t tiledata_address{ 0 };
+            uint8_t first_sprite{ 0 };
+            std::array<uint8_t, 4> priority{};
+            bool interlace{ false };
+            bool range_over{ false };
+            bool time_over{ false };
             bool above_enabled{ false };
             bool below_enabled{ false };
             bool window_above_enabled{ false };
             bool window_below_enabled{ false };
+            uint16_t evaluation_scanline{ 0 };
+            uint8_t evaluation_first_sprite{ 0 };
+            uint8_t evaluation_count{ 0 };
+            std::array<uint8_t, 32> evaluation_indices{};
+            uint8_t tile_count{ 0 };
+            std::array<tile_candidate_t, 34> tiles{};
+            std::array<decoded_object_t, 128> objects{};
+        };
+
+        struct ppu_background_layer_state_t
+        {
+            using tile_candidate_t = ppu_background_render_state_t::tile_candidate_t;
+
+            uint16_t evaluation_scanline{ 0 };
+            uint8_t tile_count{ 0 };
+            std::array<uint16_t, 34> offset_hoffset{};
+            std::array<uint16_t, 34> offset_voffset{};
+            std::array<ppu_pixel_candidate_t, 8> samples{};
+            std::array<tile_candidate_t, 34> tiles{};
         };
 
         struct ppu_color_math_state_t
@@ -283,6 +449,12 @@ namespace clover::core
             bool pseudo_hires{ false };
             bool overscan{ false };
             bool interlace{ false };
+            uint16_t mode7_a{ 0 };
+            uint16_t mode7_b{ 0 };
+            uint16_t mode7_c{ 0 };
+            uint16_t mode7_d{ 0 };
+            uint16_t mode7_x{ 0 };
+            uint16_t mode7_y{ 0 };
             uint8_t mode7_repeat{ 0 };
             bool mode7_hflip{ false };
             bool mode7_vflip{ false };
@@ -290,6 +462,22 @@ namespace clover::core
 
         struct ppu_compositor_state_t
         {
+            ppu_pixel_candidate_t above{};
+            ppu_pixel_candidate_t below{};
+            std::array<ppu_pixel_candidate_t, 8> above_samples{};
+            std::array<ppu_pixel_candidate_t, 8> below_samples{};
+            std::array<bool, 8> color_enable_above{};
+            std::array<bool, 8> color_enable_below{};
+            std::array<bool, 8> math_enable{};
+            std::array<bool, 8> math_uses_subscreen{};
+            std::array<bool, 8> math_uses_fixed_color{};
+            std::array<bool, 8> color_halve_active{};
+            std::array<bool, 8> above_transparent{};
+            std::array<bool, 8> below_transparent{};
+            std::array<uint16_t, 8> above_color{};
+            std::array<uint16_t, 8> below_color{};
+            std::array<uint16_t, 8> math_rhs_color{};
+            std::array<uint16_t, 8> output_color{};
             std::array<ppu_layer_compositor_state_t, 4> backgrounds{};
             ppu_layer_compositor_state_t objects{};
         };
@@ -335,6 +523,7 @@ namespace clover::core
         ppu_scroll_latch_state_t _scroll_latches{};
         ppu_mosaic_state_t _mosaic_state{};
         ppu_window_state_t _window_state{};
+        std::array<ppu_background_layer_state_t, 4> _background_layer_state{};
         ppu_object_layer_state_t _object_layer_state{};
         ppu_color_math_state_t _color_math_state{};
         ppu_screen_state_t _screen_state{};

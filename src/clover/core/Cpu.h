@@ -16,6 +16,7 @@ namespace clover::core
     struct dma_t;
     struct interrupt_controller_t;
     struct ppu_step_result_t;
+    struct ppu_t;
 
     struct cpu_state_t
     {
@@ -33,6 +34,7 @@ namespace clover::core
 
     struct cpu_io_t
     {
+        bool auto_joypad_poll{ false };
         bool hirq_enabled{ false };
         bool virq_enabled{ false };
         bool nmi_enabled{ false };
@@ -41,16 +43,27 @@ namespace clover::core
         bool irq_flag{ false };
         bool in_hblank{ false };
         bool in_vblank{ false };
+        bool fast_rom_enabled{ false };
+        bool controller_port_1_latch{ false };
         uint8_t nmi_hold_clocks{ 0 };
         uint8_t irq_hold_clocks{ 0 };
+        uint8_t pio{ 0 };
+        uint16_t auto_joypad_busy_clocks{ 0 };
+        uint16_t joy1{ 0 };
+        uint16_t joy2{ 0 };
+        uint16_t joy3{ 0 };
+        uint16_t joy4{ 0 };
         uint16_t htime{ 0x01ffu };
         uint16_t vtime{ 0x01ffu };
+        uint32_t wram_address{ 0 };
     };
 
     struct cpu_t
     {
     public:
+        void attach_bus(bus_t& bus) noexcept;
         void attach_interrupt_controller(interrupt_controller_t& interrupts) noexcept;
+        void attach_ppu(ppu_t& ppu) noexcept;
         void power_on() noexcept;
         void reset() noexcept;
         void load_reset_vector(bus_t& bus) noexcept;
@@ -88,7 +101,9 @@ namespace clover::core
         timing_snapshot_t _last_nmi_timing{};
         timing_snapshot_t _last_irq_timing{};
         timing_snapshot_t _last_irq_gate_timing{};
+        bus_t* _bus{ nullptr };
         interrupt_controller_t* _interrupts{ nullptr };
+        ppu_t* _ppu{ nullptr };
         bool _irq_condition_valid{ false };
         bool _dma_active{ false };
         bool _waiting{ false };

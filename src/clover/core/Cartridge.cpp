@@ -186,7 +186,7 @@ namespace clover::core
                                             size_t header_offset,
                                             cartridge_mapping_mode_t expected_mode) noexcept
     {
-        if (rom_data.size() < header_offset + 0x50u)
+        if (rom_data.size() < header_offset + 0x40u)
             return -1;
 
         int score{ 0 };

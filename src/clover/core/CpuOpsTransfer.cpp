@@ -32,7 +32,7 @@ namespace clover::core
         switch (opcode)
         {
         case 0x88u:
-            executor.idle_opcode_boundary(state);
+            executor.retire_opcode_boundary(state);
             if (index_is_8bit(state))
             {
                 state.y = static_cast<uint16_t>((state.y - 1u) & 0x00ffu);
@@ -45,42 +45,42 @@ namespace clover::core
             }
             return true;
         case 0x8au:
-            executor.idle_opcode_boundary(state);
+            executor.retire_opcode_boundary(state);
             state.a = apply_accumulator_result(state, state.x);
             return true;
         case 0x9au:
-            executor.idle_opcode_boundary(state);
+            executor.retire_opcode_boundary(state);
             if (state.emulation_mode)
                 state.sp = static_cast<uint16_t>(0x0100u | (state.x & 0x00ffu));
             else
                 state.sp = state.x;
             return true;
         case 0x98u:
-            executor.idle_opcode_boundary(state);
+            executor.retire_opcode_boundary(state);
             state.a = apply_accumulator_result(state, state.y);
             return true;
         case 0x9bu:
-            executor.idle_opcode_boundary(state);
+            executor.retire_opcode_boundary(state);
             state.y = apply_index_result(state, state.x);
             return true;
         case 0xaau:
-            executor.idle_opcode_boundary(state);
+            executor.retire_opcode_boundary(state);
             state.x = apply_index_result(state, state.a);
             return true;
         case 0xa8u:
-            executor.idle_opcode_boundary(state);
+            executor.retire_opcode_boundary(state);
             state.y = apply_index_result(state, state.a);
             return true;
         case 0xbbu:
-            executor.idle_opcode_boundary(state);
+            executor.retire_opcode_boundary(state);
             state.x = apply_index_result(state, state.y);
             return true;
         case 0xbau:
-            executor.idle_opcode_boundary(state);
+            executor.retire_opcode_boundary(state);
             state.x = apply_index_result(state, state.sp);
             return true;
         case 0xc8u:
-            executor.idle_opcode_boundary(state);
+            executor.retire_opcode_boundary(state);
             if (index_is_8bit(state))
             {
                 state.y = static_cast<uint16_t>((state.y + 1u) & 0x00ffu);
@@ -93,7 +93,7 @@ namespace clover::core
             }
             return true;
         case 0xcau:
-            executor.idle_opcode_boundary(state);
+            executor.retire_opcode_boundary(state);
             if (index_is_8bit(state))
             {
                 state.x = static_cast<uint16_t>((state.x - 1u) & 0x00ffu);
@@ -106,7 +106,7 @@ namespace clover::core
             }
             return true;
         case 0xe8u:
-            executor.idle_opcode_boundary(state);
+            executor.retire_opcode_boundary(state);
             if (index_is_8bit(state))
             {
                 state.x = static_cast<uint16_t>((state.x + 1u) & 0x00ffu);
@@ -119,23 +119,23 @@ namespace clover::core
             }
             return true;
         case 0x1bu:
-            executor.idle_opcode_boundary(state);
+            executor.retire_opcode_boundary(state);
             state.sp = state.a;
             if (state.emulation_mode)
                 state.sp = static_cast<uint16_t>(0x0100u | (state.sp & 0x00ffu));
             return true;
         case 0x3bu:
-            executor.idle_opcode_boundary(state);
+            executor.retire_opcode_boundary(state);
             state.a = state.sp;
             set_zero_negative_flags(state, state.a, false);
             return true;
         case 0x5bu:
-            executor.idle_opcode_boundary(state);
+            executor.retire_opcode_boundary(state);
             state.d = state.a;
             set_zero_negative_flags(state, state.d, false);
             return true;
         case 0x7bu:
-            executor.idle_opcode_boundary(state);
+            executor.retire_opcode_boundary(state);
             state.a = state.d;
             set_zero_negative_flags(state, state.a, false);
             return true;

@@ -14,7 +14,7 @@ namespace clover::core
                                 op_t&& operation) noexcept
         {
             const bool is_8bit{ accumulator_is_8bit(state) };
-            executor.idle_opcode_boundary(state);
+            executor.retire_opcode_boundary(state);
             const uint16_t result{ operation(state, state.a, is_8bit) };
             if (is_8bit)
                 state.a = static_cast<uint16_t>((state.a & 0xff00u) | (result & 0x00ffu));

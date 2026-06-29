@@ -38,6 +38,7 @@ namespace clover::core
             executor.idle();
             executor.push_u16(state, static_cast<uint16_t>(state.pc - 1u));
             state.pc = target;
+            executor.retire_instruction();
             return true;
         }
         case 0x22u:
@@ -49,16 +50,19 @@ namespace clover::core
             executor.push_u16(state, static_cast<uint16_t>(state.pc - 1u));
             state.pb = target_bank;
             state.pc = target_low_word;
+            executor.retire_instruction();
             return true;
         }
         case 0x4cu:
             state.pc = executor.fetch_operand_u16(state);
+            executor.retire_instruction();
             return true;
         case 0x5cu:
         {
             const uint32_t target{ executor.fetch_operand_u24(state) };
             state.pb = static_cast<uint8_t>(target >> 16u);
             state.pc = static_cast<uint16_t>(target & 0x00ffffu);
+            executor.retire_instruction();
             return true;
         }
         case 0x60u:
@@ -66,6 +70,7 @@ namespace clover::core
             executor.idle();
             state.pc = static_cast<uint16_t>(executor.pull_u16(state) + 1u);
             executor.idle();
+            executor.retire_instruction();
             return true;
         case 0x6bu:
         {
@@ -73,10 +78,12 @@ namespace clover::core
             executor.idle();
             state.pc = static_cast<uint16_t>(executor.pull_u16(state) + 1u);
             state.pb = executor.pull_u8(state);
+            executor.retire_instruction();
             return true;
         }
         case 0x6cu:
             state.pc = read_indirect_pointer_u16(executor, executor.fetch_operand_u16(state));
+            executor.retire_instruction();
             return true;
         case 0x7cu:
         {
@@ -90,6 +97,7 @@ namespace clover::core
             const uint8_t high{ executor.read_u8((pointer_address & 0xff0000u)
                 | static_cast<uint16_t>(pointer_base + state.x + 1u)) };
             state.pc = static_cast<uint16_t>(low | (high << 8u));
+            executor.retire_instruction();
             return true;
         }
         case 0xdcu:
@@ -97,6 +105,7 @@ namespace clover::core
             const uint32_t target{ read_indirect_pointer_u24(executor, executor.fetch_operand_u16(state)) };
             state.pb = static_cast<uint8_t>(target >> 16u);
             state.pc = static_cast<uint16_t>(target & 0x00ffffu);
+            executor.retire_instruction();
             return true;
         }
         case 0xfcu:
@@ -112,6 +121,7 @@ namespace clover::core
             const uint8_t high{ executor.read_u8((pointer_address & 0xff0000u)
                 | static_cast<uint16_t>(pointer_base + state.x + 1u)) };
             state.pc = static_cast<uint16_t>(low | (high << 8u));
+            executor.retire_instruction();
             return true;
         }
         default:

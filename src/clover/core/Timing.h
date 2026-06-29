@@ -27,7 +27,7 @@ namespace clover::core
         uint16_t overscan_visible_scanlines{ 240 };
         uint16_t short_scanline{ 240 };
         master_clock_delta_t short_scanline_clocks{ 1360 };
-        uint16_t hblank_start_dot{ 1090 };
+        uint16_t hblank_start_dot{ 1096 };
         uint16_t hdma_trigger_dot{ 1104 };
         uint16_t hdma_setup_scanline{ 0 };
         uint16_t hdma_setup_dot{ 12 };

@@ -12,6 +12,14 @@
 
 #include <algorithm>
 
+namespace
+{
+    [[nodiscard]] bool is_low_wram_mirror_bank(uint8_t bank) noexcept
+    {
+        return bank <= 0x3fu || (bank >= 0x80u && bank <= 0xbfu);
+    }
+} // anonymous namespace
+
 namespace clover::core
 {
     void bus_t::connect_cartridge(cartridge_t& cartridge) noexcept
@@ -38,6 +46,7 @@ namespace clover::core
     {
         std::fill(_wram.begin(), _wram.end(), 0);
         _open_bus = 0;
+        _pending_cpu_write_count = 0;
     }
 
     uint8_t bus_t::read_u8(uint32_t address) noexcept
@@ -78,7 +87,47 @@ namespace clover::core
     void bus_t::write_u8(uint32_t address, uint8_t value) noexcept
     {
         _open_bus = value;
+        dispatch_write_u8(address, value);
+    }
 
+    void bus_t::write_cpu_u8(uint32_t address, uint8_t value) noexcept
+    {
+        _open_bus = value;
+
+        if (is_cpu_register_address(address) || is_dma_register_address(address))
+        {
+            if (_pending_cpu_write_count < _pending_cpu_writes.size())
+            {
+                _pending_cpu_writes[_pending_cpu_write_count++] = {
+                    .address = address,
+                    .value = value
+                };
+            }
+            return;
+        }
+
+        dispatch_write_u8(address, value);
+    }
+
+    void bus_t::commit_cpu_writes() noexcept
+    {
+        const uint8_t pending_count{ _pending_cpu_write_count };
+        _pending_cpu_write_count = 0;
+
+        for (uint8_t index{ 0 }; index < pending_count; ++index)
+        {
+            const pending_cpu_write_t pending_write{ _pending_cpu_writes[index] };
+            dispatch_write_u8(pending_write.address, pending_write.value);
+        }
+    }
+
+    uint8_t bus_t::open_bus() const noexcept
+    {
+        return _open_bus;
+    }
+
+    void bus_t::dispatch_write_u8(uint32_t address, uint8_t value) noexcept
+    {
         if (is_wram_address(address))
         {
             _wram[wram_offset(address)] = value;
@@ -109,9 +158,9 @@ namespace clover::core
         if (address >= k_wram_base_address && address < (k_wram_base_address + k_wram_size))
             return true;
 
-        const uint32_t mirrored_address{ address & 0x40ffffu };
-        return (mirrored_address & 0x00e000u) == 0x000000u
-            && (mirrored_address & 0x001fffu) < k_low_wram_mirror_size;
+        const uint8_t bank{ static_cast<uint8_t>(address >> 16u) };
+        const uint16_t offset{ static_cast<uint16_t>(address & 0xffffu) };
+        return is_low_wram_mirror_bank(bank) && offset < k_low_wram_mirror_size;
     }
 
     uint32_t bus_t::wram_offset(uint32_t address) noexcept
@@ -125,7 +174,10 @@ namespace clover::core
     bool bus_t::is_cpu_register_address(uint32_t address) noexcept
     {
         const uint16_t register_address{ static_cast<uint16_t>(address & 0xffffu) };
-        return register_address >= 0x4200u && register_address <= 0x421fu;
+        return (register_address >= 0x2180u && register_address <= 0x2183u)
+            || register_address == 0x4016u
+            || register_address == 0x4017u
+            || (register_address >= 0x4200u && register_address <= 0x421fu);
     }
 
     bool bus_t::is_ppu_register_address(uint32_t address) noexcept

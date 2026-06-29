@@ -13,7 +13,9 @@ namespace clover::core
         _bus.connect_cpu(_cpu);
         _bus.connect_ppu(_ppu);
         _bus.connect_dma(_dma);
+        _cpu.attach_bus(_bus);
         _cpu.attach_interrupt_controller(_interrupts);
+        _cpu.attach_ppu(_ppu);
         _scheduler.reset();
         _cartridge.reset();
         _bus.reset();
@@ -160,6 +162,11 @@ namespace clover::core
     ppu_compositor_snapshot_t console_t::ppu_compositor_state() const noexcept
     {
         return _ppu.compositor_snapshot();
+    }
+
+    uint8_t console_t::open_bus() const noexcept
+    {
+        return _bus.open_bus();
     }
 
     interrupt_state_t console_t::interrupts() const noexcept

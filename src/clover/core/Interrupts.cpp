@@ -50,6 +50,14 @@ namespace clover::core
         _state.irq_transition = false;
     }
 
+    void interrupt_controller_t::cancel_irq_delivery() noexcept
+    {
+        _state.irq_line = false;
+        _state.irq_hold = false;
+        _state.irq_transition = false;
+        _state.irq_pending = false;
+    }
+
     void interrupt_controller_t::force_irq_transition() noexcept
     {
         _state.irq_transition = true;
@@ -72,26 +80,24 @@ namespace clover::core
 
     void interrupt_controller_t::latch_from_lines() noexcept
     {
+        if (_state.irq_lock)
+            return;
+
         _state.nmi_pending = _state.nmi_pending || _state.nmi_transition;
         _state.nmi_transition = false;
-
-        if (!_state.irq_lock)
-        {
-            _state.irq_pending = _state.irq_pending || _state.irq_transition;
-            _state.irq_transition = false;
-        }
+        _state.irq_pending = _state.irq_pending || _state.irq_transition;
+        _state.irq_transition = false;
     }
 
     void interrupt_controller_t::observe_opcode_edge() noexcept
     {
+        if (_state.irq_lock)
+            return;
+
         _state.nmi_pending = _state.nmi_pending || _state.nmi_transition;
         _state.nmi_transition = false;
-
-        if (!_state.irq_lock)
-        {
-            _state.irq_pending = _state.irq_pending || _state.irq_transition;
-            _state.irq_transition = false;
-        }
+        _state.irq_pending = _state.irq_pending || _state.irq_transition;
+        _state.irq_transition = false;
     }
 
     interrupt_state_t interrupt_controller_t::sample() const noexcept

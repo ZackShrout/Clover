@@ -39,7 +39,10 @@ namespace clover::core
         {
             const int8_t displacement{ static_cast<int8_t>(executor.fetch_operand_u8(state)) };
             if (!take_branch)
+            {
+                executor.retire_instruction();
                 return;
+            }
 
             const uint16_t target{ static_cast<uint16_t>(state.pc + displacement) };
             if (state.emulation_mode && (state.pc & 0xff00u) != (target & 0xff00u))
@@ -47,6 +50,7 @@ namespace clover::core
 
             executor.idle();
             state.pc = target;
+            executor.retire_instruction();
         }
     } // anonymous namespace
 
@@ -71,6 +75,7 @@ namespace clover::core
             const int8_t displacement{ static_cast<int8_t>(executor.fetch_operand_u8(state)) };
             executor.idle();
             state.pc = static_cast<uint16_t>(state.pc + displacement);
+            executor.retire_instruction();
             return true;
         }
         case 0x82u:
@@ -78,6 +83,7 @@ namespace clover::core
             const int16_t displacement{ static_cast<int16_t>(executor.fetch_operand_u16(state)) };
             executor.idle();
             state.pc = static_cast<uint16_t>(state.pc + displacement);
+            executor.retire_instruction();
             return true;
         }
         default:

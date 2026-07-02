@@ -88,6 +88,68 @@ namespace
         return false;
     }
 
+    [[nodiscard]] bool crossed_raster_point(const clover::core::timing_snapshot_t& previous_timing,
+                                            const clover::core::timing_snapshot_t& current_timing,
+                                            uint16_t target_scanline,
+                                            uint16_t target_dot) noexcept
+    {
+        if (current_timing.raster.scanline < previous_timing.raster.scanline)
+        {
+            if (target_scanline > previous_timing.raster.scanline)
+                return true;
+
+            if (target_scanline == previous_timing.raster.scanline
+                && target_dot >= previous_timing.raster.dot)
+                return true;
+
+            if (target_scanline < current_timing.raster.scanline)
+                return true;
+
+            if (target_scanline == current_timing.raster.scanline && target_dot <= current_timing.raster.dot)
+                return true;
+
+            return false;
+        }
+
+        if (target_scanline < previous_timing.raster.scanline
+            || target_scanline > current_timing.raster.scanline)
+            return false;
+
+        if (target_scanline == previous_timing.raster.scanline && target_dot < previous_timing.raster.dot)
+            return false;
+
+        if (target_scanline == current_timing.raster.scanline && target_dot > current_timing.raster.dot)
+            return false;
+
+        return previous_timing.master_clock != current_timing.master_clock;
+    }
+
+    [[nodiscard]] bool crossed_hdma_transfer_point(const clover::core::timing_snapshot_t& previous_timing,
+                                                   const clover::core::timing_snapshot_t& current_timing,
+                                                   uint16_t visible_scanlines,
+                                                   uint16_t target_dot) noexcept
+    {
+        if (crossed_raster_point(previous_timing,
+                                 current_timing,
+                                 previous_timing.raster.scanline,
+                                 target_dot)
+            && previous_timing.raster.scanline < visible_scanlines)
+        {
+            return true;
+        }
+
+        if (current_timing.raster.scanline != previous_timing.raster.scanline)
+        {
+            return crossed_raster_point(previous_timing,
+                                        current_timing,
+                                        current_timing.raster.scanline,
+                                        target_dot)
+                && current_timing.raster.scanline < visible_scanlines;
+        }
+
+        return false;
+    }
+
     void decrement_hold(uint8_t& hold_clocks,
                         clover::core::master_clock_delta_t elapsed_master_clocks) noexcept
     {
@@ -101,6 +163,24 @@ namespace
         }
 
         hold_clocks = static_cast<uint8_t>(hold_clocks - elapsed_master_clocks);
+    }
+
+    [[nodiscard]] uint8_t remaining_hold(uint8_t hold_clocks,
+                                         clover::core::master_clock_delta_t elapsed_master_clocks) noexcept
+    {
+        if (elapsed_master_clocks >= hold_clocks)
+            return 0;
+
+        return static_cast<uint8_t>(hold_clocks - elapsed_master_clocks);
+    }
+
+    [[nodiscard]] uint16_t remaining_busy_clocks(uint16_t busy_clocks,
+                                                 clover::core::master_clock_delta_t elapsed_master_clocks) noexcept
+    {
+        if (elapsed_master_clocks >= busy_clocks)
+            return 0;
+
+        return static_cast<uint16_t>(busy_clocks - elapsed_master_clocks);
     }
 
     [[nodiscard]] bool cpu_in_hblank(const clover::core::timing_snapshot_t& timing) noexcept
@@ -253,8 +333,19 @@ namespace clover::core
         _irq_condition_valid = current_condition;
     }
 
-    uint8_t cpu_t::read_register(uint16_t address) noexcept
+    uint8_t cpu_t::read_register(uint16_t address, master_clock_delta_t elapsed_master_clocks) noexcept
     {
+        raster_counter_t timed_counter{ _counter };
+        timed_counter.advance(elapsed_master_clocks, k_ntsc_video_timing, _interlace);
+        const timing_snapshot_t timed_snapshot{
+            timed_counter.snapshot(k_ntsc_video_timing, _visible_scanlines)
+        };
+        const uint8_t timed_nmi_hold{ remaining_hold(_io.nmi_hold_clocks, elapsed_master_clocks) };
+        const uint8_t timed_irq_hold{ remaining_hold(_io.irq_hold_clocks, elapsed_master_clocks) };
+        const uint16_t timed_auto_joypad_busy{
+            remaining_busy_clocks(_io.auto_joypad_busy_clocks, elapsed_master_clocks)
+        };
+
         switch (address)
         {
         case 0x2180u:
@@ -292,9 +383,10 @@ namespace clover::core
         case 0x4210u:
         {
             const uint8_t value{ static_cast<uint8_t>(0x02u | (_io.nmi_flag ? 0x80u : 0x00u)) };
-            if (_io.nmi_hold_clocks == 0)
+            if (timed_nmi_hold == 0)
             {
                 _io.nmi_flag = false;
+                _io.nmi_hold_clocks = 0;
                 if (_interrupts != nullptr)
                     _interrupts->clear_nmi_line();
             }
@@ -303,9 +395,10 @@ namespace clover::core
         case 0x4211u:
         {
             const uint8_t value{ static_cast<uint8_t>(_io.irq_flag ? 0x80u : 0x00u) };
-            if (_io.irq_hold_clocks == 0)
+            if (timed_irq_hold == 0)
             {
                 _io.irq_flag = false;
+                _io.irq_hold_clocks = 0;
                 if (_interrupts != nullptr)
                     _interrupts->clear_irq_status_line();
             }
@@ -314,9 +407,9 @@ namespace clover::core
         case 0x4212u:
         {
             uint8_t value{ 0 };
-            value |= static_cast<uint8_t>(_io.auto_joypad_busy_clocks != 0 ? 0x01u : 0x00u);
-            value |= static_cast<uint8_t>(_io.in_hblank ? 0x40u : 0x00u);
-            value |= static_cast<uint8_t>(_io.in_vblank ? 0x80u : 0x00u);
+            value |= static_cast<uint8_t>(timed_auto_joypad_busy != 0 ? 0x01u : 0x00u);
+            value |= static_cast<uint8_t>(cpu_in_hblank(timed_snapshot) ? 0x40u : 0x00u);
+            value |= static_cast<uint8_t>(timed_snapshot.in_vblank ? 0x80u : 0x00u);
             return value;
         }
         case 0x4213u:
@@ -591,7 +684,14 @@ namespace clover::core
         _io.in_hblank = cpu_in_hblank(current_timing);
         _io.in_vblank = current_timing.in_vblank;
 
-        if (ppu_step.entered_frame_start)
+        const bool entered_vblank{
+            !_last_timing.in_vblank && current_timing.in_vblank
+        };
+        const bool exited_vblank_on_nmi_timing{
+            _last_nmi_timing.in_vblank && !nmi_timing.in_vblank
+        };
+
+        if (exited_vblank_on_nmi_timing)
             interrupts.clear_nmi_line();
 
         if (!_last_nmi_timing.in_vblank && nmi_timing.in_vblank)
@@ -602,7 +702,7 @@ namespace clover::core
                 interrupts.assert_nmi_line();
         }
 
-        if (ppu_step.entered_vblank && _io.auto_joypad_poll)
+        if (entered_vblank && _io.auto_joypad_poll)
             _io.auto_joypad_busy_clocks = k_auto_joypad_busy_clocks;
 
         const bool irq_gate_open{
@@ -642,10 +742,16 @@ namespace clover::core
             interrupts.clear_irq_line();
         }
 
-        if (ppu_step.hdma_setup_triggered)
+        if (crossed_raster_point(_last_timing,
+                                 current_timing,
+                                 video_timing.hdma_setup_scanline,
+                                 video_timing.hdma_setup_dot))
             dma.request_hdma_setup();
 
-        if (ppu_step.hdma_transfer_triggered)
+        if (crossed_hdma_transfer_point(_last_timing,
+                                        current_timing,
+                                        _visible_scanlines,
+                                        video_timing.hdma_trigger_dot))
             dma.request_hdma_transfer();
 
         while (_interrupt_poll_phase >= 4)

@@ -71,7 +71,8 @@ namespace clover::core
         [[nodiscard]] timing_snapshot_t timing(const video_timing_t& video_timing) const noexcept;
         [[nodiscard]] timing_snapshot_t delayed_timing(const video_timing_t& video_timing,
                                                        master_clock_delta_t delay) const noexcept;
-        [[nodiscard]] uint8_t read_register(uint16_t address) noexcept;
+        [[nodiscard]] uint8_t read_register(uint16_t address,
+                                           master_clock_delta_t elapsed_master_clocks = 0) noexcept;
         void write_register(uint16_t address, uint8_t value) noexcept;
         [[nodiscard]] hardware_slot_owner_t next_slot_owner(const dma_t& dma) const noexcept;
         [[nodiscard]] cpu_step_result_t step(bus_t& bus,

@@ -229,6 +229,14 @@ namespace clover::core
 
     struct ppu_render_state_snapshot_t
     {
+        struct display_write_t
+        {
+            uint64_t frame_index{ 0 };
+            uint16_t scanline{ 0 };
+            uint16_t dot{ 0 };
+            uint8_t value{ 0 };
+        };
+
         bool display_disabled{ false };
         uint8_t brightness{ 0 };
         uint8_t bg_mode{ 0 };
@@ -255,6 +263,8 @@ namespace clover::core
         ppu_object_render_state_t objects{};
         ppu_color_math_render_state_t color_math{};
         ppu_window_render_state_t window{};
+        uint8_t display_write_count{ 0 };
+        display_write_t recent_display_writes[8]{};
     };
 
     struct ppu_t
@@ -264,17 +274,22 @@ namespace clover::core
         void reset() noexcept;
         [[nodiscard]] video_standard_t video_standard() const noexcept;
         [[nodiscard]] const video_timing_t& video_timing() const noexcept;
-        [[nodiscard]] uint8_t read_register(uint16_t address) noexcept;
+        [[nodiscard]] uint8_t read_register(uint16_t address, uint8_t open_bus) noexcept;
         void write_register(uint16_t address, uint8_t value) noexcept;
         void latch_counters_external() noexcept;
         void set_external_latch_enabled(bool enabled) noexcept;
         [[nodiscard]] ppu_step_result_t step(master_clock_delta_t master_clocks) noexcept;
         [[nodiscard]] timing_snapshot_t timing() const noexcept;
+        [[nodiscard]] uint64_t frame_index() const noexcept;
         [[nodiscard]] master_clock_delta_t current_scanline_clocks() const noexcept;
         [[nodiscard]] ppu_render_state_snapshot_t render_state_snapshot() const noexcept;
         [[nodiscard]] ppu_compositor_snapshot_t compositor_snapshot() const noexcept;
+        [[nodiscard]] const std::array<uint16_t, 32 * 1024>& vram() const noexcept;
+        [[nodiscard]] const std::array<uint8_t, 544>& oam() const noexcept;
+        [[nodiscard]] const std::array<uint16_t, 256>& cgram() const noexcept;
         void present(framebuffer_t& framebuffer,
                      const ppu_presentation_options_t& options = {}) const noexcept;
+        void set_frame_capture_enabled(bool enabled) noexcept;
 
     private:
         [[nodiscard]] uint16_t active_visible_scanlines() const noexcept;
@@ -307,18 +322,27 @@ namespace clover::core
         [[nodiscard]] uint8_t read_cgram_byte(bool high_byte, uint8_t address) const noexcept;
         void write_cgram_word(uint8_t address, uint16_t value) noexcept;
         void reset_oam_address() noexcept;
+        void update_first_sprite() noexcept;
         [[nodiscard]] bool mosaic_enabled() const noexcept;
         [[nodiscard]] uint8_t mosaic_voffset() const noexcept;
         void advance_mosaic_scanline(uint16_t scanline) noexcept;
         void latch_counters() noexcept;
         void decode_render_state() noexcept;
         void clear_compositor_state() noexcept;
+        [[nodiscard]] size_t sample_pixel_count() const noexcept;
+        void render_scanline(uint16_t scanline) noexcept;
         void render_placeholder_frame() noexcept;
 
         struct ppu_display_state_t
         {
             bool disabled{ false };
             uint8_t brightness{ 0 };
+        };
+
+        struct ppu_display_write_history_t
+        {
+            uint8_t count{ 0 };
+            ppu_render_state_snapshot_t::display_write_t entries[8]{};
         };
 
         bool _external_latch_enabled{ false };
@@ -425,7 +449,7 @@ namespace clover::core
             uint8_t tile_count{ 0 };
             std::array<uint16_t, 34> offset_hoffset{};
             std::array<uint16_t, 34> offset_voffset{};
-            std::array<ppu_pixel_candidate_t, 8> samples{};
+            std::array<ppu_pixel_candidate_t, framebuffer_t::k_width> samples{};
             std::array<tile_candidate_t, 34> tiles{};
         };
 
@@ -460,26 +484,34 @@ namespace clover::core
             bool mode7_vflip{ false };
         };
 
+        struct ppu_internal_layer_compositor_state_t
+        {
+            ppu_pixel_candidate_t above{};
+            ppu_pixel_candidate_t below{};
+            std::array<ppu_pixel_candidate_t, framebuffer_t::k_width> above_samples{};
+            std::array<ppu_pixel_candidate_t, framebuffer_t::k_width> below_samples{};
+        };
+
         struct ppu_compositor_state_t
         {
             ppu_pixel_candidate_t above{};
             ppu_pixel_candidate_t below{};
-            std::array<ppu_pixel_candidate_t, 8> above_samples{};
-            std::array<ppu_pixel_candidate_t, 8> below_samples{};
-            std::array<bool, 8> color_enable_above{};
-            std::array<bool, 8> color_enable_below{};
-            std::array<bool, 8> math_enable{};
-            std::array<bool, 8> math_uses_subscreen{};
-            std::array<bool, 8> math_uses_fixed_color{};
-            std::array<bool, 8> color_halve_active{};
-            std::array<bool, 8> above_transparent{};
-            std::array<bool, 8> below_transparent{};
-            std::array<uint16_t, 8> above_color{};
-            std::array<uint16_t, 8> below_color{};
-            std::array<uint16_t, 8> math_rhs_color{};
-            std::array<uint16_t, 8> output_color{};
-            std::array<ppu_layer_compositor_state_t, 4> backgrounds{};
-            ppu_layer_compositor_state_t objects{};
+            std::array<ppu_pixel_candidate_t, framebuffer_t::k_width> above_samples{};
+            std::array<ppu_pixel_candidate_t, framebuffer_t::k_width> below_samples{};
+            std::array<bool, framebuffer_t::k_width> color_enable_above{};
+            std::array<bool, framebuffer_t::k_width> color_enable_below{};
+            std::array<bool, framebuffer_t::k_width> math_enable{};
+            std::array<bool, framebuffer_t::k_width> math_uses_subscreen{};
+            std::array<bool, framebuffer_t::k_width> math_uses_fixed_color{};
+            std::array<bool, framebuffer_t::k_width> color_halve_active{};
+            std::array<bool, framebuffer_t::k_width> above_transparent{};
+            std::array<bool, framebuffer_t::k_width> below_transparent{};
+            std::array<uint16_t, framebuffer_t::k_width> above_color{};
+            std::array<uint16_t, framebuffer_t::k_width> below_color{};
+            std::array<uint16_t, framebuffer_t::k_width> math_rhs_color{};
+            std::array<uint16_t, framebuffer_t::k_width> output_color{};
+            std::array<ppu_internal_layer_compositor_state_t, 4> backgrounds{};
+            ppu_internal_layer_compositor_state_t objects{};
         };
 
         struct ppu_vram_state_t
@@ -494,6 +526,7 @@ namespace clover::core
         struct ppu_cgram_state_t
         {
             uint8_t address{ 0 };
+            uint8_t latched_address{ 0 };
             bool write_high_pending{ false };
             bool read_high_pending{ false };
             uint8_t write_latch{ 0 };
@@ -509,6 +542,7 @@ namespace clover::core
         };
 
         framebuffer_t _composed_frame{};
+        framebuffer_t _presented_frame{};
         std::array<uint8_t, 0x40> _registers{};
         std::array<uint16_t, 32 * 1024> _vram{};
         std::array<uint8_t, 544> _oam{};
@@ -518,6 +552,7 @@ namespace clover::core
         bool _timing_interlace{ false };
         uint64_t _frame_counter{ 0 };
         ppu_display_state_t _display{};
+        ppu_display_write_history_t _display_write_history{};
         ppu_oam_state_t _oam_state{};
         ppu_bg_state_t _bg_state{};
         ppu_scroll_latch_state_t _scroll_latches{};
@@ -533,5 +568,6 @@ namespace clover::core
         ppu_counter_latch_state_t _counter_latch{};
         uint8_t _ppu1_mdr{ 0 };
         uint8_t _ppu2_mdr{ 0 };
+        bool _frame_capture_enabled{ false };
     };
 }

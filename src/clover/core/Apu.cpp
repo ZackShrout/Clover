@@ -629,11 +629,11 @@ namespace clover::core
         if (direct_bit_is_set(direct_address, bit_mask) == branch_on_set)
         {
             _registers.pc = static_cast<uint16_t>(_registers.pc + displacement);
-            step_spc_cycles(5);
+            step_spc_cycles(7);
             return;
         }
 
-        step_spc_cycles(4);
+        step_spc_cycles(5);
     }
 
     void apu_t::branch_relative_if_accumulator_not_equal_direct(uint8_t direct_address) noexcept
@@ -642,7 +642,7 @@ namespace clover::core
         if (_registers.a != read_direct(direct_address))
         {
             _registers.pc = static_cast<uint16_t>(_registers.pc + displacement);
-            step_spc_cycles(6);
+            step_spc_cycles(7);
             return;
         }
 
@@ -655,7 +655,7 @@ namespace clover::core
         if (_registers.a != read_direct_indexed(direct_address, index))
         {
             _registers.pc = static_cast<uint16_t>(_registers.pc + displacement);
-            step_spc_cycles(7);
+            step_spc_cycles(8);
             return;
         }
 
@@ -670,7 +670,7 @@ namespace clover::core
         if (value != 0)
         {
             _registers.pc = static_cast<uint16_t>(_registers.pc + displacement);
-            step_spc_cycles(6);
+            step_spc_cycles(7);
             return;
         }
 
@@ -805,13 +805,15 @@ namespace clover::core
 
     void apu_t::branch_relative_if(bool condition) noexcept
     {
-        const int8_t displacement{ static_cast<int8_t>(fetch_u8_phased(1, 0)) };
+        const int8_t displacement{ static_cast<int8_t>(fetch_u8()) };
         if (condition)
         {
             _registers.pc = static_cast<uint16_t>(_registers.pc + displacement);
-            step_spc_cycles(2);
+            step_spc_cycles(4);
             return;
         }
+
+        step_spc_cycles(2);
     }
 
     uint8_t apu_t::read_io(uint16_t address) noexcept

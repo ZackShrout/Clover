@@ -9,6 +9,10 @@ option(CLOVER_BUILD_SDL_FRONTEND "Build the SDL3 desktop frontend." OFF)
 
 set(CLOVER_CORE_SOURCES
     src/clover/core/Apu.cpp
+    src/clover/core/ApuOpsAlu.cpp
+    src/clover/core/ApuOpsBranchBit.cpp
+    src/clover/core/ApuOpsControl.cpp
+    src/clover/core/ApuOpsLoadStore.cpp
     src/clover/core/Bus.cpp
     src/clover/core/Cartridge.cpp
     src/clover/core/Console.cpp
@@ -31,6 +35,8 @@ set(CLOVER_CORE_SOURCES
 
 set(CLOVER_APP_SOURCES
     src/clover/App.cpp
+    src/clover/frontend/EmulatorCore.cpp
+    src/clover/frontend/SnesEmulatorCore.cpp
     src/main.cpp
 )
 
@@ -53,6 +59,29 @@ add_executable(clover_hardware_loop_test
 target_include_directories(clover_hardware_loop_test PRIVATE src)
 target_link_libraries(clover_hardware_loop_test PRIVATE clover_core)
 
+add_executable(clover_rom_bringup
+    tests/RomBringup.cpp
+)
+target_include_directories(clover_rom_bringup PRIVATE src)
+target_link_libraries(clover_rom_bringup PRIVATE clover_core)
+
+add_executable(clover_local_rom_regression_test
+    tests/LocalRomRegressionTest.cpp
+)
+target_include_directories(clover_local_rom_regression_test PRIVATE src)
+target_link_libraries(clover_local_rom_regression_test PRIVATE clover_core)
+
+add_executable(clover_bsnes_bringup
+    tests/BsnesBringup.cpp
+)
+target_include_directories(clover_bsnes_bringup PRIVATE src)
+
+add_executable(clover_frame_compare
+    tests/FrameCompare.cpp
+)
+target_include_directories(clover_frame_compare PRIVATE src)
+
 enable_testing()
 add_test(NAME clover_smoke_test COMMAND clover_smoke_test)
 add_test(NAME clover_hardware_loop_test COMMAND clover_hardware_loop_test)
+add_test(NAME clover_local_rom_regression_test COMMAND clover_local_rom_regression_test)

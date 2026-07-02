@@ -175,13 +175,16 @@ namespace clover::core
         [[nodiscard]] uint8_t read_u8(uint32_t address) noexcept
         {
             _master_clocks = static_cast<master_clock_delta_t>(_master_clocks + k_cpu_bus_cycle_clocks);
-            return _bus.read_u8(address);
+            const uint8_t value{ _bus.read_cpu_u8(address, _master_clocks) };
+            _bus.trace_cpu_apu_port_access(address, value, false);
+            return value;
         }
 
         void write_u8(uint32_t address, uint8_t value) noexcept
         {
             _master_clocks = static_cast<master_clock_delta_t>(_master_clocks + k_cpu_bus_cycle_clocks);
-            _bus.write_cpu_u8(address, value);
+            _bus.trace_cpu_apu_port_access(address, value, true);
+            _bus.write_cpu_u8(address, value, _master_clocks);
         }
 
         [[nodiscard]] uint8_t fetch_opcode(cpu_state_t& state) noexcept
@@ -474,7 +477,7 @@ namespace clover::core
             const uint8_t high{ read_u8(static_cast<uint16_t>(pointer_address + 1u)) };
             const uint8_t bank{ read_u8(static_cast<uint16_t>(pointer_address + 2u)) };
             const uint32_t address{
-                ((static_cast<uint32_t>(bank) << 16u) | low | (high << 8u) | state.y) & 0x00ffffffu
+                (((static_cast<uint32_t>(bank) << 16u) | low | (high << 8u)) + state.y) & 0x00ffffffu
             };
             return read_u8(address);
         }

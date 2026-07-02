@@ -55,11 +55,27 @@ namespace clover::core
         [[nodiscard]] hardware_timing_snapshot_t capture_timing_snapshot() const noexcept;
         [[nodiscard]] ppu_render_state_snapshot_t ppu_render_state() const noexcept;
         [[nodiscard]] ppu_compositor_snapshot_t ppu_compositor_state() const noexcept;
+        [[nodiscard]] const std::array<uint16_t, 32 * 1024>& ppu_vram() const noexcept;
+        [[nodiscard]] const std::array<uint8_t, 544>& ppu_oam() const noexcept;
+        [[nodiscard]] const std::array<uint16_t, 256>& ppu_cgram() const noexcept;
+        void set_frame_capture_enabled(bool enabled) noexcept;
         [[nodiscard]] uint8_t open_bus() const noexcept;
         [[nodiscard]] interrupt_state_t interrupts() const noexcept;
         [[nodiscard]] bool hdma_pending() const noexcept;
         [[nodiscard]] bool general_dma_pending() const noexcept;
         [[nodiscard]] dma_activity_t dma_activity() const noexcept;
+        [[nodiscard]] apu_state_t apu_state() const noexcept;
+        [[nodiscard]] uint8_t apu_peek_ram(uint16_t address) const noexcept;
+        [[nodiscard]] uint8_t apu_instruction_trace_count() const noexcept;
+        [[nodiscard]] const std::array<apu_state_t::trace_entry_t, 128>& apu_instruction_trace() const noexcept;
+        [[nodiscard]] uint8_t apu_io_trace_count() const noexcept;
+        [[nodiscard]] const std::array<apu_state_t::io_trace_entry_t, 128>& apu_io_trace() const noexcept;
+        [[nodiscard]] uint8_t ppu_register_write_trace_count() const noexcept;
+        [[nodiscard]] const std::array<bus_t::ppu_register_write_trace_t, bus_t::k_ppu_register_write_trace_capacity>& ppu_register_write_trace() const noexcept;
+        [[nodiscard]] uint8_t watched_write_trace_count() const noexcept;
+        [[nodiscard]] const std::array<bus_t::watched_write_trace_t, bus_t::k_watched_write_trace_capacity>& watched_write_trace() const noexcept;
+        [[nodiscard]] uint16_t apu_port_trace_count() const noexcept;
+        [[nodiscard]] const std::array<bus_t::apu_port_trace_t, bus_t::k_apu_port_trace_capacity>& apu_port_trace() const noexcept;
 
     private:
         scheduler_t _scheduler{};

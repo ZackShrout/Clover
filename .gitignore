@@ -1,6 +1,7 @@
 # Build directories
 build/
 cmake-build-*/
+build-*/
 
 # CMake generated files
 CMakeCache.txt
@@ -33,3 +34,9 @@ compile_commands.json
 
 # Local test and ROM content
 roms/local/
+tmp/
+tmp-*/
+clover-dumps/
+clover-dumps-*/
+bsnes-*/
+reference-*/

@@ -9,6 +9,7 @@ namespace clover::core
 {
     void console_t::power_on() noexcept
     {
+        _bus.connect_apu(_apu);
         _bus.connect_cartridge(_cartridge);
         _bus.connect_cpu(_cpu);
         _bus.connect_ppu(_ppu);
@@ -81,7 +82,9 @@ namespace clover::core
         if (!_powered_on)
             return;
 
+        _ppu.set_frame_capture_enabled(true);
         _scheduler.run_frame(_cpu, _bus, _ppu, _apu, _dma, _interrupts);
+        _ppu.set_frame_capture_enabled(false);
         _ppu.present(_framebuffer);
     }
 
@@ -164,6 +167,26 @@ namespace clover::core
         return _ppu.compositor_snapshot();
     }
 
+    const std::array<uint16_t, 32 * 1024>& console_t::ppu_vram() const noexcept
+    {
+        return _ppu.vram();
+    }
+
+    const std::array<uint8_t, 544>& console_t::ppu_oam() const noexcept
+    {
+        return _ppu.oam();
+    }
+
+    const std::array<uint16_t, 256>& console_t::ppu_cgram() const noexcept
+    {
+        return _ppu.cgram();
+    }
+
+    void console_t::set_frame_capture_enabled(bool enabled) noexcept
+    {
+        _ppu.set_frame_capture_enabled(enabled);
+    }
+
     uint8_t console_t::open_bus() const noexcept
     {
         return _bus.open_bus();
@@ -187,5 +210,65 @@ namespace clover::core
     dma_activity_t console_t::dma_activity() const noexcept
     {
         return _dma.activity();
+    }
+
+    apu_state_t console_t::apu_state() const noexcept
+    {
+        return _apu.state();
+    }
+
+    uint8_t console_t::apu_peek_ram(uint16_t address) const noexcept
+    {
+        return _apu.peek_ram(address);
+    }
+
+    uint8_t console_t::apu_instruction_trace_count() const noexcept
+    {
+        return _apu.instruction_trace_count();
+    }
+
+    const std::array<apu_state_t::trace_entry_t, 128>& console_t::apu_instruction_trace() const noexcept
+    {
+        return _apu.instruction_trace();
+    }
+
+    uint8_t console_t::apu_io_trace_count() const noexcept
+    {
+        return _apu.io_trace_count();
+    }
+
+    const std::array<apu_state_t::io_trace_entry_t, 128>& console_t::apu_io_trace() const noexcept
+    {
+        return _apu.io_trace();
+    }
+
+    uint8_t console_t::ppu_register_write_trace_count() const noexcept
+    {
+        return _bus.ppu_register_write_trace_count();
+    }
+
+    const std::array<bus_t::ppu_register_write_trace_t, bus_t::k_ppu_register_write_trace_capacity>& console_t::ppu_register_write_trace() const noexcept
+    {
+        return _bus.ppu_register_write_trace();
+    }
+
+    uint8_t console_t::watched_write_trace_count() const noexcept
+    {
+        return _bus.watched_write_trace_count();
+    }
+
+    const std::array<bus_t::watched_write_trace_t, bus_t::k_watched_write_trace_capacity>& console_t::watched_write_trace() const noexcept
+    {
+        return _bus.watched_write_trace();
+    }
+
+    uint16_t console_t::apu_port_trace_count() const noexcept
+    {
+        return _bus.apu_port_trace_count();
+    }
+
+    const std::array<bus_t::apu_port_trace_t, bus_t::k_apu_port_trace_capacity>& console_t::apu_port_trace() const noexcept
+    {
+        return _bus.apu_port_trace();
     }
 }

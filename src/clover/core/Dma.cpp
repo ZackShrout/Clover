@@ -42,6 +42,7 @@ namespace clover::core
         _active_channel_index = 0;
         _substep = dma_substep_t::idle;
         _alignment_pending = false;
+        _general_dma_batch_started = false;
         _general_dma_units_remaining = 0;
         _general_dma_transfer_index = 0;
         _hdma_transfer_index = 0;
@@ -433,6 +434,29 @@ namespace clover::core
 
     master_clock_delta_t dma_t::run_general_dma(bus_t& bus, dma_channel_t& channel) noexcept
     {
+        if (_substep == dma_substep_t::general_batch_setup)
+        {
+            _general_dma_batch_started = true;
+            _substep = dma_substep_t::general_setup;
+            return 8;
+        }
+
+        if (_substep == dma_substep_t::general_setup)
+        {
+            _substep = dma_substep_t::general_transfer;
+            return 8;
+        }
+
+        if (_substep == dma_substep_t::general_finish_sync)
+        {
+            _substep = dma_substep_t::idle;
+            _activity = dma_activity_t::idle;
+            _active_channel_index = 0;
+            _alignment_pending = false;
+            _general_dma_batch_started = false;
+            return 8;
+        }
+
         if (!channel.dma_enabled)
         {
             finish_active_channel();
@@ -617,6 +641,7 @@ namespace clover::core
         _active_channel_index = 0;
         _substep = dma_substep_t::idle;
         _alignment_pending = false;
+        _general_dma_batch_started = false;
     }
 
     void dma_t::prepare_current_channel() noexcept
@@ -627,7 +652,9 @@ namespace clover::core
         case dma_activity_t::general_dma:
             _general_dma_units_remaining = current_general_dma_transfer_count(channel);
             _general_dma_transfer_index = 0;
-            _substep = dma_substep_t::general_transfer;
+            _substep = _general_dma_batch_started
+                ? dma_substep_t::general_setup
+                : dma_substep_t::general_batch_setup;
             return;
         case dma_activity_t::hdma_setup:
             channel.dma_enabled = false;
@@ -660,6 +687,7 @@ namespace clover::core
     void dma_t::begin_general_dma() noexcept
     {
         _activity = dma_activity_t::general_dma;
+        _general_dma_batch_started = false;
         _active_channel_index = first_channel_index(_pending_general_dma_mask);
         _pending_general_dma_mask &= static_cast<uint8_t>(~(1u << _active_channel_index));
         _substep = dma_substep_t::alignment;
@@ -690,6 +718,14 @@ namespace clover::core
         if (_activity == dma_activity_t::general_dma)
         {
             channel.dma_enabled = false;
+            if (_pending_general_dma_mask == 0)
+            {
+                _general_dma_units_remaining = 0;
+                _general_dma_transfer_index = 0;
+                _hdma_transfer_index = 0;
+                _substep = dma_substep_t::general_finish_sync;
+                return;
+            }
         }
 
         if (_activity != dma_activity_t::general_dma && channel.hdma_completed)

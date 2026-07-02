@@ -1,0 +1,151 @@
+//
+// Created by Zack Shrout on 6/28/26.
+// Copyright (c) 2026 BunnySoft. All rights reserved.
+//
+
+#include "clover/core/Apu.h"
+
+namespace clover::core
+{
+    bool apu_t::execute_branch_bit_opcode(uint8_t opcode) noexcept
+    {
+        switch (opcode)
+        {
+        case 0x03u:
+        case 0x13u:
+        case 0x23u:
+        case 0x33u:
+        case 0x43u:
+        case 0x53u:
+        case 0x63u:
+        case 0x73u:
+        case 0x83u:
+        case 0x93u:
+        case 0xa3u:
+        case 0xb3u:
+        case 0xc3u:
+        case 0xd3u:
+        case 0xe3u:
+        case 0xf3u:
+        {
+            const uint8_t bit_index{ static_cast<uint8_t>(opcode >> 4u) };
+            const uint8_t direct_address{ fetch_u8() };
+            branch_relative_if_direct_bit(direct_address,
+                                          static_cast<uint8_t>(1u << (bit_index & 0x07u)),
+                                          (opcode & 0x10u) == 0);
+            return true;
+        }
+
+        case 0x10u: // BPL rel
+            branch_relative_if((_registers.psw & k_psw_negative) == 0);
+            return true;
+
+        case 0x1fu: // JMP [abs+X]
+        {
+            const uint16_t base{ fetch_u16() };
+            _registers.pc = read_u16(static_cast<uint16_t>(base + _registers.x));
+            step_spc_cycles(6);
+            return true;
+        }
+
+        case 0x2fu: // BRA rel
+            branch_relative_if(true);
+            return true;
+
+        case 0x2eu: // CBNE dp,rel
+        {
+            const uint8_t direct_address{ fetch_u8() };
+            branch_relative_if_accumulator_not_equal_direct(direct_address);
+            return true;
+        }
+
+        case 0x30u: // BMI rel
+            branch_relative_if((_registers.psw & k_psw_negative) != 0);
+            return true;
+
+        case 0x50u: // BVC rel
+            branch_relative_if((_registers.psw & k_psw_overflow) == 0);
+            return true;
+
+        case 0x70u: // BVS rel
+            branch_relative_if((_registers.psw & k_psw_overflow) != 0);
+            return true;
+
+        case 0x6eu: // DBNZ dp,rel
+        {
+            const uint8_t direct_address{ fetch_u8() };
+            decrement_direct_and_branch_if_not_zero(direct_address);
+            return true;
+        }
+
+        case 0x90u: // BCC rel
+            branch_relative_if((_registers.psw & k_psw_carry) == 0);
+            return true;
+
+        case 0xb0u: // BCS rel
+            branch_relative_if((_registers.psw & k_psw_carry) != 0);
+            return true;
+
+        case 0x02u:
+        case 0x12u:
+        case 0x22u:
+        case 0x32u:
+        case 0x42u:
+        case 0x52u:
+        case 0x62u:
+        case 0x72u:
+        case 0x82u:
+        case 0x92u:
+        case 0xa2u:
+        case 0xb2u:
+        case 0xc2u:
+        case 0xd2u:
+        case 0xe2u:
+        case 0xf2u:
+        {
+            const uint8_t bit_index{ static_cast<uint8_t>(opcode >> 4u) };
+            const uint8_t direct_address{ fetch_u8() };
+            const uint8_t bit_mask{ static_cast<uint8_t>(1u << (bit_index & 0x07u)) };
+            if ((opcode & 0x10u) == 0)
+                set_direct_bit(direct_address, bit_mask);
+            else
+                clear_direct_bit(direct_address, bit_mask);
+            step_spc_cycles(4);
+            return true;
+        }
+
+        case 0xd0u: // BNE rel
+            branch_relative_if((_registers.psw & k_psw_zero) == 0);
+            return true;
+
+        case 0xdeu: // CBNE dp+X,rel
+        {
+            const uint8_t direct_address{ fetch_u8() };
+            branch_relative_if_accumulator_not_equal_direct_indexed(direct_address, _registers.x);
+            return true;
+        }
+
+        case 0xf0u: // BEQ rel
+            branch_relative_if((_registers.psw & k_psw_zero) != 0);
+            return true;
+
+        case 0xfeu: // DBNZ Y,rel
+        {
+            const int8_t displacement{ static_cast<int8_t>(fetch_u8()) };
+            --_registers.y;
+            if (_registers.y == 0)
+            {
+                step_spc_cycles(4);
+                return true;
+            }
+
+            _registers.pc = static_cast<uint16_t>(_registers.pc + displacement);
+            step_spc_cycles(6);
+            return true;
+        }
+
+        default:
+            return false;
+        }
+    }
+}

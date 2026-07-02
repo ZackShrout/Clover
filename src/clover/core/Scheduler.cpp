@@ -43,8 +43,15 @@ namespace clover::core
 
         _master_clock += result.elapsed_master_clocks;
 
-        result.ppu = ppu.step(result.elapsed_master_clocks);
-        apu.step(result.elapsed_master_clocks);
+        if (result.slot_owner == hardware_slot_owner_t::cpu)
+            result.ppu = bus.step_ppu_with_cpu_writes(result.elapsed_master_clocks);
+        else
+            result.ppu = ppu.step(result.elapsed_master_clocks);
+
+        if (result.slot_owner == hardware_slot_owner_t::cpu)
+            bus.step_apu_with_cpu_writes(result.elapsed_master_clocks);
+        else
+            apu.step(result.elapsed_master_clocks);
         cpu.on_ppu_step(result.elapsed_master_clocks,
                         ppu.video_timing(),
                         result.ppu,

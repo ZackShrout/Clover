@@ -9,8 +9,32 @@
 
 namespace
 {
+    constexpr uint8_t k_ppu1_version{ 0x01u };
+    constexpr uint8_t k_ppu2_version{ 0x03u };
     constexpr std::array<uint8_t, 4> k_vram_increment_sizes{ 1, 32, 128, 128 };
     constexpr uint16_t k_vram_word_mask{ 0x7fffu };
+
+    [[nodiscard]] uint8_t expand_snes_channel(uint8_t value, uint8_t brightness) noexcept
+    {
+        if (brightness == 0u || value == 0u)
+            return 0u;
+
+        const uint32_t scaled{
+            static_cast<uint32_t>(value) * static_cast<uint32_t>(brightness) * 255u / (31u * 15u)
+        };
+        return static_cast<uint8_t>(scaled);
+    }
+
+    [[nodiscard]] uint32_t snes_color_to_rgba8(uint16_t color, uint8_t brightness) noexcept
+    {
+        const uint8_t red5{ static_cast<uint8_t>(color & 0x001fu) };
+        const uint8_t green5{ static_cast<uint8_t>((color >> 5u) & 0x001fu) };
+        const uint8_t blue5{ static_cast<uint8_t>((color >> 10u) & 0x001fu) };
+        const uint8_t red8{ expand_snes_channel(red5, brightness) };
+        const uint8_t green8{ expand_snes_channel(green5, brightness) };
+        const uint8_t blue8{ expand_snes_channel(blue5, brightness) };
+        return 0xff000000u | (static_cast<uint32_t>(red8) << 16u) | (static_cast<uint32_t>(green8) << 8u) | blue8;
+    }
 
     void set_window_bits(bool& one_invert,
                          bool& one_enable,
@@ -404,6 +428,7 @@ namespace clover::core
     void ppu_t::reset() noexcept
     {
         _composed_frame.clear();
+        _presented_frame.clear();
         std::fill(_registers.begin(), _registers.end(), 0);
         std::fill(_vram.begin(), _vram.end(), 0);
         std::fill(_oam.begin(), _oam.end(), 0);
@@ -423,6 +448,7 @@ namespace clover::core
         _color_math_state = {};
         _screen_state = {};
         _compositor_state = {};
+        _display_write_history = {};
         decode_render_state();
         _vram_state = {};
         _vram_state.increment_size = 1;
@@ -442,6 +468,11 @@ namespace clover::core
     const video_timing_t& ppu_t::video_timing() const noexcept
     {
         return _video_timing;
+    }
+
+    void ppu_t::set_frame_capture_enabled(bool enabled) noexcept
+    {
+        _frame_capture_enabled = enabled;
     }
 
     uint16_t ppu_t::address_vram() const noexcept
@@ -784,15 +815,17 @@ namespace clover::core
         if (background.tile_count == 0u)
             return;
 
+        const size_t sample_count{ sample_pixel_count() };
         for (uint8_t tile_index{ 0 }; tile_index < background.tile_count; ++tile_index)
         {
             const auto& tile{ background.tiles[tile_index] };
-            for (uint8_t sample_x{ 0 }; sample_x < background.samples.size(); ++sample_x)
+            for (size_t sample_x{ 0 }; sample_x < sample_count; ++sample_x)
             {
-                if (sample_x < tile.screen_x || sample_x >= tile.screen_x + 8u)
+                if (sample_x < static_cast<size_t>(tile.screen_x)
+                    || sample_x >= static_cast<size_t>(tile.screen_x + 8u))
                     continue;
 
-                const uint8_t lane_fine_x{ static_cast<uint8_t>(sample_x - tile.screen_x) };
+                const uint8_t lane_fine_x{ static_cast<uint8_t>(sample_x - static_cast<size_t>(tile.screen_x)) };
                 uint8_t color{ 0 };
                 for (uint8_t pair_index{ 0 }; pair_index < tile.row_pair_count; ++pair_index)
                 {
@@ -817,7 +850,7 @@ namespace clover::core
         }
 
         auto& layer{ _compositor_state.backgrounds[background_index] };
-        for (uint8_t sample_x{ 0 }; sample_x < background.samples.size(); ++sample_x)
+        for (size_t sample_x{ 0 }; sample_x < sample_count; ++sample_x)
         {
             if (_bg_state.above_enabled[background_index])
                 layer.above_samples[sample_x] = background.samples[sample_x];
@@ -851,6 +884,7 @@ namespace clover::core
             if (!object_on_scanline(_object_layer_state.objects[sprite_index], scanline))
                 continue;
 
+            _oam_state.latched_address = sprite_index;
             if (visible_count < _object_layer_state.evaluation_indices.size())
                 _object_layer_state.evaluation_indices[visible_count] = sprite_index;
 
@@ -874,6 +908,7 @@ namespace clover::core
              --object_slot)
         {
             const uint8_t object_index{ _object_layer_state.evaluation_indices[static_cast<size_t>(object_slot)] };
+            _oam_state.latched_address = static_cast<uint16_t>(0x0200u + (object_index >> 2u));
             const auto& object{ _object_layer_state.objects[object_index] };
             const uint8_t tile_width{ static_cast<uint8_t>(object.width >> 3u) };
             const uint16_t masked_x{ static_cast<uint16_t>(object.x & 0x01ffu) };
@@ -960,6 +995,7 @@ namespace clover::core
 
     void ppu_t::synthesize_object_layer_candidate() noexcept
     {
+        const size_t sample_count{ sample_pixel_count() };
         for (uint8_t tile_index{ 0 }; tile_index < _object_layer_state.tile_count; ++tile_index)
         {
             const auto& tile{ _object_layer_state.tiles[tile_index] };
@@ -969,15 +1005,16 @@ namespace clover::core
                         ? static_cast<int32_t>(tile.x) - 512
                         : static_cast<int32_t>(tile.x))
             };
-            if (screen_x >= 8)
+            if (screen_x >= static_cast<int16_t>(sample_count))
                 continue;
 
-            for (uint8_t sample_x{ 0 }; sample_x < 8u; ++sample_x)
+            for (size_t sample_x{ 0 }; sample_x < sample_count; ++sample_x)
             {
-                if (sample_x < screen_x || sample_x >= screen_x + 8)
+                if (sample_x < static_cast<size_t>(screen_x)
+                    || sample_x >= static_cast<size_t>(screen_x + 8))
                     continue;
 
-                const uint8_t lane_fine_x{ static_cast<uint8_t>(sample_x - screen_x) };
+                const uint8_t lane_fine_x{ static_cast<uint8_t>(sample_x - static_cast<size_t>(screen_x)) };
                 const uint8_t color{
                     static_cast<uint8_t>(extract_row_pair_pixel(tile.row_data[0], lane_fine_x)
                         | (extract_row_pair_pixel(tile.row_data[1], lane_fine_x) << 2u))
@@ -1012,9 +1049,10 @@ namespace clover::core
 
     void ppu_t::apply_window_masks() noexcept
     {
-        for (uint8_t sample_x{ 0 }; sample_x < 8u; ++sample_x)
+        const size_t sample_count{ sample_pixel_count() };
+        for (size_t sample_x{ 0 }; sample_x < sample_count; ++sample_x)
         {
-            const uint8_t x{ sample_x };
+            const uint8_t x{ static_cast<uint8_t>(sample_x) };
 
             for (uint8_t background_index{ 0 }; background_index < 4u; ++background_index)
             {
@@ -1095,7 +1133,8 @@ namespace clover::core
         _compositor_state.above_samples.fill({});
         _compositor_state.below_samples.fill({});
 
-        for (uint8_t sample_x{ 0 }; sample_x < 8u; ++sample_x)
+        const size_t sample_count{ sample_pixel_count() };
+        for (size_t sample_x{ 0 }; sample_x < sample_count; ++sample_x)
         {
             for (uint8_t background_index{ 0 }; background_index < 4u; ++background_index)
             {
@@ -1125,7 +1164,8 @@ namespace clover::core
 
     void ppu_t::resolve_color_math_state() noexcept
     {
-        for (uint8_t sample_x{ 0 }; sample_x < 8u; ++sample_x)
+        const size_t sample_count{ sample_pixel_count() };
+        for (size_t sample_x{ 0 }; sample_x < sample_count; ++sample_x)
         {
             const auto& above_candidate{ _compositor_state.above_samples[sample_x] };
             const auto& below_candidate{ _compositor_state.below_samples[sample_x] };
@@ -1161,7 +1201,10 @@ namespace clover::core
             const auto resolve_candidate_color = [this](const ppu_pixel_candidate_t& candidate) noexcept -> uint16_t
             {
                 if (candidate.priority == 0u)
+                {
+                    _cgram_state.latched_address = 0u;
                     return _cgram[0];
+                }
 
                 if (_color_math_state.direct_color
                     && candidate.source == ppu_pixel_source_t::background_1
@@ -1170,6 +1213,7 @@ namespace clover::core
                     return direct_color(candidate.palette, candidate.palette_group);
                 }
 
+                _cgram_state.latched_address = candidate.palette;
                 return _cgram[candidate.palette];
             };
 
@@ -1213,7 +1257,7 @@ namespace clover::core
     uint8_t ppu_t::read_cgram_byte(bool high_byte, uint8_t address) const noexcept
     {
         if (display_active_for_cgram())
-            return 0;
+            address = _cgram_state.latched_address;
 
         const uint16_t color{ _cgram[address] };
         if (high_byte)
@@ -1225,7 +1269,7 @@ namespace clover::core
     void ppu_t::write_cgram_word(uint8_t address, uint16_t value) noexcept
     {
         if (display_active_for_cgram())
-            return;
+            address = _cgram_state.latched_address;
 
         _cgram[address] = static_cast<uint16_t>(value & 0x7fffu);
     }
@@ -1234,6 +1278,11 @@ namespace clover::core
     {
         _oam_state.address = static_cast<uint16_t>(_oam_state.base_address & 0x03ffu);
         _oam_state.latched_address = _oam_state.address;
+        update_first_sprite();
+    }
+
+    void ppu_t::update_first_sprite() noexcept
+    {
         _object_layer_state.first_sprite = _oam_state.priority
             ? static_cast<uint8_t>((_oam_state.address >> 2u) & 0x7fu)
             : 0u;
@@ -1290,6 +1339,30 @@ namespace clover::core
     void ppu_t::clear_compositor_state() noexcept
     {
         _compositor_state = {};
+    }
+
+    size_t ppu_t::sample_pixel_count() const noexcept
+    {
+        return _frame_capture_enabled ? framebuffer_t::k_width : 8u;
+    }
+
+    void ppu_t::render_scanline(uint16_t scanline) noexcept
+    {
+        if (!_frame_capture_enabled)
+            return;
+
+        if (scanline == 0u || scanline >= active_visible_scanlines())
+            return;
+
+        constexpr size_t k_non_overscan_top_border{ 9u };
+        const size_t row_index{
+            static_cast<size_t>(scanline - 1u) + (_screen_state.overscan ? 0u : k_non_overscan_top_border)
+        };
+        if (row_index >= framebuffer_t::k_height)
+            return;
+        uint32_t* const pixels{ _composed_frame.data() + (row_index * framebuffer_t::k_width) };
+        for (size_t x{ 0 }; x < framebuffer_t::k_width; ++x)
+            pixels[x] = snes_color_to_rgba8(_compositor_state.output_color[x], _display.brightness);
     }
 
     void ppu_t::decode_render_state() noexcept
@@ -1392,7 +1465,7 @@ namespace clover::core
         }
     }
 
-    uint8_t ppu_t::read_register(uint16_t address) noexcept
+    uint8_t ppu_t::read_register(uint16_t address, uint8_t open_bus) noexcept
     {
         const uint16_t offset{ static_cast<uint16_t>(address - 0x2100u) };
         if (offset >= _registers.size())
@@ -1400,12 +1473,46 @@ namespace clover::core
 
         switch (address)
         {
+        case 0x2104u:
+        case 0x2105u:
+        case 0x2106u:
+        case 0x2108u:
+        case 0x2109u:
+        case 0x210au:
+        case 0x2114u:
+        case 0x2115u:
+        case 0x2116u:
+        case 0x2118u:
+        case 0x2119u:
+        case 0x211au:
+        case 0x2124u:
+        case 0x2125u:
+        case 0x2126u:
+        case 0x2128u:
+        case 0x2129u:
+        case 0x212au:
+            return _ppu1_mdr;
+        case 0x2134u:
+        case 0x2135u:
+        case 0x2136u:
+        {
+            const int32_t product{
+                static_cast<int32_t>(static_cast<int16_t>(_screen_state.mode7_a))
+                * static_cast<int32_t>(static_cast<int8_t>(_screen_state.mode7_b >> 8u))
+            };
+            const uint32_t result{ static_cast<uint32_t>(product) & 0x00ff'ffffu };
+            const uint8_t shift{ static_cast<uint8_t>((address - 0x2134u) << 3u) };
+            _ppu1_mdr = static_cast<uint8_t>(result >> shift);
+            return _ppu1_mdr;
+        }
         case 0x2137u:
-            latch_counters();
-            return _ppu2_mdr;
+            if (_external_latch_enabled)
+                latch_counters();
+            return open_bus;
         case 0x2138u:
             _ppu1_mdr = read_oam_byte(_oam_state.address++);
             _oam_state.address &= 0x03ffu;
+            update_first_sprite();
             return _ppu1_mdr;
         case 0x2139u:
             _ppu1_mdr = static_cast<uint8_t>(_vram_state.read_latch & 0x00ffu);
@@ -1460,12 +1567,16 @@ namespace clover::core
             }
             return _ppu2_mdr;
         case 0x213eu:
-            _ppu1_mdr = 0x01u;
+            _ppu1_mdr = static_cast<uint8_t>((_ppu1_mdr & 0x10u)
+                | k_ppu1_version
+                | (_object_layer_state.range_over ? 0x40u : 0x00u)
+                | (_object_layer_state.time_over ? 0x80u : 0x00u));
             return _ppu1_mdr;
         case 0x213fu:
             _counter_latch.hcounter_high_read = false;
             _counter_latch.vcounter_high_read = false;
-            _ppu2_mdr = static_cast<uint8_t>(0x03u
+            _ppu2_mdr = static_cast<uint8_t>((_ppu2_mdr & 0x20u)
+                | k_ppu2_version
                 | ((!_external_latch_enabled || _counter_latch.counters_latched) ? 0x40u : 0x00u)
                 | (_counter.odd_field ? 0x80u : 0x00u));
             _counter_latch.counters_latched = false;
@@ -1496,12 +1607,36 @@ namespace clover::core
             }
             return;
         case 0x2100u:
+        {
             if (_display.disabled && timing().raster.scanline == active_visible_scanlines())
                 reset_oam_address();
+
+            const auto record_display_write = [this, value]() noexcept
+            {
+                const ppu_render_state_snapshot_t::display_write_t entry{
+                    .frame_index = _frame_counter,
+                    .scanline = timing().raster.scanline,
+                    .dot = timing().raster.dot,
+                    .value = value
+                };
+
+                if (_display_write_history.count < std::size(_display_write_history.entries))
+                {
+                    _display_write_history.entries[_display_write_history.count++] = entry;
+                    return;
+                }
+
+                std::move(std::begin(_display_write_history.entries) + 1u,
+                          std::end(_display_write_history.entries),
+                          std::begin(_display_write_history.entries));
+                _display_write_history.entries[std::size(_display_write_history.entries) - 1u] = entry;
+            };
+            record_display_write();
 
             _display.brightness = static_cast<uint8_t>(value & 0x0fu);
             _display.disabled = (value & 0x80u) != 0;
             return;
+        }
         case 0x2102u:
             _oam_state.base_address = static_cast<uint16_t>((_oam_state.base_address & 0x0200u) | (value << 1u));
             reset_oam_address();
@@ -1514,9 +1649,11 @@ namespace clover::core
         case 0x2104u:
         {
             const uint16_t address_now{ static_cast<uint16_t>(_oam_state.address & 0x03ffu) };
-            _oam_state.latched_address = address_now;
+            if (!display_active_for_oam())
+                _oam_state.latched_address = address_now;
             ++_oam_state.address;
             _oam_state.address &= 0x03ffu;
+            update_first_sprite();
 
             if ((address_now & 0x0200u) != 0)
             {
@@ -1809,6 +1946,7 @@ namespace clover::core
         if (result.timing.raster.scanline < previous_timing.raster.scanline)
         {
             ++_frame_counter;
+            _presented_frame = _composed_frame;
             render_placeholder_frame();
             result.frame_complete = true;
         }
@@ -1828,6 +1966,7 @@ namespace clover::core
             apply_window_masks();
             resolve_compositor_candidates();
             resolve_color_math_state();
+            render_scanline(result.timing.raster.scanline);
         }
         result.entered_frame_start = result.frame_complete
             || crossed_raster_point(previous_timing, result.timing, 0, 0);
@@ -1854,6 +1993,11 @@ namespace clover::core
     timing_snapshot_t ppu_t::timing() const noexcept
     {
         return _counter.snapshot(_video_timing, active_visible_scanlines());
+    }
+
+    uint64_t ppu_t::frame_index() const noexcept
+    {
+        return _frame_counter;
     }
 
     master_clock_delta_t ppu_t::current_scanline_clocks() const noexcept
@@ -1973,6 +2117,10 @@ namespace clover::core
             snapshot.window.two_enable[index] = _window_state.two_enable[index];
         }
 
+        snapshot.display_write_count = _display_write_history.count;
+        for (size_t index{ 0 }; index < _display_write_history.count; ++index)
+            snapshot.recent_display_writes[index] = _display_write_history.entries[index];
+
         return snapshot;
     }
 
@@ -2009,22 +2157,52 @@ namespace clover::core
             snapshot.output_color[sample_index] = _compositor_state.output_color[sample_index];
         }
         for (size_t index{ 0 }; index < 4; ++index)
-            snapshot.backgrounds[index] = _compositor_state.backgrounds[index];
-        snapshot.objects = _compositor_state.objects;
+        {
+            snapshot.backgrounds[index].above = _compositor_state.backgrounds[index].above;
+            snapshot.backgrounds[index].below = _compositor_state.backgrounds[index].below;
+            for (size_t sample_index{ 0 }; sample_index < std::size(snapshot.backgrounds[index].above_samples); ++sample_index)
+            {
+                snapshot.backgrounds[index].above_samples[sample_index]
+                    = _compositor_state.backgrounds[index].above_samples[sample_index];
+                snapshot.backgrounds[index].below_samples[sample_index]
+                    = _compositor_state.backgrounds[index].below_samples[sample_index];
+            }
+        }
+        snapshot.objects.above = _compositor_state.objects.above;
+        snapshot.objects.below = _compositor_state.objects.below;
+        for (size_t sample_index{ 0 }; sample_index < std::size(snapshot.objects.above_samples); ++sample_index)
+        {
+            snapshot.objects.above_samples[sample_index] = _compositor_state.objects.above_samples[sample_index];
+            snapshot.objects.below_samples[sample_index] = _compositor_state.objects.below_samples[sample_index];
+        }
         return snapshot;
+    }
+
+    const std::array<uint16_t, 32 * 1024>& ppu_t::vram() const noexcept
+    {
+        return _vram;
+    }
+
+    const std::array<uint8_t, 544>& ppu_t::oam() const noexcept
+    {
+        return _oam;
+    }
+
+    const std::array<uint16_t, 256>& ppu_t::cgram() const noexcept
+    {
+        return _cgram;
     }
 
     void ppu_t::present(framebuffer_t& framebuffer, const ppu_presentation_options_t& options) const noexcept
     {
         static_cast<void>(options);
-        std::copy(_composed_frame.data(),
-                  _composed_frame.data() + framebuffer_t::k_pixel_count,
+        std::copy(_presented_frame.data(),
+                  _presented_frame.data() + framebuffer_t::k_pixel_count,
                   framebuffer.data());
     }
 
     void ppu_t::render_placeholder_frame() noexcept
     {
-        const uint32_t color{ (_frame_counter & 1u) == 1 ? 0xff101820u : 0xff182840u };
-        _composed_frame.clear(color);
+        _composed_frame.clear(snes_color_to_rgba8(_cgram[0], _display.brightness));
     }
 }

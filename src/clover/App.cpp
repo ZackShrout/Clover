@@ -5,15 +5,15 @@
 
 #include "clover/App.h"
 
-#include "clover/core/Console.h"
+#include "clover/frontend/EmulatorCore.h"
 
 namespace clover
 {
     int app_t::run() const noexcept
     {
-        core::console_t console{};
-        console.power_on();
-        console.run_frame();
+        auto emulator_core{ frontend::create_default_emulator_core() };
+        emulator_core->power_on();
+        emulator_core->run_frame();
         return 0;
     }
 }

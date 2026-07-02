@@ -27,7 +27,10 @@ namespace clover::core
     {
         idle,
         alignment,
+        general_batch_setup,
+        general_setup,
         general_transfer,
+        general_finish_sync,
         hdma_reload_line_counter,
         hdma_reload_indirect_low,
         hdma_reload_indirect_high,
@@ -110,6 +113,7 @@ namespace clover::core
         uint8_t _active_channel_index{ 0 };
         dma_substep_t _substep{ dma_substep_t::idle };
         bool _alignment_pending{ false };
+        bool _general_dma_batch_started{ false };
         uint32_t _general_dma_units_remaining{ 0 };
         uint8_t _general_dma_transfer_index{ 0 };
         uint8_t _hdma_transfer_index{ 0 };

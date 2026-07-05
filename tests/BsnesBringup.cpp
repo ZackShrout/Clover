@@ -462,6 +462,9 @@ int main(int argc, char** argv)
                 dlclose(handle);
                 return 1;
             }
+            std::printf("Dumped frame_%llu from video_callback_frame=%llu\n",
+                        static_cast<unsigned long long>(frame_number),
+                        static_cast<unsigned long long>(state.latest_frame.frame_index));
             ++dumped_frames;
         }
     }

@@ -5,6 +5,7 @@
 
 #include "clover/core/Console.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -16,6 +17,21 @@
 
 namespace
 {
+    struct regression_result_t
+    {
+        std::filesystem::path rom_path{};
+        uint64_t frames_completed{ 0 };
+        uint64_t target_frames{ 0 };
+        uint64_t steps{ 0 };
+        bool terminal_pc_detected{ false };
+        bool read_failed{ false };
+        bool load_failed{ false };
+        bool step_limit_hit{ false };
+        bool frame_target_hit{ false };
+        uint8_t terminal_pb{ 0 };
+        uint16_t terminal_pc{ 0 };
+    };
+
     [[nodiscard]] std::vector<std::byte> read_file_bytes(const std::filesystem::path& path)
     {
         std::ifstream input{ path, std::ios::binary };
@@ -28,11 +44,93 @@ namespace
             bytes[index] = static_cast<std::byte>(static_cast<unsigned char>(raw[index]));
         return bytes;
     }
+
+    [[nodiscard]] bool is_supported_rom_path(const std::filesystem::path& path)
+    {
+        if (!std::filesystem::is_regular_file(path))
+            return false;
+
+        const std::string extension{ path.extension().string() };
+        return extension == ".sfc" || extension == ".smc";
+    }
+
+    [[nodiscard]] std::vector<std::filesystem::path> collect_local_roms(const std::filesystem::path& directory)
+    {
+        std::vector<std::filesystem::path> roms{};
+        if (!std::filesystem::exists(directory))
+            return roms;
+
+        for (const auto& entry : std::filesystem::directory_iterator{ directory })
+        {
+            if (!is_supported_rom_path(entry.path()))
+                continue;
+
+            roms.push_back(entry.path());
+        }
+
+        std::sort(roms.begin(), roms.end());
+        return roms;
+    }
+
+    [[nodiscard]] regression_result_t run_regression(const std::filesystem::path& rom_path,
+                                                     uint64_t target_frames,
+                                                     uint64_t step_limit)
+    {
+        regression_result_t result{};
+        result.rom_path = rom_path;
+        result.target_frames = target_frames;
+
+        const std::vector<std::byte> rom_bytes{ read_file_bytes(rom_path) };
+        if (rom_bytes.empty())
+        {
+            result.read_failed = true;
+            return result;
+        }
+
+        clover::core::console_t console{};
+        if (!console.load_cartridge(rom_bytes))
+        {
+            result.load_failed = true;
+            return result;
+        }
+
+        console.power_on();
+
+        while (result.steps < step_limit && result.frames_completed < target_frames)
+        {
+            const clover::core::hardware_step_result_t step{ console.step_hardware() };
+            ++result.steps;
+            result.frames_completed += step.ppu.frame_complete ? 1u : 0u;
+
+            const clover::core::cpu_state_t& cpu{ console.cpu_state() };
+            if (cpu.pb == 0x00u && cpu.pc == 0xffffu)
+            {
+                result.terminal_pc_detected = true;
+                result.terminal_pb = cpu.pb;
+                result.terminal_pc = cpu.pc;
+                break;
+            }
+        }
+
+        result.step_limit_hit = result.steps >= step_limit;
+        result.frame_target_hit = result.frames_completed >= target_frames;
+        return result;
+    }
+
+    void print_result(const regression_result_t& result)
+    {
+        std::printf("Local ROM regression: rom=%s frames=%llu/%llu steps=%llu terminal_pc=%u\n",
+                    result.rom_path.string().c_str(),
+                    static_cast<unsigned long long>(result.frames_completed),
+                    static_cast<unsigned long long>(result.target_frames),
+                    static_cast<unsigned long long>(result.steps),
+                    result.terminal_pc_detected ? 1u : 0u);
+    }
 }
 
 int main(int argc, char** argv)
 {
-    std::filesystem::path rom_path{ "roms/local/Super Mario World (USA).sfc" };
+    std::filesystem::path rom_path{};
     uint64_t target_frames{ 300u };
     uint64_t step_limit{ 10'000'000u };
 
@@ -45,71 +143,76 @@ int main(int argc, char** argv)
     if (argc >= 4)
         step_limit = std::strtoull(argv[3], nullptr, 10);
 
-    if (!std::filesystem::exists(rom_path))
+    std::vector<std::filesystem::path> rom_paths{};
+    if (!rom_path.empty())
     {
-        std::printf("Local ROM regression skipped: missing %s\n", rom_path.string().c_str());
-        return 0;
-    }
-
-    const std::vector<std::byte> rom_bytes{ read_file_bytes(rom_path) };
-    if (rom_bytes.empty())
-    {
-        std::fprintf(stderr, "Local ROM regression failed: unable to read %s\n", rom_path.string().c_str());
-        return 1;
-    }
-
-    clover::core::console_t console{};
-    if (!console.load_cartridge(rom_bytes))
-    {
-        std::fprintf(stderr, "Local ROM regression failed: console rejected %s\n", rom_path.string().c_str());
-        return 1;
-    }
-
-    console.power_on();
-
-    uint64_t frames_completed{ 0 };
-    uint64_t steps{ 0 };
-    bool terminal_pc_detected{ false };
-    while (steps < step_limit && frames_completed < target_frames)
-    {
-        const clover::core::hardware_step_result_t step{ console.step_hardware() };
-        ++steps;
-        frames_completed += step.ppu.frame_complete ? 1u : 0u;
-
-        const clover::core::cpu_state_t& cpu{ console.cpu_state() };
-        if (cpu.pb == 0x00u && cpu.pc == 0xffffu)
+        if (!std::filesystem::exists(rom_path))
         {
-            terminal_pc_detected = true;
-            break;
+            std::printf("Local ROM regression skipped: missing %s\n", rom_path.string().c_str());
+            return 0;
+        }
+
+        rom_paths.push_back(rom_path);
+    }
+    else
+    {
+        rom_paths = collect_local_roms("roms/local");
+        if (rom_paths.empty())
+        {
+            std::printf("Local ROM regression skipped: no supported ROMs in roms/local\n");
+            return 0;
         }
     }
 
-    std::printf("Local ROM regression: rom=%s frames=%llu/%llu steps=%llu terminal_pc=%u\n",
-                rom_path.string().c_str(),
-                static_cast<unsigned long long>(frames_completed),
-                static_cast<unsigned long long>(target_frames),
-                static_cast<unsigned long long>(steps),
-                terminal_pc_detected ? 1u : 0u);
-
-    if (terminal_pc_detected)
+    bool had_failure{ false };
+    for (const auto& current_rom_path : rom_paths)
     {
-        const clover::core::cpu_state_t& cpu{ console.cpu_state() };
-        std::fprintf(stderr, "Local ROM regression failed: terminal PC at PB:%02x PC:%04x\n", cpu.pb, cpu.pc);
-        return 1;
+        const regression_result_t result{ run_regression(current_rom_path, target_frames, step_limit) };
+        print_result(result);
+
+        if (result.read_failed)
+        {
+            std::fprintf(stderr, "Local ROM regression failed: unable to read %s\n", current_rom_path.string().c_str());
+            had_failure = true;
+            continue;
+        }
+
+        if (result.load_failed)
+        {
+            std::fprintf(stderr, "Local ROM regression failed: console rejected %s\n", current_rom_path.string().c_str());
+            had_failure = true;
+            continue;
+        }
+
+        if (result.terminal_pc_detected)
+        {
+            std::fprintf(stderr,
+                         "Local ROM regression failed: terminal PC at PB:%02x PC:%04x for %s\n",
+                         result.terminal_pb,
+                         result.terminal_pc,
+                         current_rom_path.string().c_str());
+            had_failure = true;
+            continue;
+        }
+
+        if (result.step_limit_hit)
+        {
+            std::fprintf(stderr,
+                         "Local ROM regression failed: step limit hit before frame target for %s\n",
+                         current_rom_path.string().c_str());
+            had_failure = true;
+            continue;
+        }
+
+        if (!result.frame_target_hit)
+        {
+            std::fprintf(stderr,
+                         "Local ROM regression failed: only reached %llu frames for %s\n",
+                         static_cast<unsigned long long>(result.frames_completed),
+                         current_rom_path.string().c_str());
+            had_failure = true;
+        }
     }
 
-    if (steps >= step_limit)
-    {
-        std::fprintf(stderr, "Local ROM regression failed: step limit hit before frame target\n");
-        return 1;
-    }
-
-    if (frames_completed < target_frames)
-    {
-        std::fprintf(stderr, "Local ROM regression failed: only reached %llu frames\n",
-                     static_cast<unsigned long long>(frames_completed));
-        return 1;
-    }
-
-    return 0;
+    return had_failure ? 1 : 0;
 }

@@ -81,6 +81,11 @@ add_executable(clover_frame_compare
 )
 target_include_directories(clover_frame_compare PRIVATE src)
 
+add_executable(clover_frame_range_compare
+    tests/FrameRangeCompare.cpp
+)
+target_include_directories(clover_frame_range_compare PRIVATE src)
+
 enable_testing()
 add_test(NAME clover_smoke_test COMMAND clover_smoke_test)
 add_test(NAME clover_hardware_loop_test COMMAND clover_hardware_loop_test)

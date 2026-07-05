@@ -112,6 +112,7 @@ namespace
     {
         uint64_t hardware_step{ 0 };
         uint64_t frame_completions{ 0 };
+        uint64_t active_frame{ 0 };
         clover::core::timing_snapshot_t timing{};
         clover::core::cpu_state_t cpu{};
         uint8_t opcode{ 0 };
@@ -397,12 +398,13 @@ namespace
         std::printf("Hot path trace:\n");
         for (const hot_path_trace_entry_t& entry : trace)
         {
-            std::printf("  step=%llu frame=%llu scanline=%u dot=%u PB:%02x PC:%04x OP:%02x A:%04x X:%04x Y:%04x SP:%04x D:%04x DB:%02x P:%02x "
+            std::printf("  step=%llu completed=%llu active_frame=%llu scanline=%u dot=%u PB:%02x PC:%04x OP:%02x A:%04x X:%04x Y:%04x SP:%04x D:%04x DB:%02x P:%02x "
                         "ports=%02x,%02x,%02x,%02x dp00-05=%02x,%02x,%02x,%02x,%02x,%02x effdp03[%04x]=%02x dp65-6a=%02x,%02x,%02x,%02x,%02x,%02x "
                         "dma[ch2 ctl=%02x bbus=%02x src=%02x:%04x size=%04x] "
                         "dma_bank=%02x src[%06x]=%02x src[%06x]=%02x src[%06x]=%02x src[%06x]=%02x src98=%02x src99=%02x\n",
                         static_cast<unsigned long long>(entry.hardware_step),
                         static_cast<unsigned long long>(entry.frame_completions),
+                        static_cast<unsigned long long>(entry.active_frame),
                         entry.timing.raster.scanline,
                         entry.timing.raster.dot,
                         entry.cpu.pb,
@@ -869,6 +871,7 @@ int main(int argc, char** argv)
     {
         const clover::core::cpu_state_t current_cpu{ console.cpu_state() };
         const uint8_t current_opcode{ console.read_u8((static_cast<uint32_t>(current_cpu.pb) << 16u) | current_cpu.pc) };
+        const uint64_t active_frame{ summary.frame_completions + 1u };
         if (is_hot_path_pc(current_cpu))
         {
             const uint8_t dma_source_bank{ static_cast<uint8_t>(current_cpu.y & 0x00ffu) };
@@ -888,6 +891,7 @@ int main(int argc, char** argv)
             hot_path_trace.push_back({
                 .hardware_step = summary.steps,
                 .frame_completions = summary.frame_completions,
+                .active_frame = active_frame,
                 .timing = console.timing(),
                 .cpu = current_cpu,
                 .opcode = current_opcode,
@@ -930,7 +934,7 @@ int main(int argc, char** argv)
                     console.read_u8(0x004325u) | (console.read_u8(0x004326u) << 8u)
                 )
             });
-            if (hot_path_trace.size() > 256)
+            if (hot_path_trace.size() > 2048)
                 hot_path_trace.pop_front();
         }
         if (!have_last_recorded_cpu

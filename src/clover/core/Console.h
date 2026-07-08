@@ -37,6 +37,10 @@ namespace clover::core
     public:
         void power_on() noexcept;
         void reset() noexcept;
+        void set_startup_entropy_mode(startup_entropy_mode_t mode) noexcept;
+        [[nodiscard]] startup_entropy_mode_t startup_entropy_mode() const noexcept;
+        void set_startup_entropy_seed(uint32_t seed, uint32_t sequence = 0u) noexcept;
+        void clear_startup_entropy_seed() noexcept;
         [[nodiscard]] bool load_cartridge(std::span<const std::byte> rom_data) noexcept;
         [[nodiscard]] hardware_step_result_t step_hardware() noexcept;
         void run_scanline() noexcept;
@@ -57,10 +61,22 @@ namespace clover::core
         [[nodiscard]] hardware_timing_snapshot_t capture_timing_snapshot() const noexcept;
         [[nodiscard]] ppu_render_state_snapshot_t ppu_render_state() const noexcept;
         [[nodiscard]] ppu_compositor_snapshot_t ppu_compositor_state() const noexcept;
+        [[nodiscard]] std::size_t ppu_cgram_write_trace_count() const noexcept;
+        [[nodiscard]] const std::array<ppu_cgram_write_trace_t, ppu_cgram_write_trace_capacity>&
+            ppu_cgram_write_trace() const noexcept;
+        [[nodiscard]] std::size_t ppu_oam_write_trace_count() const noexcept;
+        [[nodiscard]] const std::array<ppu_oam_write_trace_t, ppu_oam_write_trace_capacity>&
+            ppu_oam_write_trace() const noexcept;
         [[nodiscard]] const std::array<uint16_t, 32 * 1024>& ppu_vram() const noexcept;
         [[nodiscard]] const std::array<uint8_t, 544>& ppu_oam() const noexcept;
         [[nodiscard]] const std::array<uint16_t, 256>& ppu_cgram() const noexcept;
         void set_frame_capture_enabled(bool enabled) noexcept;
+        void set_ppu_entropy_mode(ppu_entropy_mode_t mode) noexcept;
+        [[nodiscard]] ppu_entropy_mode_t ppu_entropy_mode() const noexcept;
+        void set_ppu_entropy_seed(uint32_t seed, uint32_t sequence = 0u) noexcept;
+        void clear_ppu_entropy_seed() noexcept;
+        void set_ppu_cgram_write_trace_start_frame(uint64_t frame_index) noexcept;
+        void set_ppu_oam_write_trace_start_frame(uint64_t frame_index) noexcept;
         [[nodiscard]] uint8_t open_bus() const noexcept;
         [[nodiscard]] interrupt_state_t interrupts() const noexcept;
         [[nodiscard]] bool hdma_pending() const noexcept;
@@ -79,6 +95,7 @@ namespace clover::core
         [[nodiscard]] const std::array<bus_t::system_register_write_trace_t, bus_t::k_system_register_write_trace_capacity>& system_register_write_trace() const noexcept;
         [[nodiscard]] uint8_t watched_write_trace_count() const noexcept;
         [[nodiscard]] const std::array<bus_t::watched_write_trace_t, bus_t::k_watched_write_trace_capacity>& watched_write_trace() const noexcept;
+        [[nodiscard]] std::span<const uint8_t> wram_span(uint32_t offset, uint32_t length) const noexcept;
         [[nodiscard]] uint16_t apu_port_trace_count() const noexcept;
         [[nodiscard]] const std::array<bus_t::apu_port_trace_t, bus_t::k_apu_port_trace_capacity>& apu_port_trace() const noexcept;
 

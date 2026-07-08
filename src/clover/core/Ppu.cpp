@@ -417,12 +417,21 @@ namespace clover::core
 
     void ppu_t::power_on() noexcept
     {
-        reset();
+        initialize(false);
         render_placeholder_frame();
     }
 
     void ppu_t::reset() noexcept
     {
+        initialize(true);
+    }
+
+    void ppu_t::initialize(bool warm_reset) noexcept
+    {
+        const std::array<uint16_t, 32 * 1024> preserved_vram{
+            warm_reset && _entropy_mode != ppu_entropy_mode_t::none ? _vram : std::array<uint16_t, 32 * 1024>{}
+        };
+
         _composed_frame.clear();
         _presented_frame.clear();
         std::fill(_registers.begin(), _registers.end(), 0);
@@ -450,11 +459,134 @@ namespace clover::core
         _vram_state = {};
         _vram_state.increment_size = 1;
         _cgram_state = {};
+        _cgram_write_trace = {};
+        _cgram_write_trace_count = 0;
+        _cgram_write_trace_start_frame = 0;
+        _oam_write_trace = {};
+        _oam_write_trace_count = 0;
+        _oam_write_trace_start_frame = 0;
         _counter_latch = {};
         _external_latch_enabled = false;
         _ppu1_mdr = 0;
         _ppu2_mdr = 0;
         _oam_state.latched_address = 0;
+
+        if (warm_reset && _entropy_mode != ppu_entropy_mode_t::none)
+            _vram = preserved_vram;
+
+        apply_startup_entropy(warm_reset);
+    }
+
+    void ppu_t::set_entropy_mode(ppu_entropy_mode_t mode) noexcept
+    {
+        _entropy_mode = mode;
+    }
+
+    ppu_entropy_mode_t ppu_t::entropy_mode() const noexcept
+    {
+        return _entropy_mode;
+    }
+
+    void ppu_t::set_entropy_seed(uint32_t seed, uint32_t sequence) noexcept
+    {
+        _entropy_seed_override_enabled = true;
+        _entropy_seed = seed;
+        _entropy_sequence = sequence;
+    }
+
+    void ppu_t::clear_entropy_seed() noexcept
+    {
+        _entropy_seed_override_enabled = false;
+        _entropy_seed = 0u;
+        _entropy_sequence = 0u;
+    }
+
+    void ppu_t::apply_startup_entropy(bool warm_reset) noexcept
+    {
+        if (_entropy_mode == ppu_entropy_mode_t::none)
+            return;
+
+        const uint32_t seed{
+            _entropy_seed_override_enabled ? _entropy_seed : default_startup_entropy_seed()
+        };
+        const uint32_t sequence{
+            _entropy_seed_override_enabled
+                ? _entropy_sequence
+                : static_cast<uint32_t>(
+                    reinterpret_cast<uintptr_t>(this) ^ static_cast<uintptr_t>(_frame_counter))
+        };
+        startup_entropy_generator_t entropy{ seed, sequence };
+
+        if (!warm_reset)
+        {
+            auto* const vram_bytes{ reinterpret_cast<uint8_t*>(_vram.data()) };
+            fill_entropy_buffer(_entropy_mode, entropy, vram_bytes, sizeof(uint16_t) * _vram.size());
+        }
+
+        auto* const cgram_bytes{ reinterpret_cast<uint8_t*>(_cgram.data()) };
+        fill_entropy_buffer(_entropy_mode, entropy, cgram_bytes, sizeof(uint16_t) * _cgram.size());
+        for (uint16_t& word : _cgram)
+            word &= 0x7fffu;
+
+        _ppu1_mdr = entropy.random_u8();
+        _ppu2_mdr = entropy.random_u8();
+        _oam_state.base_address = static_cast<uint16_t>(entropy.random_u16() & 0x03feu);
+        _oam_state.address = static_cast<uint16_t>(entropy.random_u16() & 0x03ffu);
+        _oam_state.priority = entropy.random_bool();
+        _oam_state.write_latch = entropy.random_u8();
+        _oam_state.latched_address = 0u;
+        update_first_sprite();
+
+        _scroll_latches.ppu1 = entropy.random_u8();
+        _scroll_latches.ppu2 = entropy.random_u8();
+        _scroll_latches.mode7 = entropy.random_u8();
+        _scroll_latches.mode7_hoffset = entropy.random_u16();
+        _scroll_latches.mode7_voffset = entropy.random_u16();
+
+        _object_layer_state.base_size = static_cast<uint8_t>(entropy.random_u8() & 0x07u);
+        _object_layer_state.nameselect = static_cast<uint8_t>(entropy.random_u8() & 0x03u);
+        _object_layer_state.tiledata_address =
+            static_cast<uint16_t>((entropy.random_u8() & 0x07u) << 13u);
+        _object_layer_state.interlace = entropy.random_bool();
+
+        _color_math_state.direct_color = entropy.random_bool();
+        _color_math_state.blend_mode = entropy.random_bool();
+        _color_math_state.color_halve = entropy.random_bool();
+        _color_math_state.color_mode_subtract = entropy.random_bool();
+        for (bool& enabled : _color_math_state.bg_color_enable)
+            enabled = entropy.random_bool();
+        _color_math_state.obj_color_enable = entropy.random_bool();
+        _color_math_state.backdrop_color_enable = entropy.random_bool();
+        _color_math_state.fixed_red = static_cast<uint8_t>(entropy.random_u8() & 0x1fu);
+        _color_math_state.fixed_green = static_cast<uint8_t>(entropy.random_u8() & 0x1fu);
+        _color_math_state.fixed_blue = static_cast<uint8_t>(entropy.random_u8() & 0x1fu);
+
+        _screen_state.pseudo_hires = entropy.random_bool();
+        _screen_state.overscan = false;
+        _screen_state.interlace = false;
+        _screen_state.mode7_repeat = static_cast<uint8_t>(entropy.random_u8() & 0x03u);
+        _screen_state.mode7_hflip = entropy.random_bool();
+        _screen_state.mode7_vflip = entropy.random_bool();
+        _screen_state.mode7_a = entropy.random_u16();
+        _screen_state.mode7_b = entropy.random_u16();
+        _screen_state.mode7_c = entropy.random_u16();
+        _screen_state.mode7_d = entropy.random_u16();
+        _screen_state.mode7_x = entropy.random_u16();
+        _screen_state.mode7_y = entropy.random_u16();
+
+        _vram_state.increment_size = 1u;
+        _vram_state.mapping = static_cast<uint8_t>(entropy.random_u8() & 0x03u);
+        _vram_state.increment_on_high = entropy.random_bool();
+        _vram_state.address = entropy.random_u16();
+        _vram_state.read_latch = entropy.random_u16();
+
+        _cgram_state.address = entropy.random_u8();
+        _cgram_state.latched_address = 0u;
+        _cgram_state.write_high_pending = false;
+        _cgram_state.read_high_pending = false;
+        _cgram_state.write_latch = entropy.random_u8();
+
+        decode_render_state();
     }
 
     video_standard_t ppu_t::video_standard() const noexcept
@@ -470,6 +602,20 @@ namespace clover::core
     void ppu_t::set_frame_capture_enabled(bool enabled) noexcept
     {
         _frame_capture_enabled = enabled;
+    }
+
+    void ppu_t::set_cgram_write_trace_start_frame(uint64_t frame_index) noexcept
+    {
+        _cgram_write_trace_start_frame = frame_index;
+        _cgram_write_trace = {};
+        _cgram_write_trace_count = 0;
+    }
+
+    void ppu_t::set_oam_write_trace_start_frame(uint64_t frame_index) noexcept
+    {
+        _oam_write_trace_start_frame = frame_index;
+        _oam_write_trace = {};
+        _oam_write_trace_count = 0;
     }
 
     uint16_t ppu_t::address_vram() const noexcept
@@ -507,11 +653,39 @@ namespace clover::core
 
     void ppu_t::write_oam_byte(uint16_t address, uint8_t value) noexcept
     {
-        if (display_active_for_oam())
-            address = _oam_state.latched_address;
+        const uint16_t requested_address{ address };
+        const uint16_t latched_address{ _oam_state.latched_address };
+        const bool redirected{ display_active_for_oam() };
+        if (redirected)
+            address = latched_address;
 
         const uint16_t decoded_address{ static_cast<uint16_t>(address % _oam.size()) };
         _oam[decoded_address] = value;
+
+        if (_frame_counter >= _oam_write_trace_start_frame)
+        {
+            const ppu_oam_write_trace_t entry{
+                .frame_index = _frame_counter,
+                .timing = timing(),
+                .requested_address = requested_address,
+                .effective_address = decoded_address,
+                .latched_address = latched_address,
+                .value = value,
+                .redirected = redirected
+            };
+
+            if (_oam_write_trace_count < _oam_write_trace.size())
+            {
+                _oam_write_trace[_oam_write_trace_count++] = entry;
+            }
+            else
+            {
+                std::move(std::begin(_oam_write_trace) + 1u,
+                          std::end(_oam_write_trace),
+                          std::begin(_oam_write_trace));
+                _oam_write_trace[_oam_write_trace.size() - 1u] = entry;
+            }
+        }
 
         if ((decoded_address & 0x0200u) == 0)
         {
@@ -861,14 +1035,25 @@ namespace clover::core
 
     void ppu_t::begin_object_scanline(uint16_t scanline) noexcept
     {
+        // Clover initializes the scanline pipeline from the current raster line,
+        // whereas bsnes' OBJ fetch state is consumed by the following visible line.
+        // Translate that phase here so the bsnes-style temporary OBJ pipeline lines
+        // up with Clover's raster scheduler.
         _object_layer_state.evaluation_scanline =
             static_cast<uint16_t>((scanline + 1u) % _video_timing.scanlines_per_frame);
+        _object_layer_state.pipeline_x = 0u;
         _object_layer_state.evaluation_first_sprite = _object_layer_state.first_sprite;
         _object_layer_state.evaluation_count = 0;
         _object_layer_state.evaluation_progress = 0;
         _object_layer_state.evaluation_indices.fill(0);
         _object_layer_state.tile_count = 0;
         _object_layer_state.tiles.fill({});
+        _object_layer_state.active_buffer = !_object_layer_state.active_buffer;
+        const size_t active_buffer_index{ _object_layer_state.active_buffer ? 1u : 0u };
+        for (auto& item : _object_layer_state.items[active_buffer_index])
+            item = {};
+        for (auto& tile : _object_layer_state.tile_buffers[active_buffer_index])
+            tile = {};
 
         if (scanline == active_visible_scanlines() && !_display.disabled)
             reset_oam_address();
@@ -920,6 +1105,7 @@ namespace clover::core
         evaluate_background_scanline(scanline);
         clear_scanline_compositor_outputs();
         begin_object_scanline(scanline);
+        const size_t render_buffer_index{ _object_layer_state.active_buffer ? 0u : 1u };
         for (uint8_t background_index{ 0 }; background_index < _background_layer_state.size(); ++background_index)
         {
             auto& background{ _background_layer_state[background_index] };
@@ -940,16 +1126,18 @@ namespace clover::core
         }
 
         _object_layer_state.rendered_scanline = scanline;
-        if (_object_layer_state.fetched_scanline == scanline)
+        _object_layer_state.render_tile_count = 0u;
+        _object_layer_state.render_tiles.fill({});
+        for (uint8_t tile_index{ 0 }; tile_index < _object_layer_state.render_tiles.size(); ++tile_index)
         {
-            _object_layer_state.render_tile_count = _object_layer_state.fetched_tile_count;
-            _object_layer_state.render_tiles = _object_layer_state.fetched_tiles;
+            const auto& tile{ _object_layer_state.tile_buffers[render_buffer_index][tile_index] };
+            if (!tile.valid)
+                break;
+            _object_layer_state.render_tiles[_object_layer_state.render_tile_count++] = tile.candidate;
         }
-        else
-        {
-            _object_layer_state.render_tile_count = 0;
-            _object_layer_state.render_tiles.fill({});
-        }
+        _object_layer_state.fetched_scanline = _object_layer_state.evaluation_scanline;
+        _object_layer_state.fetched_tile_count = 0u;
+        _object_layer_state.fetched_tiles.fill({});
 
         _pipeline_state.initialized_scanline = scanline;
         _pipeline_state.next_object_evaluate_dot = 0u;
@@ -963,6 +1151,11 @@ namespace clover::core
         if (_display.disabled || scanline >= active_visible_scanlines() - 1u)
             return;
 
+        // Match bsnes OBJ evaluation: once the 33rd in-range sprite is found,
+        // range-over latches and later slots no longer update the OAM latch.
+        if (_object_layer_state.evaluation_count > 32u)
+            return;
+
         const uint8_t sprite_index{
             static_cast<uint8_t>((_object_layer_state.evaluation_first_sprite + slot) & 0x7fu)
         };
@@ -972,9 +1165,17 @@ namespace clover::core
 
         _oam_state.latched_address = sprite_index;
         if (_object_layer_state.evaluation_count < _object_layer_state.evaluation_indices.size())
+        {
             _object_layer_state.evaluation_indices[_object_layer_state.evaluation_count] = sprite_index;
+            auto& item{
+                _object_layer_state.items[_object_layer_state.active_buffer ? 1u : 0u][_object_layer_state.evaluation_count]
+            };
+            item.valid = true;
+            item.index = sprite_index;
+        }
         ++_object_layer_state.evaluation_count;
-        _object_layer_state.range_over = _object_layer_state.evaluation_count > 32u;
+        _object_layer_state.range_over = _object_layer_state.range_over
+            || _object_layer_state.evaluation_count > 32u;
     }
 
     void ppu_t::finalize_object_fetch(uint16_t scanline) noexcept
@@ -989,7 +1190,6 @@ namespace clover::core
         _object_layer_state.evaluation_count = std::min<uint8_t>(_object_layer_state.evaluation_count, 32u);
         evaluate_object_tiles();
         fetch_object_tile_rows();
-
         _object_layer_state.fetched_scanline = _object_layer_state.evaluation_scanline;
         _object_layer_state.fetched_tile_count = _object_layer_state.tile_count;
         _object_layer_state.fetched_tiles = _object_layer_state.tiles;
@@ -998,17 +1198,33 @@ namespace clover::core
     [[nodiscard]] ppu_pixel_candidate_t ppu_t::resolve_object_pixel_candidate(uint16_t x) const noexcept
     {
         ppu_pixel_candidate_t candidate{};
-        for (uint8_t tile_index{ 0 }; tile_index < _object_layer_state.render_tile_count; ++tile_index)
+        const size_t render_buffer_index{ _object_layer_state.active_buffer ? 0u : 1u };
+        for (const auto& fetched_tile : _object_layer_state.tile_buffers[render_buffer_index])
         {
-            const auto& tile{ _object_layer_state.render_tiles[tile_index] };
-            const int16_t screen_x{ static_cast<int16_t>(tile.x) };
-            if (x < static_cast<uint16_t>(screen_x) || x >= static_cast<uint16_t>(screen_x + 8))
+            if (!fetched_tile.valid)
+                break;
+
+            const auto& tile{ fetched_tile.candidate };
+            const int16_t pixel_x{ static_cast<int16_t>(x) };
+            const int16_t screen_x{
+                static_cast<int16_t>(
+                    tile.x >= 256u
+                        ? static_cast<int32_t>(tile.x) - 512
+                        : static_cast<int32_t>(tile.x))
+            };
+            if (pixel_x < screen_x || pixel_x >= static_cast<int16_t>(screen_x + 8))
                 continue;
 
-            const uint8_t lane_fine_x{ static_cast<uint8_t>(x - static_cast<uint16_t>(screen_x)) };
+            const uint8_t lane_fine_x{ static_cast<uint8_t>(pixel_x - screen_x) };
+            const uint8_t shift{
+                static_cast<uint8_t>(tile.hflip ? lane_fine_x : static_cast<uint8_t>(7u - lane_fine_x))
+            };
             const uint8_t color{
-                static_cast<uint8_t>(extract_row_pair_pixel(tile.row_data[0], lane_fine_x)
-                    | (extract_row_pair_pixel(tile.row_data[1], lane_fine_x) << 2u))
+                static_cast<uint8_t>(
+                    ((tile.data >> (shift + 0u)) & 0x01u)
+                    | ((tile.data >> (shift + 7u)) & 0x02u)
+                    | ((tile.data >> (shift + 14u)) & 0x04u)
+                    | ((tile.data >> (shift + 21u)) & 0x08u))
             };
             if (color == 0u)
                 continue;
@@ -1220,8 +1436,10 @@ namespace clover::core
             return _cgram[candidate.palette];
         };
 
-        const uint16_t above_color{ above_transparent ? _cgram[0] : resolve_candidate_color(above_candidate) };
+        // Match bsnes screen evaluation order so active-display CGRAM access
+        // sees the final above/main-screen palette latch for the pixel.
         const uint16_t below_color{ below_transparent ? _cgram[0] : resolve_candidate_color(below_candidate) };
+        const uint16_t above_color{ above_transparent ? _cgram[0] : resolve_candidate_color(above_candidate) };
         const uint16_t fixed_color{
             static_cast<uint16_t>(
                 (_color_math_state.fixed_blue << 10u)
@@ -1422,14 +1640,23 @@ namespace clover::core
 
     void ppu_t::evaluate_object_tiles() noexcept
     {
-        uint8_t total_tile_count{ 0 };
+        const size_t active_buffer_index{ _object_layer_state.active_buffer ? 1u : 0u };
+        auto& active_tiles{ _object_layer_state.tile_buffers[active_buffer_index] };
+        uint8_t visible_tile_count{ 0 };
+        uint8_t pipeline_tile_count{ 0 };
         _object_layer_state.time_over = false;
+        for (auto& tile : active_tiles)
+            tile = {};
 
-        for (int object_slot{ static_cast<int>(_object_layer_state.evaluation_count) - 1 };
+        for (int object_slot{ 31 };
              object_slot >= 0;
              --object_slot)
         {
-            const uint8_t object_index{ _object_layer_state.evaluation_indices[static_cast<size_t>(object_slot)] };
+            const auto& item{ _object_layer_state.items[active_buffer_index][static_cast<size_t>(object_slot)] };
+            if (!item.valid)
+                continue;
+
+            const uint8_t object_index{ item.index };
             _oam_state.latched_address = static_cast<uint16_t>(0x0200u + (object_index >> 2u));
             const auto& object{ _object_layer_state.objects[object_index] };
             const uint8_t tile_width{ static_cast<uint8_t>(object.width >> 3u) };
@@ -1438,7 +1665,13 @@ namespace clover::core
                 static_cast<uint16_t>((_object_layer_state.evaluation_scanline - object.y) & 0x00ffu)
             };
             if (_object_layer_state.interlace)
+            {
                 source_y = static_cast<uint16_t>(source_y << 1u);
+                source_y = static_cast<uint16_t>(
+                    object.vflip
+                        ? source_y - (_counter.odd_field ? 1u : 0u)
+                        : source_y + (_counter.odd_field ? 1u : 0u));
+            }
 
             if (object.vflip)
             {
@@ -1471,48 +1704,64 @@ namespace clover::core
                 if (masked_x != 256u && tile_x >= 256u && tile_x + 7u < 512u)
                     continue;
 
-                if (total_tile_count >= _object_layer_state.tiles.size())
-                {
-                    _object_layer_state.tile_count = total_tile_count;
-                    _object_layer_state.time_over = true;
-                    return;
-                }
+                const uint8_t tile_index{ pipeline_tile_count++ };
+                if (tile_index >= active_tiles.size())
+                    break;
 
-                auto& tile{ _object_layer_state.tiles[total_tile_count] };
-                tile.object_index = object_index;
-                tile.x = tile_x;
-                tile.tile_x = object.hflip
+                if (tile_index >= _object_layer_state.tiles.size())
+                    continue;
+
+                auto& tile{ active_tiles[tile_index] };
+                tile.valid = true;
+                auto& candidate{ tile.candidate };
+                candidate.object_index = object_index;
+                candidate.x = tile_x;
+                candidate.tile_x = object.hflip
                     ? static_cast<uint8_t>(tile_width - 1u - tx)
                     : tx;
-                tile.source_y = static_cast<uint8_t>(source_y & 0x00ffu);
-                tile.fine_y = static_cast<uint8_t>(source_y & 0x07u);
-                tile.tiledata_address = tiledata_address;
+                candidate.source_y = static_cast<uint8_t>(source_y & 0x00ffu);
+                candidate.fine_y = static_cast<uint8_t>(source_y & 0x07u);
+                candidate.tiledata_address = tiledata_address;
                 const uint16_t pos{
                     static_cast<uint16_t>(tiledata_address
-                        + (((character_y << 4u) + ((character_x + tile.tile_x) & 0x0fu)) << 4u))
+                        + (((character_y << 4u) + ((character_x + candidate.tile_x) & 0x0fu)) << 4u))
                 };
-                tile.vram_address = static_cast<uint16_t>((pos & 0xfff0u) + tile.fine_y);
-                tile.palette_base = static_cast<uint8_t>(128u + (object.palette << 4u));
-                tile.priority = object.priority;
-                tile.hflip = object.hflip;
-                ++total_tile_count;
+                candidate.vram_address = static_cast<uint16_t>((pos & 0xfff0u) + candidate.fine_y);
+                candidate.palette_base = static_cast<uint8_t>(128u + (object.palette << 4u));
+                candidate.priority = object.priority;
+                candidate.hflip = object.hflip;
+                ++visible_tile_count;
             }
         }
 
-        _object_layer_state.tile_count = total_tile_count;
+        _object_layer_state.time_over = pipeline_tile_count > active_tiles.size();
+        _object_layer_state.tile_count = visible_tile_count;
+        _object_layer_state.tiles.fill({});
+        for (uint8_t tile_index{ 0 }; tile_index < visible_tile_count; ++tile_index)
+            _object_layer_state.tiles[tile_index] = active_tiles[tile_index].candidate;
     }
 
     void ppu_t::fetch_object_tile_rows() noexcept
     {
-        for (uint8_t tile_index{ 0 }; tile_index < _object_layer_state.tile_count; ++tile_index)
+        const size_t active_buffer_index{ _object_layer_state.active_buffer ? 1u : 0u };
+        auto& active_tiles{ _object_layer_state.tile_buffers[active_buffer_index] };
+        for (auto& tile_entry : active_tiles)
         {
-            auto& tile{ _object_layer_state.tiles[tile_index] };
+            if (!tile_entry.valid)
+                break;
+
+            auto& tile{ tile_entry.candidate };
             tile.row_pair_count = 2u;
-            tile.row_data[0] = decode_bitplane_pair(_vram[tile.vram_address & k_vram_word_mask], !tile.hflip);
-            tile.row_data[1] = decode_bitplane_pair(
-                _vram[(tile.vram_address + 8u) & k_vram_word_mask],
-                !tile.hflip);
+            const uint16_t plane_lo{ _vram[tile.vram_address & k_vram_word_mask] };
+            const uint16_t plane_hi{ _vram[(tile.vram_address + 8u) & k_vram_word_mask] };
+            tile.row_data[0] = decode_bitplane_pair(plane_lo, !tile.hflip);
+            tile.row_data[1] = decode_bitplane_pair(plane_hi, !tile.hflip);
+            tile.data = static_cast<uint32_t>(plane_lo)
+                | (static_cast<uint32_t>(plane_hi) << 16u);
         }
+        _object_layer_state.tiles.fill({});
+        for (uint8_t tile_index{ 0 }; tile_index < _object_layer_state.tile_count; ++tile_index)
+            _object_layer_state.tiles[tile_index] = active_tiles[tile_index].candidate;
     }
 
     void ppu_t::synthesize_object_layer_candidate() noexcept
@@ -1784,10 +2033,37 @@ namespace clover::core
 
     void ppu_t::write_cgram_word(uint8_t address, uint16_t value) noexcept
     {
-        if (display_active_for_cgram())
-            address = _cgram_state.latched_address;
+        const uint8_t requested_address{ address };
+        const uint8_t latched_address{ _cgram_state.latched_address };
+        const bool redirected{ display_active_for_cgram() };
+        if (redirected)
+            address = latched_address;
 
         _cgram[address] = static_cast<uint16_t>(value & 0x7fffu);
+
+        const ppu_cgram_write_trace_t entry{
+            .frame_index = _frame_counter,
+            .timing = timing(),
+            .requested_address = requested_address,
+            .effective_address = address,
+            .latched_address = latched_address,
+            .value = static_cast<uint16_t>(value & 0x7fffu),
+            .redirected = redirected
+        };
+        if (_frame_counter < _cgram_write_trace_start_frame)
+            return;
+
+        if (_cgram_write_trace_count < _cgram_write_trace.size())
+        {
+            _cgram_write_trace[_cgram_write_trace_count++] = entry;
+        }
+        else
+        {
+            std::move(std::begin(_cgram_write_trace) + 1u,
+                      std::end(_cgram_write_trace),
+                      std::begin(_cgram_write_trace));
+            _cgram_write_trace[_cgram_write_trace.size() - 1u] = entry;
+        }
     }
 
     void ppu_t::reset_oam_address() noexcept
@@ -2164,8 +2440,6 @@ namespace clover::core
         case 0x2104u:
         {
             const uint16_t address_now{ static_cast<uint16_t>(_oam_state.address & 0x03ffu) };
-            if (!display_active_for_oam())
-                _oam_state.latched_address = address_now;
             ++_oam_state.address;
             _oam_state.address &= 0x03ffu;
             update_first_sprite();
@@ -2685,6 +2959,28 @@ namespace clover::core
             snapshot.objects.below_samples[sample_index] = _compositor_state.objects.below_samples[sample_index];
         }
         return snapshot;
+    }
+
+    std::size_t ppu_t::cgram_write_trace_count() const noexcept
+    {
+        return _cgram_write_trace_count;
+    }
+
+    const std::array<ppu_cgram_write_trace_t, ppu_cgram_write_trace_capacity>&
+    ppu_t::cgram_write_trace() const noexcept
+    {
+        return _cgram_write_trace;
+    }
+
+    std::size_t ppu_t::oam_write_trace_count() const noexcept
+    {
+        return _oam_write_trace_count;
+    }
+
+    const std::array<ppu_oam_write_trace_t, ppu_oam_write_trace_capacity>&
+    ppu_t::oam_write_trace() const noexcept
+    {
+        return _oam_write_trace;
     }
 
     const std::array<uint16_t, 32 * 1024>& ppu_t::vram() const noexcept

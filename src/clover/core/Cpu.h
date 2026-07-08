@@ -47,7 +47,7 @@ namespace clover::core
         bool controller_port_1_latch{ false };
         uint8_t nmi_hold_clocks{ 0 };
         uint8_t irq_hold_clocks{ 0 };
-        uint8_t pio{ 0 };
+        uint8_t pio{ 0xffu };
         uint16_t auto_joypad_busy_clocks{ 0 };
         uint16_t joy1{ 0 };
         uint16_t joy2{ 0 };

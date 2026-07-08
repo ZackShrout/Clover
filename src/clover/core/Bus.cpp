@@ -33,6 +33,9 @@ namespace
         switch (address)
         {
         case 0x2100u:
+        case 0x2102u:
+        case 0x2103u:
+        case 0x2104u:
         case 0x2115u:
         case 0x2116u:
         case 0x2117u:
@@ -112,9 +115,63 @@ namespace clover::core
         _dma = &dma;
     }
 
+    void bus_t::power_on() noexcept
+    {
+        initialize(false);
+    }
+
     void bus_t::reset() noexcept
     {
+        initialize(true);
+    }
+
+    void bus_t::set_entropy_mode(startup_entropy_mode_t mode) noexcept
+    {
+        _entropy_mode = mode;
+    }
+
+    startup_entropy_mode_t bus_t::entropy_mode() const noexcept
+    {
+        return _entropy_mode;
+    }
+
+    void bus_t::set_entropy_seed(uint32_t seed, uint32_t sequence) noexcept
+    {
+        _entropy_seed_override_enabled = true;
+        _entropy_seed = seed;
+        _entropy_sequence = sequence;
+    }
+
+    void bus_t::clear_entropy_seed() noexcept
+    {
+        _entropy_seed_override_enabled = false;
+        _entropy_seed = 0u;
+        _entropy_sequence = 0u;
+    }
+
+    void bus_t::initialize(bool warm_reset) noexcept
+    {
+        const std::array<uint8_t, k_wram_size> preserved_wram{
+            warm_reset && _entropy_mode != startup_entropy_mode_t::none ? _wram : std::array<uint8_t, k_wram_size>{}
+        };
+
         std::fill(_wram.begin(), _wram.end(), 0);
+        if (!warm_reset && _entropy_mode != startup_entropy_mode_t::none)
+        {
+            const uint32_t seed{
+                _entropy_seed_override_enabled ? _entropy_seed : default_startup_entropy_seed()
+            };
+            const uint32_t sequence{
+                _entropy_seed_override_enabled ? _entropy_sequence : static_cast<uint32_t>(reinterpret_cast<uintptr_t>(this))
+            };
+            startup_entropy_generator_t entropy{ seed, sequence };
+            fill_entropy_buffer(_entropy_mode, entropy, _wram.data(), _wram.size());
+        }
+        else if (warm_reset && _entropy_mode != startup_entropy_mode_t::none)
+        {
+            _wram = preserved_wram;
+        }
+
         _open_bus = 0;
         _pending_cpu_write_count = 0;
         _pending_ppu_write_count = 0;
@@ -380,6 +437,14 @@ namespace clover::core
     const std::array<bus_t::watched_write_trace_t, bus_t::k_watched_write_trace_capacity>& bus_t::watched_write_trace() const noexcept
     {
         return _watched_write_trace;
+    }
+
+    std::span<const uint8_t> bus_t::wram_span(uint32_t offset, uint32_t length) const noexcept
+    {
+        const uint32_t clamped_offset{ std::min(offset, k_wram_size) };
+        const uint32_t remaining{ k_wram_size - clamped_offset };
+        const uint32_t clamped_length{ std::min(length, remaining) };
+        return std::span<const uint8_t>{ _wram.data() + clamped_offset, clamped_length };
     }
 
     void bus_t::trace_cpu_apu_port_access(uint32_t address,

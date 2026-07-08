@@ -229,6 +229,7 @@ namespace clover::core
         _state.p = 0x34u;
         _state.emulation_mode = true;
         _io = {};
+        _io.pio = 0xffu;
         _io.in_hblank = true;
         _io.htime = 0x01ffu;
         _io.vtime = 0x01ffu;
@@ -261,6 +262,7 @@ namespace clover::core
         _state.pb = 0;
         _state.emulation_mode = true;
         _io = {};
+        _io.pio = 0xffu;
         _io.in_hblank = true;
         _io.htime = 0x01ffu;
         _io.vtime = 0x01ffu;

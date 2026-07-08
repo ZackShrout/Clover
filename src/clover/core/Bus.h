@@ -6,9 +6,11 @@
 #pragma once
 
 #include "clover/core/Cpu.h"
+#include "clover/core/StartupEntropy.h"
 
 #include <array>
 #include <cstdint>
+#include <span>
 
 namespace clover::core
 {
@@ -92,7 +94,12 @@ namespace clover::core
         void connect_cpu(cpu_t& cpu) noexcept;
         void connect_ppu(ppu_t& ppu) noexcept;
         void connect_dma(dma_t& dma) noexcept;
+        void power_on() noexcept;
         void reset() noexcept;
+        void set_entropy_mode(startup_entropy_mode_t mode) noexcept;
+        [[nodiscard]] startup_entropy_mode_t entropy_mode() const noexcept;
+        void set_entropy_seed(uint32_t seed, uint32_t sequence = 0u) noexcept;
+        void clear_entropy_seed() noexcept;
         [[nodiscard]] uint8_t read_u8(uint32_t address) noexcept;
         [[nodiscard]] uint8_t read_cpu_u8(uint32_t address, master_clock_delta_t apply_after_clocks) noexcept;
         void write_u8(uint32_t address, uint8_t value) noexcept;
@@ -108,6 +115,7 @@ namespace clover::core
         [[nodiscard]] const std::array<system_register_write_trace_t, k_system_register_write_trace_capacity>& system_register_write_trace() const noexcept;
         [[nodiscard]] uint8_t watched_write_trace_count() const noexcept;
         [[nodiscard]] const std::array<watched_write_trace_t, k_watched_write_trace_capacity>& watched_write_trace() const noexcept;
+        [[nodiscard]] std::span<const uint8_t> wram_span(uint32_t offset, uint32_t length) const noexcept;
         void trace_cpu_apu_port_access(uint32_t address,
                                        uint8_t value,
                                        bool is_write,
@@ -116,6 +124,7 @@ namespace clover::core
         [[nodiscard]] const std::array<apu_port_trace_t, k_apu_port_trace_capacity>& apu_port_trace() const noexcept;
 
     private:
+        void initialize(bool warm_reset) noexcept;
         void dispatch_write_u8(uint32_t address, uint8_t value) noexcept;
         void advance_apu_to(master_clock_delta_t target_clocks) noexcept;
         void dispatch_pending_apu_writes_to(master_clock_delta_t target_clocks) noexcept;
@@ -132,6 +141,10 @@ namespace clover::core
         cpu_t* _cpu{ nullptr };
         dma_t* _dma{ nullptr };
         ppu_t* _ppu{ nullptr };
+        startup_entropy_mode_t _entropy_mode{ startup_entropy_mode_t::none };
+        bool _entropy_seed_override_enabled{ false };
+        uint32_t _entropy_seed{ 0u };
+        uint32_t _entropy_sequence{ 0u };
         uint8_t _open_bus{ 0 };
         std::array<pending_cpu_write_t, 16> _pending_cpu_writes{};
         uint8_t _pending_cpu_write_count{ 0 };

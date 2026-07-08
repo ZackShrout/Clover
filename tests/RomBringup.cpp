@@ -354,6 +354,48 @@ namespace
         return true;
     }
 
+    struct startup_entropy_config_t
+    {
+        clover::core::startup_entropy_mode_t mode{ clover::core::startup_entropy_mode_t::none };
+        bool seed_enabled{ false };
+        uint32_t seed{ 0u };
+        uint32_t sequence{ 0u };
+    };
+
+    [[nodiscard]] startup_entropy_config_t load_startup_entropy_config() noexcept
+    {
+        startup_entropy_config_t config{};
+
+        const char* mode_raw{ std::getenv("CLOVER_STARTUP_ENTROPY") };
+        if (mode_raw == nullptr)
+            mode_raw = std::getenv("CLOVER_PPU_ENTROPY");
+        if (mode_raw != nullptr)
+        {
+            const std::string_view mode{ mode_raw };
+            if (mode == "low" || mode == "LOW")
+                config.mode = clover::core::startup_entropy_mode_t::low;
+            else if (mode == "high" || mode == "HIGH")
+                config.mode = clover::core::startup_entropy_mode_t::high;
+        }
+
+        const char* seed_raw{ std::getenv("CLOVER_STARTUP_ENTROPY_SEED") };
+        if (seed_raw == nullptr)
+            seed_raw = std::getenv("CLOVER_PPU_ENTROPY_SEED");
+        if (seed_raw != nullptr)
+        {
+            if (*seed_raw != '\0')
+            {
+                config.seed_enabled = true;
+                config.seed = static_cast<uint32_t>(std::strtoull(seed_raw, nullptr, 0));
+                config.sequence = static_cast<uint32_t>(
+                    parse_u64_env("CLOVER_STARTUP_ENTROPY_SEQUENCE",
+                                  parse_u64_env("CLOVER_PPU_ENTROPY_SEQUENCE", 0u)));
+            }
+        }
+
+        return config;
+    }
+
     [[nodiscard]] ppu_probe_filter_t load_ppu_probe_filter()
     {
         ppu_probe_filter_t filter{};
@@ -441,10 +483,33 @@ namespace
                     static_cast<unsigned>(ppu_state.objects.evaluation_count),
                     static_cast<unsigned>(ppu_state.objects.rendered_scanline),
                     static_cast<unsigned>(ppu_state.objects.fetched_scanline));
+        std::printf("  math: blend=%u halve=%u direct=%u subtract=%u backdrop_math=%u fixed=%u,%u,%u\n",
+                    compositor_state.blend_mode ? 1u : 0u,
+                    compositor_state.color_halve ? 1u : 0u,
+                    compositor_state.direct_color ? 1u : 0u,
+                    compositor_state.color_mode_subtract ? 1u : 0u,
+                    compositor_state.backdrop_color_enable ? 1u : 0u,
+                    static_cast<unsigned>(compositor_state.fixed_red),
+                    static_cast<unsigned>(compositor_state.fixed_green),
+                    static_cast<unsigned>(compositor_state.fixed_blue));
         std::printf("  obj_eval_indices:");
         for (size_t index{ 0 }; index < std::size(ppu_state.objects.evaluation_indices); ++index)
             std::printf(" %u", ppu_state.objects.evaluation_indices[index]);
         std::printf("\n");
+        for (size_t background_index{ 0 }; background_index < 4u; ++background_index)
+        {
+            const auto& background{ ppu_state.backgrounds[background_index] };
+            std::printf("  bg%zu: active=%u mode=%u eval_scan=%u tiles=%u hoff=%u voff=%u above=%u below=%u\n",
+                        background_index + 1u,
+                        background.active ? 1u : 0u,
+                        static_cast<unsigned>(background.mode),
+                        static_cast<unsigned>(background.evaluation_scanline),
+                        static_cast<unsigned>(background.tile_count),
+                        static_cast<unsigned>(background.hoffset),
+                        static_cast<unsigned>(background.voffset),
+                        background.above_enabled ? 1u : 0u,
+                        background.below_enabled ? 1u : 0u);
+        }
         const size_t sample_begin{
             std::min<size_t>(filter.x_min, std::size(compositor_state.output_color) - 1u)
         };
@@ -453,11 +518,17 @@ namespace
         };
         for (size_t sample_x{ sample_begin }; sample_x <= sample_end; ++sample_x)
         {
-            std::printf("  x=%zu out=%04x above=%04x below=%04x objA=",
+            std::printf("  x=%zu out=%04x above=%04x below=%04x math=%u sub=%u fixed=%u halve=%u cwa=%u cwb=%u objA=",
                         sample_x,
                         compositor_state.output_color[sample_x],
                         compositor_state.above_color[sample_x],
-                        compositor_state.below_color[sample_x]);
+                        compositor_state.below_color[sample_x],
+                        compositor_state.math_enable[sample_x] ? 1u : 0u,
+                        compositor_state.math_uses_subscreen[sample_x] ? 1u : 0u,
+                        compositor_state.math_uses_fixed_color[sample_x] ? 1u : 0u,
+                        compositor_state.color_halve_active[sample_x] ? 1u : 0u,
+                        compositor_state.color_enable_above[sample_x] ? 1u : 0u,
+                        compositor_state.color_enable_below[sample_x] ? 1u : 0u);
             print_pixel_candidate("", compositor_state.objects.above_samples[sample_x]);
             std::printf(" objB=");
             print_pixel_candidate("", compositor_state.objects.below_samples[sample_x]);
@@ -695,6 +766,49 @@ namespace
         return filter;
     }
 
+    [[nodiscard]] bool cgram_trace_enabled() noexcept
+    {
+        return parse_bool_env("CLOVER_CAPTURE_CGRAM_TRACE");
+    }
+
+    [[nodiscard]] uint64_t cgram_trace_start_frame(uint64_t dump_start_frame) noexcept
+    {
+        const uint64_t fallback{ dump_start_frame > 0 ? dump_start_frame - 1u : 0u };
+        return parse_u64_env("CLOVER_CAPTURE_CGRAM_TRACE_START_FRAME", fallback);
+    }
+
+    [[nodiscard]] bool oam_trace_enabled() noexcept
+    {
+        return parse_bool_env("CLOVER_CAPTURE_OAM_TRACE");
+    }
+
+    [[nodiscard]] uint64_t oam_trace_start_frame(uint64_t dump_start_frame) noexcept
+    {
+        const uint64_t fallback{ dump_start_frame > 0 ? dump_start_frame - 1u : 0u };
+        return parse_u64_env("CLOVER_CAPTURE_OAM_TRACE_START_FRAME", fallback);
+    }
+
+    struct wram_dump_config_t
+    {
+        bool enabled{ false };
+        uint32_t offset{ 0 };
+        uint32_t length{ 0 };
+    };
+
+    [[nodiscard]] wram_dump_config_t load_wram_dump_config() noexcept
+    {
+        wram_dump_config_t config{};
+        const char* offset_raw{ std::getenv("CLOVER_DUMP_WRAM_OFFSET") };
+        const char* length_raw{ std::getenv("CLOVER_DUMP_WRAM_LENGTH") };
+        if (offset_raw == nullptr || length_raw == nullptr)
+            return config;
+
+        config.enabled = true;
+        config.offset = static_cast<uint32_t>(parse_u64_env("CLOVER_DUMP_WRAM_OFFSET", 0u) & 0x1ffffu);
+        config.length = static_cast<uint32_t>(parse_u64_env("CLOVER_DUMP_WRAM_LENGTH", 0u) & 0x1ffffu);
+        return config;
+    }
+
     [[nodiscard]] bool is_hot_path_pc(const clover::core::cpu_state_t& cpu,
                                       uint64_t active_frame,
                                       const hot_path_filter_t& filter) noexcept
@@ -772,6 +886,25 @@ namespace
         output.write(reinterpret_cast<const char*>(values.data()),
                      static_cast<std::streamsize>(sizeof(value_t) * values.size()));
         return static_cast<bool>(output);
+    }
+
+    [[nodiscard]] bool write_binary_blob(const std::filesystem::path& path,
+                                         std::span<const uint8_t> values)
+    {
+        std::ofstream output{ path, std::ios::binary };
+        if (!output)
+            return false;
+
+        output.write(reinterpret_cast<const char*>(values.data()),
+                     static_cast<std::streamsize>(values.size()));
+        return static_cast<bool>(output);
+    }
+
+    [[nodiscard]] std::string hex_label(uint64_t value, unsigned width)
+    {
+        std::string label(width, '0');
+        std::snprintf(label.data(), label.size() + 1u, "%0*llx", static_cast<int>(width), static_cast<unsigned long long>(value));
+        return label;
     }
 
     void print_cpu_state(const clover::core::cpu_state_t& cpu)
@@ -1502,6 +1635,52 @@ namespace
         }
     }
 
+    void print_cgram_write_trace(const clover::core::console_t& console)
+    {
+        const auto& trace{ console.ppu_cgram_write_trace() };
+        const std::size_t trace_count{ console.ppu_cgram_write_trace_count() };
+        if (trace_count == 0)
+            return;
+
+        std::printf("PPU CGRAM writes:\n");
+        for (std::size_t index{ 0 }; index < trace_count; ++index)
+        {
+            const auto& entry{ trace[index] };
+            std::printf("  frame=%llu scanline=%u dot=%u req=%02x eff=%02x latch=%02x value=%04x redirected=%u\n",
+                        static_cast<unsigned long long>(entry.frame_index),
+                        entry.timing.raster.scanline,
+                        entry.timing.raster.dot,
+                        entry.requested_address,
+                        entry.effective_address,
+                        entry.latched_address,
+                        entry.value,
+                        entry.redirected ? 1u : 0u);
+        }
+    }
+
+    void print_oam_write_trace(const clover::core::console_t& console)
+    {
+        const auto& trace{ console.ppu_oam_write_trace() };
+        const std::size_t trace_count{ console.ppu_oam_write_trace_count() };
+        if (trace_count == 0)
+            return;
+
+        std::printf("PPU OAM writes:\n");
+        for (std::size_t index{ 0 }; index < trace_count; ++index)
+        {
+            const auto& entry{ trace[index] };
+            std::printf("  frame=%llu scanline=%u dot=%u req=%03x eff=%03x latch=%03x value=%02x redirected=%u\n",
+                        static_cast<unsigned long long>(entry.frame_index),
+                        entry.timing.raster.scanline,
+                        entry.timing.raster.dot,
+                        entry.requested_address,
+                        entry.effective_address,
+                        entry.latched_address,
+                        entry.value,
+                        entry.redirected ? 1u : 0u);
+        }
+    }
+
     void print_apu_port_trace(const clover::core::console_t& console)
     {
         const auto& trace{ console.apu_port_trace() };
@@ -1647,7 +1826,11 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    const startup_entropy_config_t startup_entropy_config{ load_startup_entropy_config() };
     clover::core::console_t console{};
+    console.set_startup_entropy_mode(startup_entropy_config.mode);
+    if (startup_entropy_config.seed_enabled)
+        console.set_startup_entropy_seed(startup_entropy_config.seed, startup_entropy_config.sequence);
     if (!console.load_cartridge(rom_bytes))
     {
         std::fprintf(stderr, "Console load failed: %s\n", rom_path.c_str());
@@ -1660,6 +1843,11 @@ int main(int argc, char** argv)
     const generic_trace_filter_t generic_trace_filter{ load_generic_trace_filter() };
     const ppu_probe_filter_t ppu_probe_filter{ load_ppu_probe_filter() };
     const bool verbose_output{ parse_bool_env("CLOVER_BRINGUP_VERBOSE") };
+    const bool capture_cgram_trace{ cgram_trace_enabled() };
+    const uint64_t cgram_trace_start{ cgram_trace_start_frame(dump_start_frame) };
+    const bool capture_oam_trace{ oam_trace_enabled() };
+    const uint64_t oam_trace_start{ oam_trace_start_frame(dump_start_frame) };
+    const wram_dump_config_t wram_dump_config{ load_wram_dump_config() };
     const bool capture_direct_page_watch{ parse_bool_env("CLOVER_CAPTURE_DIRECT_PAGE") };
     const bool capture_transfer_pointer_changes{ parse_bool_env("CLOVER_CAPTURE_TRANSFER_POINTERS") };
     const bool capture_helper_trace{ parse_bool_env("CLOVER_CAPTURE_HELPER_TRACE") };
@@ -1687,6 +1875,10 @@ int main(int argc, char** argv)
         }
         console.set_frame_capture_enabled(true);
     }
+    if (capture_cgram_trace)
+        console.set_ppu_cgram_write_trace_start_frame(cgram_trace_start);
+    if (capture_oam_trace)
+        console.set_ppu_oam_write_trace_start_frame(oam_trace_start);
 
     bringup_summary_t summary{};
     std::deque<cpu_trace_entry_t> cpu_trace{};
@@ -2069,10 +2261,12 @@ int main(int argc, char** argv)
                                      console.ppu_compositor_state(),
                                      ppu_probe_filter);
         }
-        if (step.ppu.entered_vblank
-            && dump_frames
+        const bool should_dump_frame{
+            dump_frames
             && active_frame >= dump_start_frame
-            && dumped_frames < dump_count)
+            && active_frame < dump_start_frame + dump_count
+        };
+        if (step.ppu.entered_vblank && should_dump_frame)
         {
             // bsnes/libretro emits its frame at vblank entry, so dump the
             // currently composed Clover frame at the same point to keep
@@ -2091,6 +2285,12 @@ int main(int argc, char** argv)
                 return 1;
             }
 
+            ++dumped_frames;
+        }
+
+        if (step.ppu.entered_frame_start && should_dump_frame)
+        {
+            const std::string frame_basename{ "frame_" + std::to_string(active_frame) };
             const std::filesystem::path vram_path{ dump_directory / (frame_basename + ".vram.bin") };
             if (!write_binary_blob(vram_path, console.ppu_vram()))
             {
@@ -2112,7 +2312,24 @@ int main(int argc, char** argv)
                 return 1;
             }
 
-            ++dumped_frames;
+            if (wram_dump_config.enabled && wram_dump_config.length != 0)
+            {
+                const std::span<const uint8_t> wram_dump{
+                    console.wram_span(wram_dump_config.offset, wram_dump_config.length)
+                };
+                const std::filesystem::path wram_path{
+                    dump_directory
+                    / (frame_basename + ".wram_"
+                        + hex_label(static_cast<uint64_t>(wram_dump_config.offset), 5u)
+                        + "_" + hex_label(static_cast<uint64_t>(wram_dump.size()), 5u)
+                        + ".bin")
+                };
+                if (!write_binary_blob(wram_path, wram_dump))
+                {
+                    std::fprintf(stderr, "Failed to write WRAM dump: %s\n", wram_path.string().c_str());
+                    return 1;
+                }
+            }
         }
 
         uint8_t updated_65{ 0 };
@@ -2361,6 +2578,10 @@ int main(int argc, char** argv)
     print_system_register_write_trace(console);
     print_ppu_register_write_trace(console);
     print_watched_write_trace(console, watched_write_filter);
+    if (capture_cgram_trace)
+        print_cgram_write_trace(console);
+    if (capture_oam_trace)
+        print_oam_write_trace(console);
     print_compositor_summary(compositor_state);
     if (dump_frames)
     {

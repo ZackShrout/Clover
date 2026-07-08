@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -114,7 +115,7 @@ namespace
             { "bsnes_aspect_ratio", "8:7" },
             { "bsnes_blur_emulation", "OFF" },
             { "bsnes_hotfixes", "OFF" },
-            { "bsnes_entropy", "Low" },
+            { "bsnes_entropy", "None" },
             { "bsnes_ppu_fast", "OFF" },
             { "bsnes_ppu_deinterlace", "OFF" },
             { "bsnes_ppu_no_sprite_limit", "OFF" },
@@ -226,6 +227,17 @@ namespace
 
         std::fprintf(stderr, "Missing libretro symbol: %s\n", symbol_name);
         return nullptr;
+    }
+
+    void configure_reference_entropy(libretro_state_t& state)
+    {
+        const char* entropy_raw{ std::getenv("CLOVER_BSNES_ENTROPY") };
+        if (entropy_raw == nullptr)
+            return;
+
+        const std::string_view entropy{ entropy_raw };
+        if (entropy == "None" || entropy == "Low" || entropy == "High")
+            state.variables["bsnes_entropy"] = std::string(entropy);
     }
 
     bool environment_callback(unsigned command, void* data)
@@ -389,6 +401,7 @@ int main(int argc, char** argv)
     }
 
     libretro_state_t state{};
+    configure_reference_entropy(state);
     g_state = &state;
 
     void* handle{ dlopen(core_path.c_str(), RTLD_LAZY) };

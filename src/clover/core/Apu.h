@@ -103,6 +103,8 @@ namespace clover::core
         [[nodiscard]] const std::array<apu_state_t::io_trace_entry_t, k_apu_trace_capacity>& io_trace() const noexcept;
 
     private:
+        void initialize(bool warm_reset) noexcept;
+
         template <uint8_t Frequency>
         struct timer_t
         {

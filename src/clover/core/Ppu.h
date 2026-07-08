@@ -6,6 +6,7 @@
 #pragma once
 
 #include "clover/core/FrameBuffer.h"
+#include "clover/core/StartupEntropy.h"
 #include "clover/core/Timing.h"
 
 #include <array>
@@ -13,6 +14,11 @@
 
 namespace clover::core
 {
+    inline constexpr std::size_t ppu_cgram_write_trace_capacity{ 4096 };
+    inline constexpr std::size_t ppu_oam_write_trace_capacity{ 4096 };
+
+    using ppu_entropy_mode_t = startup_entropy_mode_t;
+
     enum class ppu_pixel_source_t : uint8_t
     {
         none,
@@ -140,6 +146,7 @@ namespace clover::core
             uint8_t priority{ 0 };
             uint8_t row_pair_count{ 0 };
             uint16_t row_data[2]{ 0, 0 };
+            uint32_t data{ 0 };
             bool hflip{ false };
         };
 
@@ -280,6 +287,28 @@ namespace clover::core
         display_write_t recent_display_writes[8]{};
     };
 
+    struct ppu_cgram_write_trace_t
+    {
+        uint64_t frame_index{ 0 };
+        timing_snapshot_t timing{};
+        uint8_t requested_address{ 0 };
+        uint8_t effective_address{ 0 };
+        uint8_t latched_address{ 0 };
+        uint16_t value{ 0 };
+        bool redirected{ false };
+    };
+
+    struct ppu_oam_write_trace_t
+    {
+        uint64_t frame_index{ 0 };
+        timing_snapshot_t timing{};
+        uint16_t requested_address{ 0 };
+        uint16_t effective_address{ 0 };
+        uint16_t latched_address{ 0 };
+        uint8_t value{ 0 };
+        bool redirected{ false };
+    };
+
     struct ppu_t
     {
     public:
@@ -297,14 +326,28 @@ namespace clover::core
         [[nodiscard]] master_clock_delta_t current_scanline_clocks() const noexcept;
         [[nodiscard]] ppu_render_state_snapshot_t render_state_snapshot() const noexcept;
         [[nodiscard]] ppu_compositor_snapshot_t compositor_snapshot() const noexcept;
+        [[nodiscard]] std::size_t cgram_write_trace_count() const noexcept;
+        [[nodiscard]] const std::array<ppu_cgram_write_trace_t, ppu_cgram_write_trace_capacity>&
+            cgram_write_trace() const noexcept;
+        [[nodiscard]] std::size_t oam_write_trace_count() const noexcept;
+        [[nodiscard]] const std::array<ppu_oam_write_trace_t, ppu_oam_write_trace_capacity>&
+            oam_write_trace() const noexcept;
         [[nodiscard]] const std::array<uint16_t, 32 * 1024>& vram() const noexcept;
         [[nodiscard]] const std::array<uint8_t, 544>& oam() const noexcept;
         [[nodiscard]] const std::array<uint16_t, 256>& cgram() const noexcept;
         void present(framebuffer_t& framebuffer,
                      const ppu_presentation_options_t& options = {}) const noexcept;
         void set_frame_capture_enabled(bool enabled) noexcept;
+        void set_entropy_mode(ppu_entropy_mode_t mode) noexcept;
+        [[nodiscard]] ppu_entropy_mode_t entropy_mode() const noexcept;
+        void set_entropy_seed(uint32_t seed, uint32_t sequence = 0u) noexcept;
+        void clear_entropy_seed() noexcept;
+        void set_cgram_write_trace_start_frame(uint64_t frame_index) noexcept;
+        void set_oam_write_trace_start_frame(uint64_t frame_index) noexcept;
 
     private:
+        void initialize(bool warm_reset) noexcept;
+        void apply_startup_entropy(bool warm_reset) noexcept;
         [[nodiscard]] uint16_t active_visible_scanlines() const noexcept;
         [[nodiscard]] bool display_active_for_oam() const noexcept;
         [[nodiscard]] bool display_active_for_vram() const noexcept;
@@ -452,6 +495,17 @@ namespace clover::core
             using decoded_object_t = ppu_object_render_state_t::decoded_object_t;
             using tile_candidate_t = ppu_object_render_state_t::tile_candidate_t;
             static constexpr uint16_t k_uninitialized_scanline{ 0xffffu };
+            struct evaluated_item_t
+            {
+                bool valid{ false };
+                uint8_t index{ 0 };
+            };
+
+            struct fetched_tile_t
+            {
+                bool valid{ false };
+                tile_candidate_t candidate{};
+            };
 
             uint8_t base_size{ 0 };
             uint8_t nameselect{ 0 };
@@ -466,14 +520,18 @@ namespace clover::core
             bool window_above_enabled{ false };
             bool window_below_enabled{ false };
             uint16_t evaluation_scanline{ 0 };
+            uint16_t pipeline_x{ 0 };
             uint16_t rendered_scanline{ k_uninitialized_scanline };
             uint16_t fetched_scanline{ k_uninitialized_scanline };
+            bool active_buffer{ false };
             uint8_t evaluation_first_sprite{ 0 };
             uint8_t evaluation_count{ 0 };
             uint8_t evaluation_progress{ 0 };
             std::array<uint8_t, 32> evaluation_indices{};
+            std::array<std::array<evaluated_item_t, 32>, 2> items{};
             uint8_t tile_count{ 0 };
             std::array<tile_candidate_t, 34> tiles{};
+            std::array<std::array<fetched_tile_t, 34>, 2> tile_buffers{};
             uint8_t render_tile_count{ 0 };
             std::array<tile_candidate_t, 34> render_tiles{};
             uint8_t fetched_tile_count{ 0 };
@@ -607,6 +665,10 @@ namespace clover::core
         raster_counter_t _counter{};
         bool _timing_interlace{ false };
         uint64_t _frame_counter{ 0 };
+        ppu_entropy_mode_t _entropy_mode{ ppu_entropy_mode_t::none };
+        bool _entropy_seed_override_enabled{ false };
+        uint32_t _entropy_seed{ 0 };
+        uint32_t _entropy_sequence{ 0 };
         ppu_display_state_t _display{};
         ppu_display_write_history_t _display_write_history{};
         ppu_oam_state_t _oam_state{};
@@ -622,6 +684,12 @@ namespace clover::core
         ppu_pipeline_state_t _pipeline_state{};
         ppu_vram_state_t _vram_state{};
         ppu_cgram_state_t _cgram_state{};
+        std::array<ppu_cgram_write_trace_t, ppu_cgram_write_trace_capacity> _cgram_write_trace{};
+        std::size_t _cgram_write_trace_count{ 0 };
+        uint64_t _cgram_write_trace_start_frame{ 0 };
+        std::array<ppu_oam_write_trace_t, ppu_oam_write_trace_capacity> _oam_write_trace{};
+        std::size_t _oam_write_trace_count{ 0 };
+        uint64_t _oam_write_trace_start_frame{ 0 };
         ppu_counter_latch_state_t _counter_latch{};
         uint8_t _ppu1_mdr{ 0 };
         uint8_t _ppu2_mdr{ 0 };

@@ -13,6 +13,8 @@
 namespace
 {
     constexpr uint8_t k_ram_disabled_read_value{ 0x5au };
+    constexpr uint8_t k_dsp_flg_register{ 0x6cu };
+    constexpr uint8_t k_dsp_soft_reset_flg{ 0xe0u };
     constexpr uint16_t k_trace_pc_min{ 0xffdau };
     constexpr uint16_t k_trace_pc_max{ 0xffe8u };
     constexpr uint16_t k_trace_pc2_min{ 0x0800u };
@@ -34,10 +36,15 @@ namespace clover::core
 {
     void apu_t::power_on() noexcept
     {
-        reset();
+        initialize(false);
     }
 
     void apu_t::reset() noexcept
+    {
+        initialize(true);
+    }
+
+    void apu_t::initialize(bool warm_reset) noexcept
     {
         _master_clock = 0;
         _smp_clock_credit = 0;
@@ -53,7 +60,6 @@ namespace clover::core
         _halted = false;
         _last_opcode = 0;
         _io = {};
-        _dsp_registers.fill(0);
         _timer0 = {};
         _timer1 = {};
         _timer2 = {};
@@ -61,7 +67,14 @@ namespace clover::core
         _cpu_to_apu_ports = { 0x00u, 0x00u, 0x00u, 0x00u };
         _instruction_trace_count = 0;
         _io_trace_count = 0;
-        _ram.fill(0);
+
+        if (!warm_reset)
+        {
+            _dsp_registers.fill(0);
+            _ram.fill(0);
+        }
+
+        _dsp_registers[k_dsp_flg_register] = k_dsp_soft_reset_flg;
     }
 
     void apu_t::step(master_clock_delta_t master_clocks) noexcept

@@ -5,9 +5,11 @@
 
 #include "clover/core/Console.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdio>
+#include <vector>
 
 namespace
 {
@@ -2781,6 +2783,138 @@ int main()
     {
         return fail("cgram_active_display_write_preserves_target");
     }
+
+    static clover::core::console_t ppu_entropy_none_console{};
+    ppu_entropy_none_console.set_startup_entropy_mode(clover::core::startup_entropy_mode_t::none);
+    ppu_entropy_none_console.power_on();
+    bool entropy_none_wram_dirty{ false };
+    for (uint8_t byte : ppu_entropy_none_console.wram_span(0u, clover::core::bus_t::k_wram_size))
+    {
+        if (byte != 0u)
+        {
+            entropy_none_wram_dirty = true;
+            break;
+        }
+    }
+    bool entropy_none_vram_dirty{ false };
+    for (uint16_t word : ppu_entropy_none_console.ppu_vram())
+    {
+        if (word != 0u)
+        {
+            entropy_none_vram_dirty = true;
+            break;
+        }
+    }
+    bool entropy_none_cgram_dirty{ false };
+    for (uint16_t word : ppu_entropy_none_console.ppu_cgram())
+    {
+        if (word != 0u)
+        {
+            entropy_none_cgram_dirty = true;
+            break;
+        }
+    }
+    if (entropy_none_wram_dirty || entropy_none_vram_dirty || entropy_none_cgram_dirty)
+    {
+        return fail("startup_entropy_none_is_deterministic");
+    }
+
+    static clover::core::console_t ppu_entropy_low_a{};
+    ppu_entropy_low_a.set_startup_entropy_mode(clover::core::startup_entropy_mode_t::low);
+    ppu_entropy_low_a.set_startup_entropy_seed(0x12345678u, 0x0000abcdu);
+    ppu_entropy_low_a.power_on();
+
+    static clover::core::console_t ppu_entropy_low_b{};
+    ppu_entropy_low_b.set_startup_entropy_mode(clover::core::startup_entropy_mode_t::low);
+    ppu_entropy_low_b.set_startup_entropy_seed(0x12345678u, 0x0000abcdu);
+    ppu_entropy_low_b.power_on();
+
+    const auto entropy_low_a_wram{ ppu_entropy_low_a.wram_span(0u, clover::core::bus_t::k_wram_size) };
+    const auto entropy_low_b_wram{ ppu_entropy_low_b.wram_span(0u, clover::core::bus_t::k_wram_size) };
+    if (!std::equal(entropy_low_a_wram.begin(),
+                    entropy_low_a_wram.end(),
+                    entropy_low_b_wram.begin())
+        || ppu_entropy_low_a.ppu_vram() != ppu_entropy_low_b.ppu_vram()
+        || ppu_entropy_low_a.ppu_cgram() != ppu_entropy_low_b.ppu_cgram())
+    {
+        return fail("startup_entropy_seed_is_reproducible");
+    }
+
+    const std::vector<uint8_t> preserved_entropy_wram{
+        ppu_entropy_low_a.wram_span(0u, clover::core::bus_t::k_wram_size).begin(),
+        ppu_entropy_low_a.wram_span(0u, clover::core::bus_t::k_wram_size).end()
+    };
+    const auto preserved_entropy_vram{ ppu_entropy_low_a.ppu_vram() };
+    ppu_entropy_low_a.reset();
+    if (!std::equal(preserved_entropy_wram.begin(),
+                    preserved_entropy_wram.end(),
+                    ppu_entropy_low_a.wram_span(0u, clover::core::bus_t::k_wram_size).begin()))
+    {
+        return fail("startup_entropy_warm_reset_preserves_wram");
+    }
+    if (ppu_entropy_low_a.ppu_vram() != preserved_entropy_vram)
+        return fail("startup_entropy_warm_reset_preserves_vram");
+
+    static clover::core::console_t apu_reset_console{};
+    apu_reset_console.power_on();
+    if (apu_reset_console.apu_peek_dsp_register(0x6cu) != 0xe0u)
+        return fail("apu_power_on_sets_dsp_flg");
+    for (int step_index{ 0 };
+         step_index < 4096
+         && (apu_reset_console.read_u8(0x002140u) != 0xaau || apu_reset_console.read_u8(0x002141u) != 0xbbu);
+         ++step_index)
+    {
+        static_cast<void>(apu_reset_console.step_hardware());
+    }
+    if (apu_reset_console.read_u8(0x002140u) != 0xaau || apu_reset_console.read_u8(0x002141u) != 0xbbu)
+        return fail("apu_reset_bootstrap_signature");
+    apu_reset_console.write_u8(0x002142u, 0x34u);
+    apu_reset_console.write_u8(0x002143u, 0x12u);
+    apu_reset_console.write_u8(0x002141u, 0x02u);
+    apu_reset_console.write_u8(0x002140u, 0xccu);
+    for (int step_index{ 0 }; step_index < 128 && apu_reset_console.read_u8(0x002140u) != 0xccu; ++step_index)
+        static_cast<void>(apu_reset_console.step_hardware());
+    if (apu_reset_console.read_u8(0x002140u) != 0xccu)
+        return fail("apu_reset_bootstrap_sync");
+    apu_reset_console.write_u8(0x002141u, 0x5au);
+    apu_reset_console.write_u8(0x002140u, 0x00u);
+    for (int step_index{ 0 }; step_index < 128 && apu_reset_console.read_u8(0x002140u) != 0x00u; ++step_index)
+        static_cast<void>(apu_reset_console.step_hardware());
+    if (apu_reset_console.read_u8(0x002140u) != 0x00u)
+        return fail("apu_reset_transfer_ack_0");
+    apu_reset_console.write_u8(0x002141u, 0xa5u);
+    apu_reset_console.write_u8(0x002140u, 0x01u);
+    for (int step_index{ 0 }; step_index < 128 && apu_reset_console.read_u8(0x002140u) != 0x01u; ++step_index)
+        static_cast<void>(apu_reset_console.step_hardware());
+    if (apu_reset_console.read_u8(0x002140u) != 0x01u)
+        return fail("apu_reset_transfer_ack_1");
+    for (int step_index{ 0 };
+         step_index < 128
+         && (apu_reset_console.apu_peek_ram(0x1234u) != 0x5au || apu_reset_console.apu_peek_ram(0x1235u) != 0xa5u);
+         ++step_index)
+    {
+        static_cast<void>(apu_reset_console.step_hardware());
+    }
+    apu_reset_console.reset();
+    if (apu_reset_console.apu_peek_ram(0x1234u) != 0x5au
+        || apu_reset_console.apu_peek_ram(0x1235u) != 0xa5u)
+    {
+        return fail("apu_warm_reset_preserves_apuram");
+    }
+    if (apu_reset_console.read_u8(0x002140u) != 0x00u
+        || apu_reset_console.read_u8(0x002141u) != 0x00u
+        || apu_reset_console.read_u8(0x002142u) != 0x00u
+        || apu_reset_console.read_u8(0x002143u) != 0x00u)
+    {
+        return fail("apu_warm_reset_clears_cpu_ports");
+    }
+    if (apu_reset_console.apu_peek_dsp_register(0x6cu) != 0xe0u)
+        return fail("apu_warm_reset_soft_resets_dsp_flg");
+
+    static clover::core::console_t cpu_power_on_console{};
+    cpu_power_on_console.power_on();
+    if (cpu_power_on_console.read_u8(0x004213u) != 0xffu)
+        return fail("cpu_power_on_pio_default");
 
     while (ppu_register_console.timing().raster.dot < 24)
         static_cast<void>(ppu_register_console.step_hardware());

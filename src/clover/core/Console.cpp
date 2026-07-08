@@ -19,7 +19,7 @@ namespace clover::core
         _cpu.attach_ppu(_ppu);
         _scheduler.reset();
         _cartridge.reset();
-        _bus.reset();
+        _bus.power_on();
         _cpu.power_on();
         _cpu.load_reset_vector(_bus);
         _dma.reset();
@@ -41,6 +41,29 @@ namespace clover::core
         _ppu.reset();
         _apu.reset();
         _ppu.present(_framebuffer);
+    }
+
+    void console_t::set_startup_entropy_mode(startup_entropy_mode_t mode) noexcept
+    {
+        _bus.set_entropy_mode(mode);
+        _ppu.set_entropy_mode(mode);
+    }
+
+    startup_entropy_mode_t console_t::startup_entropy_mode() const noexcept
+    {
+        return _ppu.entropy_mode();
+    }
+
+    void console_t::set_startup_entropy_seed(uint32_t seed, uint32_t sequence) noexcept
+    {
+        _bus.set_entropy_seed(seed, sequence);
+        _ppu.set_entropy_seed(seed, sequence);
+    }
+
+    void console_t::clear_startup_entropy_seed() noexcept
+    {
+        _bus.clear_entropy_seed();
+        _ppu.clear_entropy_seed();
     }
 
     bool console_t::load_cartridge(std::span<const std::byte> rom_data) noexcept
@@ -177,6 +200,28 @@ namespace clover::core
         return _ppu.compositor_snapshot();
     }
 
+    std::size_t console_t::ppu_cgram_write_trace_count() const noexcept
+    {
+        return _ppu.cgram_write_trace_count();
+    }
+
+    const std::array<ppu_cgram_write_trace_t, ppu_cgram_write_trace_capacity>&
+    console_t::ppu_cgram_write_trace() const noexcept
+    {
+        return _ppu.cgram_write_trace();
+    }
+
+    std::size_t console_t::ppu_oam_write_trace_count() const noexcept
+    {
+        return _ppu.oam_write_trace_count();
+    }
+
+    const std::array<ppu_oam_write_trace_t, ppu_oam_write_trace_capacity>&
+    console_t::ppu_oam_write_trace() const noexcept
+    {
+        return _ppu.oam_write_trace();
+    }
+
     const std::array<uint16_t, 32 * 1024>& console_t::ppu_vram() const noexcept
     {
         return _ppu.vram();
@@ -195,6 +240,39 @@ namespace clover::core
     void console_t::set_frame_capture_enabled(bool enabled) noexcept
     {
         _ppu.set_frame_capture_enabled(enabled);
+    }
+
+    void console_t::set_ppu_entropy_mode(ppu_entropy_mode_t mode) noexcept
+    {
+        _bus.set_entropy_mode(mode);
+        _ppu.set_entropy_mode(mode);
+    }
+
+    ppu_entropy_mode_t console_t::ppu_entropy_mode() const noexcept
+    {
+        return _ppu.entropy_mode();
+    }
+
+    void console_t::set_ppu_entropy_seed(uint32_t seed, uint32_t sequence) noexcept
+    {
+        _bus.set_entropy_seed(seed, sequence);
+        _ppu.set_entropy_seed(seed, sequence);
+    }
+
+    void console_t::clear_ppu_entropy_seed() noexcept
+    {
+        _bus.clear_entropy_seed();
+        _ppu.clear_entropy_seed();
+    }
+
+    void console_t::set_ppu_cgram_write_trace_start_frame(uint64_t frame_index) noexcept
+    {
+        _ppu.set_cgram_write_trace_start_frame(frame_index);
+    }
+
+    void console_t::set_ppu_oam_write_trace_start_frame(uint64_t frame_index) noexcept
+    {
+        _ppu.set_oam_write_trace_start_frame(frame_index);
     }
 
     uint8_t console_t::open_bus() const noexcept
@@ -285,6 +363,11 @@ namespace clover::core
     const std::array<bus_t::watched_write_trace_t, bus_t::k_watched_write_trace_capacity>& console_t::watched_write_trace() const noexcept
     {
         return _bus.watched_write_trace();
+    }
+
+    std::span<const uint8_t> console_t::wram_span(uint32_t offset, uint32_t length) const noexcept
+    {
+        return _bus.wram_span(offset, length);
     }
 
     uint16_t console_t::apu_port_trace_count() const noexcept

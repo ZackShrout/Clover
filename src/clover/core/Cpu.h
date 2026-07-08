@@ -71,6 +71,7 @@ namespace clover::core
         [[nodiscard]] timing_snapshot_t timing(const video_timing_t& video_timing) const noexcept;
         [[nodiscard]] timing_snapshot_t delayed_timing(const video_timing_t& video_timing,
                                                        master_clock_delta_t delay) const noexcept;
+        [[nodiscard]] uint32_t wram_address() const noexcept;
         [[nodiscard]] uint8_t read_register(uint16_t address,
                                            master_clock_delta_t elapsed_master_clocks = 0) noexcept;
         void write_register(uint16_t address, uint8_t value) noexcept;
@@ -78,6 +79,8 @@ namespace clover::core
         [[nodiscard]] cpu_step_result_t step(bus_t& bus,
                                              const dma_t& dma,
                                              interrupt_controller_t& interrupts) noexcept;
+        [[nodiscard]] master_clock_delta_t apply_system_timing(master_clock_delta_t elapsed_master_clocks,
+                                                               const video_timing_t& video_timing) noexcept;
         void on_dma_step(const dma_t& dma, interrupt_controller_t& interrupts) noexcept;
         void on_ppu_step(master_clock_delta_t elapsed_master_clocks,
                          const video_timing_t& video_timing,
@@ -112,6 +115,10 @@ namespace clover::core
         bool _stopped{ false };
         uint16_t _visible_scanlines{ k_ntsc_video_timing.visible_scanlines };
         bool _interlace{ false };
+        uint16_t _dram_refresh_dot{ dram_refresh_dot_v2(0) };
+        bool _dram_refresh_pending{ true };
+        uint16_t _hdma_setup_dot{ hdma_setup_dot_v2(0) };
+        bool _hdma_setup_pending{ true };
 
         friend bool execute_system_opcode(uint8_t opcode,
                                           cpu_t& cpu,

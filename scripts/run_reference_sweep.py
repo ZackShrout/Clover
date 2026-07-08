@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -14,9 +15,9 @@ DEFAULT_ROM = Path("roms/local/Super Mario World (USA).sfc")
 DEFAULT_BSNES_CORE = Path("/Users/zshrout/dev/bsnes/bsnes/out/bsnes_libretro.dylib")
 
 
-def run(command: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+def run(command: list[str], cwd: Path, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     print("$", " ".join(command), flush=True)
-    return subprocess.run(command, cwd=cwd, text=True, capture_output=True)
+    return subprocess.run(command, cwd=cwd, text=True, capture_output=True, env=env)
 
 
 def main() -> int:
@@ -55,6 +56,11 @@ def main() -> int:
         action="store_true",
         help="Do not clear the output directory before running"
     )
+    parser.add_argument(
+        "--verbose-bringup",
+        action="store_true",
+        help="Allow Clover bringup to emit full debug diagnostics instead of the standard low-noise summary"
+    )
     args = parser.parse_args()
 
     workspace = Path(__file__).resolve().parent.parent
@@ -91,6 +97,9 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     failures: list[tuple[int, str]] = []
+    clover_env = os.environ.copy()
+    if not args.verbose_bringup:
+        clover_env["CLOVER_BRINGUP_VERBOSE"] = "0"
     for frame in frames:
         bsnes_dump_dir = output_dir / f"bsnes-frame-{frame:04d}"
         clover_dump_dir = output_dir / f"clover-frame-{frame:04d}"
@@ -124,6 +133,7 @@ def main() -> int:
                 str(frame),
             ],
             workspace,
+            env=clover_env,
         )
         sys.stdout.write(clover_result.stdout)
         sys.stderr.write(clover_result.stderr)

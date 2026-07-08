@@ -41,6 +41,8 @@ namespace clover::core
             result.elapsed_master_clocks = cpu_step.master_clocks;
         }
 
+        result.elapsed_master_clocks = cpu.apply_system_timing(result.elapsed_master_clocks, ppu.video_timing());
+
         _master_clock += result.elapsed_master_clocks;
 
         if (result.slot_owner == hardware_slot_owner_t::cpu)

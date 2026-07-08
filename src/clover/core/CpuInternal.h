@@ -21,6 +21,31 @@ namespace clover::core
     inline constexpr uint8_t k_status_zero{ 0x02u };
     inline constexpr uint8_t k_status_carry{ 0x01u };
 
+    [[nodiscard]] inline master_clock_delta_t cpu_access_clocks(uint32_t address,
+                                                                bool fast_rom_enabled) noexcept
+    {
+        // Match bsnes' CPU bus timing categories:
+        // - FastROM banks in $80-$FF, $8000-$FFFF: 6 clocks when MEMSEL is set
+        // - Most ROM/WRAM accesses in mapped regions: 8 clocks
+        // - CPU internal / low WRAM window: 6 clocks
+        // - Slow MMIO/CPU register window: 12 clocks
+        if ((address & 0x408000u) != 0u)
+        {
+            if ((address & 0x800000u) != 0u && fast_rom_enabled)
+                return 6;
+
+            return 8;
+        }
+
+        if (((address + 0x6000u) & 0x4000u) != 0u)
+            return 8;
+
+        if (((address - 0x4000u) & 0x7e00u) != 0u)
+            return 6;
+
+        return 12;
+    }
+
     [[nodiscard]] inline uint32_t program_address(const cpu_state_t& state) noexcept
     {
         return (static_cast<uint32_t>(state.pb) << 16u) | state.pc;
@@ -166,24 +191,30 @@ namespace clover::core
     {
     public:
         explicit cpu_step_executor_t(bus_t& bus,
-                                     interrupt_controller_t& interrupts) noexcept
+                                     interrupt_controller_t& interrupts,
+                                     bool fast_rom_enabled) noexcept
             : _bus(bus)
             , _interrupts(interrupts)
+            , _fast_rom_enabled(fast_rom_enabled)
         {
         }
 
         [[nodiscard]] uint8_t read_u8(uint32_t address) noexcept
         {
-            _master_clocks = static_cast<master_clock_delta_t>(_master_clocks + k_cpu_bus_cycle_clocks);
+            _master_clocks = static_cast<master_clock_delta_t>(
+                _master_clocks + cpu_access_clocks(address, _fast_rom_enabled)
+            );
             const uint8_t value{ _bus.read_cpu_u8(address, _master_clocks) };
-            _bus.trace_cpu_apu_port_access(address, value, false);
+            _bus.trace_cpu_apu_port_access(address, value, false, _master_clocks);
             return value;
         }
 
         void write_u8(uint32_t address, uint8_t value) noexcept
         {
-            _master_clocks = static_cast<master_clock_delta_t>(_master_clocks + k_cpu_bus_cycle_clocks);
-            _bus.trace_cpu_apu_port_access(address, value, true);
+            _master_clocks = static_cast<master_clock_delta_t>(
+                _master_clocks + cpu_access_clocks(address, _fast_rom_enabled)
+            );
+            _bus.trace_cpu_apu_port_access(address, value, true, _master_clocks);
             _bus.write_cpu_u8(address, value, _master_clocks);
         }
 
@@ -821,6 +852,11 @@ namespace clover::core
             _observed_opcode_edge = true;
         }
 
+        void set_irq_lock() noexcept
+        {
+            _interrupts.set_irq_lock();
+        }
+
         void retire_instruction() noexcept
         {
             commit_cpu_writes();
@@ -852,6 +888,7 @@ namespace clover::core
     private:
         bus_t& _bus;
         interrupt_controller_t& _interrupts;
+        bool _fast_rom_enabled{ false };
         master_clock_delta_t _master_clocks{ 0 };
         bool _observed_opcode_edge{ false };
         bool _retired_instruction{ false };

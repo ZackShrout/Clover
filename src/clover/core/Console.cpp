@@ -138,9 +138,19 @@ namespace clover::core
         return _cpu.state();
     }
 
+    uint32_t console_t::cpu_wram_address() const noexcept
+    {
+        return _cpu.wram_address();
+    }
+
     master_clock_delta_t console_t::current_scanline_clocks() const noexcept
     {
         return _ppu.current_scanline_clocks();
+    }
+
+    void console_t::refresh_framebuffer(const ppu_presentation_options_t& options) noexcept
+    {
+        _ppu.present(_framebuffer, options);
     }
 
     hardware_timing_snapshot_t console_t::capture_timing_snapshot() const noexcept
@@ -222,22 +232,27 @@ namespace clover::core
         return _apu.peek_ram(address);
     }
 
-    uint8_t console_t::apu_instruction_trace_count() const noexcept
+    uint8_t console_t::apu_peek_dsp_register(uint8_t address) const noexcept
+    {
+        return _apu.peek_dsp_register(address);
+    }
+
+    uint16_t console_t::apu_instruction_trace_count() const noexcept
     {
         return _apu.instruction_trace_count();
     }
 
-    const std::array<apu_state_t::trace_entry_t, 128>& console_t::apu_instruction_trace() const noexcept
+    const std::array<apu_state_t::trace_entry_t, k_apu_trace_capacity>& console_t::apu_instruction_trace() const noexcept
     {
         return _apu.instruction_trace();
     }
 
-    uint8_t console_t::apu_io_trace_count() const noexcept
+    uint16_t console_t::apu_io_trace_count() const noexcept
     {
         return _apu.io_trace_count();
     }
 
-    const std::array<apu_state_t::io_trace_entry_t, 128>& console_t::apu_io_trace() const noexcept
+    const std::array<apu_state_t::io_trace_entry_t, k_apu_trace_capacity>& console_t::apu_io_trace() const noexcept
     {
         return _apu.io_trace();
     }
@@ -250,6 +265,16 @@ namespace clover::core
     const std::array<bus_t::ppu_register_write_trace_t, bus_t::k_ppu_register_write_trace_capacity>& console_t::ppu_register_write_trace() const noexcept
     {
         return _bus.ppu_register_write_trace();
+    }
+
+    uint8_t console_t::system_register_write_trace_count() const noexcept
+    {
+        return _bus.system_register_write_trace_count();
+    }
+
+    const std::array<bus_t::system_register_write_trace_t, bus_t::k_system_register_write_trace_capacity>& console_t::system_register_write_trace() const noexcept
+    {
+        return _bus.system_register_write_trace();
     }
 
     uint8_t console_t::watched_write_trace_count() const noexcept

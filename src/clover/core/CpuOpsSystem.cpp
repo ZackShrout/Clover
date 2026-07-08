@@ -54,6 +54,9 @@ namespace clover::core
         case 0x58u:
             executor.retire_opcode_boundary(state);
             state.p &= static_cast<uint8_t>(~k_status_irq_disable);
+            // CLI defers newly-visible IRQ delivery until the following opcode
+            // boundary; the next CPU step clears this lock before executing.
+            executor.set_irq_lock();
             return true;
         case 0x78u:
             executor.retire_opcode_boundary(state);

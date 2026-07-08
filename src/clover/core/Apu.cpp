@@ -5,12 +5,18 @@
 
 #include "clover/core/Apu.h"
 
+#include "clover/core/Bus.h"
+
 #include <algorithm>
 #include <array>
 
 namespace
 {
     constexpr uint8_t k_ram_disabled_read_value{ 0x5au };
+    constexpr uint16_t k_trace_pc_min{ 0xffdau };
+    constexpr uint16_t k_trace_pc_max{ 0xffe8u };
+    constexpr uint16_t k_trace_pc2_min{ 0x0800u };
+    constexpr uint16_t k_trace_pc2_max{ 0x08ffu };
 
     constexpr std::array<uint8_t, 64> k_ipl_rom{
         0xcdu, 0xefu, 0xbdu, 0xe8u, 0x00u, 0xc6u, 0x1du, 0xd0u,
@@ -34,7 +40,7 @@ namespace clover::core
     void apu_t::reset() noexcept
     {
         _master_clock = 0;
-        _cycle_credit = 0;
+        _smp_clock_credit = 0;
         _registers = {
             .pc = static_cast<uint16_t>(k_ipl_rom[62] | (static_cast<uint16_t>(k_ipl_rom[63]) << 8u)),
             .a = 0,
@@ -47,6 +53,7 @@ namespace clover::core
         _halted = false;
         _last_opcode = 0;
         _io = {};
+        _dsp_registers.fill(0);
         _timer0 = {};
         _timer1 = {};
         _timer2 = {};
@@ -60,12 +67,26 @@ namespace clover::core
     void apu_t::step(master_clock_delta_t master_clocks) noexcept
     {
         _master_clock += master_clocks;
-        _cycle_credit += static_cast<int64_t>(master_clocks);
+        _smp_clock_credit += static_cast<int64_t>(master_clocks) * k_smp_clock_frequency_hz;
 
-        while (!_halted && _cycle_credit >= static_cast<int64_t>(k_master_clocks_per_spc_cycle))
+        while (!_halted && _smp_clock_credit >= k_master_clock_frequency_hz)
         {
             execute_instruction();
         }
+    }
+
+    void apu_t::begin_cpu_io_window(bus_t& bus, master_clock_delta_t target_clocks) noexcept
+    {
+        _cpu_io_window_bus = &bus;
+        _cpu_io_window_target_clocks = target_clocks;
+        _cpu_io_window_consumed_master_numerator = 0;
+    }
+
+    void apu_t::end_cpu_io_window() noexcept
+    {
+        _cpu_io_window_bus = nullptr;
+        _cpu_io_window_target_clocks = 0;
+        _cpu_io_window_consumed_master_numerator = 0;
     }
 
     master_clock_count_t apu_t::master_clock() const noexcept
@@ -146,22 +167,27 @@ namespace clover::core
         return _ram[address];
     }
 
-    uint8_t apu_t::instruction_trace_count() const noexcept
+    uint8_t apu_t::peek_dsp_register(uint8_t address) const noexcept
+    {
+        return _dsp_registers[address & 0x7fu];
+    }
+
+    uint16_t apu_t::instruction_trace_count() const noexcept
     {
         return _instruction_trace_count;
     }
 
-    const std::array<apu_state_t::trace_entry_t, 128>& apu_t::instruction_trace() const noexcept
+    const std::array<apu_state_t::trace_entry_t, k_apu_trace_capacity>& apu_t::instruction_trace() const noexcept
     {
         return _instruction_trace;
     }
 
-    uint8_t apu_t::io_trace_count() const noexcept
+    uint16_t apu_t::io_trace_count() const noexcept
     {
         return _io_trace_count;
     }
 
-    const std::array<apu_state_t::io_trace_entry_t, 128>& apu_t::io_trace() const noexcept
+    const std::array<apu_state_t::io_trace_entry_t, k_apu_trace_capacity>& apu_t::io_trace() const noexcept
     {
         return _io_trace;
     }
@@ -169,7 +195,8 @@ namespace clover::core
     void apu_t::execute_instruction() noexcept
     {
         const uint16_t pc{ _registers.pc };
-        const uint8_t opcode{ fetch_u8() };
+        _current_opcode_pc = pc;
+        const uint8_t opcode{ spc_fetch_u8() };
         _last_opcode = opcode;
         trace_instruction(pc, opcode);
         if (execute_load_store_opcode(opcode)
@@ -193,6 +220,145 @@ namespace clover::core
         const uint8_t low{ fetch_u8() };
         const uint8_t high{ fetch_u8() };
         return static_cast<uint16_t>(low | (static_cast<uint16_t>(high) << 8u));
+    }
+
+    uint8_t apu_t::spc_fetch_u8() noexcept
+    {
+        return spc_read_u8(_registers.pc++);
+    }
+
+    uint16_t apu_t::spc_fetch_u16() noexcept
+    {
+        const uint8_t low{ spc_fetch_u8() };
+        const uint8_t high{ spc_fetch_u8() };
+        return static_cast<uint16_t>(low | (static_cast<uint16_t>(high) << 8u));
+    }
+
+    void apu_t::spc_consume_opcode_fetch() noexcept
+    {
+        // Opcode fetch timing is consumed up-front in execute_instruction(),
+        // matching the bsnes SPC700 fetch/read model.
+    }
+
+    void apu_t::spc_idle() noexcept
+    {
+        wait_for_access(std::nullopt, false);
+    }
+
+    uint8_t apu_t::spc_read_u8(uint16_t address) noexcept
+    {
+        if (is_cpu_port_address(address))
+        {
+            wait_for_access(address, true);
+            const uint8_t value{ read_u8(address) };
+            wait_for_access(address, true);
+            return value;
+        }
+
+        wait_for_access(address, false);
+        return read_u8(address);
+    }
+
+    void apu_t::spc_write_u8(uint16_t address, uint8_t value) noexcept
+    {
+        wait_for_access(address, false);
+        write_u8(address, value);
+    }
+
+    uint8_t apu_t::spc_load_direct(uint8_t address) noexcept
+    {
+        return spc_read_u8(direct_page_address(address));
+    }
+
+    void apu_t::spc_store_direct(uint8_t address, uint8_t value) noexcept
+    {
+        spc_write_u8(direct_page_address(address), value);
+    }
+
+    uint8_t apu_t::spc_load_direct_indexed(uint8_t address, uint8_t index) noexcept
+    {
+        spc_idle();
+        return spc_load_direct(static_cast<uint8_t>(address + index));
+    }
+
+    uint8_t apu_t::spc_read_abs_indexed(uint16_t address, uint8_t index) noexcept
+    {
+        spc_idle();
+        return spc_read_u8(static_cast<uint16_t>(address + index));
+    }
+
+    uint8_t apu_t::spc_read_indexed_indirect(uint8_t address, uint8_t index) noexcept
+    {
+        spc_idle();
+        const uint8_t indexed_address{ static_cast<uint8_t>(address + index) };
+        const uint8_t low{ spc_load_direct(indexed_address) };
+        const uint8_t high{ spc_load_direct(static_cast<uint8_t>(indexed_address + 1u)) };
+        const uint16_t effective_address{
+            static_cast<uint16_t>(low | (static_cast<uint16_t>(high) << 8u))
+        };
+        return spc_read_u8(effective_address);
+    }
+
+    uint8_t apu_t::spc_read_indirect_indexed(uint8_t address, uint8_t index) noexcept
+    {
+        const uint8_t low{ spc_load_direct(address) };
+        const uint8_t high{ spc_load_direct(static_cast<uint8_t>(address + 1u)) };
+        const uint16_t effective_address{
+            static_cast<uint16_t>(low | (static_cast<uint16_t>(high) << 8u))
+        };
+        spc_idle();
+        return spc_read_u8(static_cast<uint16_t>(effective_address + index));
+    }
+
+    void apu_t::spc_write_abs(uint16_t address, uint8_t value) noexcept
+    {
+        (void)spc_read_u8(address);
+        spc_write_u8(address, value);
+    }
+
+    void apu_t::spc_write_abs_indexed(uint16_t address, uint8_t index, uint8_t value) noexcept
+    {
+        spc_idle();
+        const uint16_t effective_address{ static_cast<uint16_t>(address + index) };
+        (void)spc_read_u8(effective_address);
+        spc_write_u8(effective_address, value);
+    }
+
+    void apu_t::spc_write_indexed_indirect(uint8_t address, uint8_t index, uint8_t value) noexcept
+    {
+        spc_idle();
+        const uint8_t indexed_address{ static_cast<uint8_t>(address + index) };
+        const uint8_t low{ spc_load_direct(indexed_address) };
+        const uint8_t high{ spc_load_direct(static_cast<uint8_t>(indexed_address + 1u)) };
+        const uint16_t effective_address{
+            static_cast<uint16_t>(low | (static_cast<uint16_t>(high) << 8u))
+        };
+        (void)spc_read_u8(effective_address);
+        spc_write_u8(effective_address, value);
+    }
+
+    void apu_t::spc_write_indirect_indexed(uint8_t address, uint8_t index, uint8_t value) noexcept
+    {
+        const uint8_t low{ spc_load_direct(address) };
+        const uint8_t high{ spc_load_direct(static_cast<uint8_t>(address + 1u)) };
+        const uint16_t effective_address{
+            static_cast<uint16_t>(low | (static_cast<uint16_t>(high) << 8u))
+        };
+        spc_idle();
+        (void)spc_read_u8(static_cast<uint16_t>(effective_address + index));
+        spc_write_u8(static_cast<uint16_t>(effective_address + index), value);
+    }
+
+    void apu_t::spc_push_stack(uint8_t value) noexcept
+    {
+        spc_write_u8(static_cast<uint16_t>(0x0100u | _registers.sp), value);
+        --_registers.sp;
+    }
+
+    uint8_t apu_t::spc_pull_stack() noexcept
+    {
+        ++_registers.sp;
+        return spc_read_u8(static_cast<uint16_t>(0x0100u | _registers.sp));
     }
 
     uint8_t apu_t::fetch_u8_phased(master_clock_delta_t before_cycles,
@@ -472,14 +638,14 @@ namespace clover::core
 
     void apu_t::arithmetic_shift_left_memory(uint16_t address) noexcept
     {
-        uint8_t value{ read_u8(address) };
+        uint8_t value{ spc_read_u8(address) };
         if ((value & 0x80u) != 0)
             _registers.psw |= k_psw_carry;
         else
             _registers.psw &= static_cast<uint8_t>(~k_psw_carry);
 
         value = static_cast<uint8_t>(value << 1u);
-        write_u8(address, value);
+        spc_write_u8(address, value);
         set_nz_flags(value);
     }
 
@@ -497,7 +663,7 @@ namespace clover::core
 
     void apu_t::rotate_left_memory(uint16_t address) noexcept
     {
-        uint8_t value{ read_u8(address) };
+        uint8_t value{ spc_read_u8(address) };
         const uint8_t carry_in{ static_cast<uint8_t>((_registers.psw & k_psw_carry) != 0 ? 1u : 0u) };
         if ((value & 0x80u) != 0)
             _registers.psw |= k_psw_carry;
@@ -505,7 +671,7 @@ namespace clover::core
             _registers.psw &= static_cast<uint8_t>(~k_psw_carry);
 
         value = static_cast<uint8_t>((value << 1u) | carry_in);
-        write_u8(address, value);
+        spc_write_u8(address, value);
         set_nz_flags(value);
     }
 
@@ -522,14 +688,14 @@ namespace clover::core
 
     void apu_t::logical_shift_right_memory(uint16_t address) noexcept
     {
-        uint8_t value{ read_u8(address) };
+        uint8_t value{ spc_read_u8(address) };
         if ((value & 0x01u) != 0)
             _registers.psw |= k_psw_carry;
         else
             _registers.psw &= static_cast<uint8_t>(~k_psw_carry);
 
         value = static_cast<uint8_t>(value >> 1u);
-        write_u8(address, value);
+        spc_write_u8(address, value);
         set_nz_flags(value);
     }
 
@@ -547,7 +713,7 @@ namespace clover::core
 
     void apu_t::rotate_right_memory(uint16_t address) noexcept
     {
-        uint8_t value{ read_u8(address) };
+        uint8_t value{ spc_read_u8(address) };
         const uint8_t carry_in{ static_cast<uint8_t>((_registers.psw & k_psw_carry) != 0 ? 0x80u : 0u) };
         if ((value & 0x01u) != 0)
             _registers.psw |= k_psw_carry;
@@ -555,7 +721,7 @@ namespace clover::core
             _registers.psw &= static_cast<uint8_t>(~k_psw_carry);
 
         value = static_cast<uint8_t>(carry_in | (value >> 1u));
-        write_u8(address, value);
+        spc_write_u8(address, value);
         set_nz_flags(value);
     }
 
@@ -567,8 +733,8 @@ namespace clover::core
 
     void apu_t::or_direct_immediate(uint8_t immediate, uint8_t direct_address) noexcept
     {
-        const uint8_t value{ static_cast<uint8_t>(read_direct(direct_address) | immediate) };
-        write_direct(direct_address, value);
+        const uint8_t value{ static_cast<uint8_t>(spc_load_direct(direct_address) | immediate) };
+        spc_store_direct(direct_address, value);
         set_nz_flags(value);
     }
 
@@ -580,36 +746,39 @@ namespace clover::core
 
     void apu_t::and_direct_immediate(uint8_t immediate, uint8_t direct_address) noexcept
     {
-        const uint8_t value{ static_cast<uint8_t>(read_direct(direct_address) & immediate) };
-        write_direct(direct_address, value);
+        const uint8_t value{ static_cast<uint8_t>(spc_load_direct(direct_address) & immediate) };
+        spc_store_direct(direct_address, value);
         set_nz_flags(value);
     }
 
     void apu_t::xor_direct_immediate(uint8_t immediate, uint8_t direct_address) noexcept
     {
-        const uint8_t value{ static_cast<uint8_t>(read_direct(direct_address) ^ immediate) };
-        write_direct(direct_address, value);
+        const uint8_t value{ static_cast<uint8_t>(spc_load_direct(direct_address) ^ immediate) };
+        spc_store_direct(direct_address, value);
         set_nz_flags(value);
     }
 
     void apu_t::or_indirect_x_with_indirect_y() noexcept
     {
-        const uint8_t value{ static_cast<uint8_t>(read_direct(_registers.x) | read_direct(_registers.y)) };
-        write_direct(_registers.x, value);
+        (void)spc_read_u8(_registers.pc);
+        const uint8_t value{ static_cast<uint8_t>(spc_load_direct(_registers.x) | spc_load_direct(_registers.y)) };
+        spc_store_direct(_registers.x, value);
         set_nz_flags(value);
     }
 
     void apu_t::and_indirect_x_with_indirect_y() noexcept
     {
-        const uint8_t value{ static_cast<uint8_t>(read_direct(_registers.x) & read_direct(_registers.y)) };
-        write_direct(_registers.x, value);
+        (void)spc_read_u8(_registers.pc);
+        const uint8_t value{ static_cast<uint8_t>(spc_load_direct(_registers.x) & spc_load_direct(_registers.y)) };
+        spc_store_direct(_registers.x, value);
         set_nz_flags(value);
     }
 
     void apu_t::xor_indirect_x_with_indirect_y() noexcept
     {
-        const uint8_t value{ static_cast<uint8_t>(read_direct(_registers.x) ^ read_direct(_registers.y)) };
-        write_direct(_registers.x, value);
+        (void)spc_read_u8(_registers.pc);
+        const uint8_t value{ static_cast<uint8_t>(spc_load_direct(_registers.x) ^ spc_load_direct(_registers.y)) };
+        spc_store_direct(_registers.x, value);
         set_nz_flags(value);
     }
 
@@ -625,56 +794,56 @@ namespace clover::core
 
     void apu_t::branch_relative_if_direct_bit(uint8_t direct_address, uint8_t bit_mask, bool branch_on_set) noexcept
     {
-        const int8_t displacement{ static_cast<int8_t>(fetch_u8()) };
-        if (direct_bit_is_set(direct_address, bit_mask) == branch_on_set)
-        {
-            _registers.pc = static_cast<uint16_t>(_registers.pc + displacement);
-            step_spc_cycles(7);
+        const uint8_t data{ spc_load_direct(direct_address) };
+        spc_idle();
+        const int8_t displacement{ static_cast<int8_t>(spc_fetch_u8()) };
+        if (((data & bit_mask) != 0) != branch_on_set)
             return;
-        }
 
-        step_spc_cycles(5);
+        spc_idle();
+        spc_idle();
+        _registers.pc = static_cast<uint16_t>(_registers.pc + displacement);
     }
 
     void apu_t::branch_relative_if_accumulator_not_equal_direct(uint8_t direct_address) noexcept
     {
-        const int8_t displacement{ static_cast<int8_t>(fetch_u8()) };
-        if (_registers.a != read_direct(direct_address))
-        {
-            _registers.pc = static_cast<uint16_t>(_registers.pc + displacement);
-            step_spc_cycles(7);
+        const uint8_t data{ spc_load_direct(direct_address) };
+        spc_idle();
+        const int8_t displacement{ static_cast<int8_t>(spc_fetch_u8()) };
+        if (_registers.a == data)
             return;
-        }
 
-        step_spc_cycles(5);
+        spc_idle();
+        spc_idle();
+        _registers.pc = static_cast<uint16_t>(_registers.pc + displacement);
     }
 
     void apu_t::branch_relative_if_accumulator_not_equal_direct_indexed(uint8_t direct_address, uint8_t index) noexcept
     {
-        const int8_t displacement{ static_cast<int8_t>(fetch_u8()) };
-        if (_registers.a != read_direct_indexed(direct_address, index))
-        {
-            _registers.pc = static_cast<uint16_t>(_registers.pc + displacement);
-            step_spc_cycles(8);
+        spc_idle();
+        const uint8_t data{ spc_load_direct(static_cast<uint8_t>(direct_address + index)) };
+        spc_idle();
+        const int8_t displacement{ static_cast<int8_t>(spc_fetch_u8()) };
+        if (_registers.a == data)
             return;
-        }
 
-        step_spc_cycles(6);
+        spc_idle();
+        spc_idle();
+        _registers.pc = static_cast<uint16_t>(_registers.pc + displacement);
     }
 
     void apu_t::decrement_direct_and_branch_if_not_zero(uint8_t direct_address) noexcept
     {
-        const int8_t displacement{ static_cast<int8_t>(fetch_u8()) };
-        const uint8_t value{ static_cast<uint8_t>(read_direct(direct_address) - 1u) };
-        write_direct(direct_address, value);
-        if (value != 0)
-        {
-            _registers.pc = static_cast<uint16_t>(_registers.pc + displacement);
-            step_spc_cycles(7);
+        uint8_t value{ spc_load_direct(direct_address) };
+        value = static_cast<uint8_t>(value - 1u);
+        spc_store_direct(direct_address, value);
+        const int8_t displacement{ static_cast<int8_t>(spc_fetch_u8()) };
+        if (value == 0)
             return;
-        }
 
-        step_spc_cycles(5);
+        spc_idle();
+        spc_idle();
+        _registers.pc = static_cast<uint16_t>(_registers.pc + displacement);
     }
 
     void apu_t::multiply_ya() noexcept
@@ -774,7 +943,7 @@ namespace clover::core
 
     void apu_t::test_and_modify_bits_absolute(uint16_t address, bool set_bits) noexcept
     {
-        const uint8_t data{ read_u8(address) };
+        const uint8_t data{ spc_read_u8(address) };
         const uint8_t result{ static_cast<uint8_t>(_registers.a - data) };
 
         if (result == 0)
@@ -789,7 +958,7 @@ namespace clover::core
 
         const uint8_t updated{ set_bits ? static_cast<uint8_t>(data | _registers.a)
                                         : static_cast<uint8_t>(data & static_cast<uint8_t>(~_registers.a)) };
-        write_u8(address, updated);
+        spc_write_u8(address, updated);
     }
 
     void apu_t::set_compare_flags(uint8_t lhs, uint8_t rhs) noexcept
@@ -805,15 +974,13 @@ namespace clover::core
 
     void apu_t::branch_relative_if(bool condition) noexcept
     {
-        const int8_t displacement{ static_cast<int8_t>(fetch_u8()) };
-        if (condition)
-        {
-            _registers.pc = static_cast<uint16_t>(_registers.pc + displacement);
-            step_spc_cycles(4);
+        const int8_t displacement{ static_cast<int8_t>(spc_fetch_u8()) };
+        if (!condition)
             return;
-        }
 
-        step_spc_cycles(2);
+        spc_idle();
+        spc_idle();
+        _registers.pc = static_cast<uint16_t>(_registers.pc + displacement);
     }
 
     uint8_t apu_t::read_io(uint16_t address) noexcept
@@ -831,17 +998,15 @@ namespace clover::core
             break;
 
         case 0x00f3u:
-            value = 0x00u;
+            value = _dsp_registers[_io.dsp_address & 0x7fu];
             break;
 
         case 0x00f4u:
         case 0x00f5u:
         case 0x00f6u:
         case 0x00f7u:
-            // bsnes models an extra bus-hold cycle on both sides of CPUIO reads.
-            step_spc_cycles(1);
+            synchronize_cpu_io_visibility();
             value = _cpu_to_apu_ports[address & 0x03u];
-            step_spc_cycles(1);
             break;
 
         case 0x00f8u:
@@ -910,12 +1075,14 @@ namespace clover::core
 
             if ((value & 0x10u) != 0)
             {
+                synchronize_cpu_io_visibility();
                 _cpu_to_apu_ports[0] = 0x00u;
                 _cpu_to_apu_ports[1] = 0x00u;
             }
 
             if ((value & 0x20u) != 0)
             {
+                synchronize_cpu_io_visibility();
                 _cpu_to_apu_ports[2] = 0x00u;
                 _cpu_to_apu_ports[3] = 0x00u;
             }
@@ -928,12 +1095,15 @@ namespace clover::core
             return;
 
         case 0x00f3u:
+            if ((_io.dsp_address & 0x80u) == 0)
+                _dsp_registers[_io.dsp_address & 0x7fu] = value;
             return;
 
         case 0x00f4u:
         case 0x00f5u:
         case 0x00f6u:
         case 0x00f7u:
+            synchronize_cpu_io_visibility();
             _apu_to_cpu_ports[address & 0x03u] = value;
             return;
 
@@ -1019,6 +1189,44 @@ namespace clover::core
         }
     }
 
+    void apu_t::step_access_cycles(master_clock_delta_t cycle_clocks,
+                                   master_clock_delta_t timer_clocks) noexcept
+    {
+        step_timer(_timer0, timer_clocks);
+        step_timer(_timer1, timer_clocks);
+        step_timer(_timer2, timer_clocks);
+
+        const int64_t master_clocks{
+            static_cast<int64_t>(cycle_clocks) * k_master_clock_frequency_hz
+        };
+        _cpu_io_window_consumed_master_numerator += master_clocks;
+        _smp_clock_credit -= master_clocks;
+    }
+
+    void apu_t::wait_for_access(std::optional<uint16_t> address, bool half) noexcept
+    {
+        static constexpr std::array<master_clock_delta_t, 4> k_cycle_wait_states{ 2u, 4u, 10u, 20u };
+        static constexpr std::array<master_clock_delta_t, 4> k_timer_wait_states{ 2u, 4u, 8u, 16u };
+
+        uint8_t wait_state_index{ _io.external_wait_states };
+        if (!address.has_value())
+            wait_state_index = _io.internal_wait_states;
+        else if ((address.value() & 0xfff0u) == 0x00f0u)
+            wait_state_index = _io.internal_wait_states;
+        else if (address.value() >= 0xffc0u && _ipl_rom_enabled)
+            wait_state_index = _io.internal_wait_states;
+
+        master_clock_delta_t cycle_clocks{ k_cycle_wait_states[wait_state_index] };
+        master_clock_delta_t timer_clocks{ k_timer_wait_states[wait_state_index] };
+        if (half)
+        {
+            cycle_clocks >>= 1u;
+            timer_clocks >>= 1u;
+        }
+
+        step_access_cycles(cycle_clocks, timer_clocks);
+    }
+
     void apu_t::step_spc_cycles(master_clock_delta_t spc_cycles) noexcept
     {
         step_timer(_timer0, spc_cycles);
@@ -1026,21 +1234,40 @@ namespace clover::core
         step_timer(_timer2, spc_cycles);
 
         const int64_t master_clocks{
-            static_cast<int64_t>(spc_cycles) * static_cast<int64_t>(k_master_clocks_per_spc_cycle)
+            static_cast<int64_t>(spc_cycles) * k_master_clock_frequency_hz
         };
-        _cycle_credit -= master_clocks;
+        _cpu_io_window_consumed_master_numerator += master_clocks;
+        _smp_clock_credit -= master_clocks;
+    }
+
+    void apu_t::synchronize_cpu_io_visibility() noexcept
+    {
+        if (_cpu_io_window_bus == nullptr)
+            return;
+
+        master_clock_delta_t visible_clocks{
+            static_cast<master_clock_delta_t>(
+                _cpu_io_window_consumed_master_numerator / k_smp_clock_frequency_hz
+            )
+        };
+        if (visible_clocks > _cpu_io_window_target_clocks)
+            visible_clocks = _cpu_io_window_target_clocks;
+
+        _cpu_io_window_bus->synchronize_apu_io_access(visible_clocks);
     }
 
     void apu_t::halt_on_unimplemented_opcode(uint8_t opcode) noexcept
     {
         _last_opcode = opcode;
         _halted = true;
-        _cycle_credit = 0;
+        _smp_clock_credit = 0;
     }
 
     void apu_t::trace_instruction(uint16_t pc, uint8_t opcode) noexcept
     {
-        if (pc < 0x0540u || pc > 0x0554u)
+        const bool in_primary_trace_range{ pc >= k_trace_pc_min && pc <= k_trace_pc_max };
+        const bool in_secondary_trace_range{ pc >= k_trace_pc2_min && pc <= k_trace_pc2_max };
+        if (!in_primary_trace_range && !in_secondary_trace_range)
             return;
 
         const apu_state_t::trace_entry_t entry{
@@ -1074,8 +1301,11 @@ namespace clover::core
 
     void apu_t::trace_io_access(uint16_t address, uint8_t value, bool is_write) noexcept
     {
+        const bool in_primary_trace_range{ _registers.pc >= k_trace_pc_min && _registers.pc <= k_trace_pc_max };
+        const bool in_secondary_trace_range{ _registers.pc >= k_trace_pc2_min && _registers.pc <= k_trace_pc2_max };
         if (!((address >= 0x00f4u && address <= 0x00ffu)
-              || (_registers.pc >= 0x0540u && _registers.pc <= 0x0554u)))
+              || in_primary_trace_range
+              || in_secondary_trace_range))
         {
             return;
         }

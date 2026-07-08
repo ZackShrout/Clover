@@ -194,6 +194,11 @@ namespace
         return static_cast<uint16_t>((htime + 1u) << 2u);
     }
 
+    [[nodiscard]] uint16_t scanline_start_dma_phase(const clover::core::timing_snapshot_t& timing) noexcept
+    {
+        return clover::core::dma_phase_from_master_clock(timing.master_clock - timing.raster.dot);
+    }
+
 } // anonymous namespace
 
 namespace clover::core
@@ -241,6 +246,10 @@ namespace clover::core
         _last_irq_gate_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 6, _interlace);
         _irq_condition_valid = false;
         _dma_active = false;
+        _dram_refresh_dot = dram_refresh_dot_v2(dma_phase());
+        _dram_refresh_pending = true;
+        _hdma_setup_dot = hdma_setup_dot_v2(dma_phase());
+        _hdma_setup_pending = true;
     }
 
     void cpu_t::reset() noexcept
@@ -269,6 +278,10 @@ namespace clover::core
         _last_irq_gate_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 6, _interlace);
         _irq_condition_valid = false;
         _dma_active = false;
+        _dram_refresh_dot = dram_refresh_dot_v2(dma_phase());
+        _dram_refresh_pending = true;
+        _hdma_setup_dot = hdma_setup_dot_v2(dma_phase());
+        _hdma_setup_pending = true;
     }
 
     void cpu_t::load_reset_vector(bus_t& bus) noexcept
@@ -293,6 +306,11 @@ namespace clover::core
                                             master_clock_delta_t delay) const noexcept
     {
         return _counter.snapshot_delayed(video_timing, _visible_scanlines, delay, _interlace);
+    }
+
+    uint32_t cpu_t::wram_address() const noexcept
+    {
+        return _io.wram_address & 0x01ffffu;
     }
 
     bool cpu_t::irq_condition(const timing_snapshot_t& irq_timing,
@@ -534,7 +552,7 @@ namespace clover::core
                                   const dma_t& dma,
                                   interrupt_controller_t& interrupts) noexcept
     {
-        cpu_step_executor_t executor{ bus, interrupts };
+        cpu_step_executor_t executor{ bus, interrupts, _io.fast_rom_enabled };
 
         if (_stopped)
         {
@@ -625,8 +643,10 @@ namespace clover::core
             && !execute_system_opcode(opcode, *this, _state, executor)
             && !execute_branch_opcode(opcode, _state, executor))
         {
-            // Keep the placeholder execution model explicit: one opcode fetch plus
-            // one trailing CPU cycle until real per-opcode timing lands.
+            // TODO(hardware-timing): This is still a placeholder execution model:
+            // one opcode fetch plus one trailing CPU cycle. Zelda/SMW timing work
+            // has shown we need real per-opcode CPU timing that stays phase-aligned
+            // with bsnes and hardware, so this must be replaced rather than tuned.
             executor.idle();
         }
 
@@ -641,6 +661,30 @@ namespace clover::core
         if (dma.has_pending_work())
             _dma_active = true;
         return result;
+    }
+
+    master_clock_delta_t cpu_t::apply_system_timing(master_clock_delta_t elapsed_master_clocks,
+                                                    const video_timing_t& video_timing) noexcept
+    {
+        if (!_dram_refresh_pending || elapsed_master_clocks == 0)
+            return elapsed_master_clocks;
+
+        raster_counter_t timed_counter{ _counter };
+        timed_counter.advance(elapsed_master_clocks, video_timing, _interlace);
+        const timing_snapshot_t current_timing{
+            timed_counter.snapshot(video_timing, _visible_scanlines)
+        };
+        if (!crossed_raster_point(_last_timing,
+                                  current_timing,
+                                  _last_timing.raster.scanline,
+                                  _dram_refresh_dot))
+        {
+            return elapsed_master_clocks;
+        }
+
+        return static_cast<master_clock_delta_t>(
+            elapsed_master_clocks + k_cpu_dram_refresh_stall_clocks
+        );
     }
 
     void cpu_t::on_dma_step(const dma_t& dma, interrupt_controller_t& interrupts) noexcept
@@ -690,6 +734,20 @@ namespace clover::core
         const bool exited_vblank_on_nmi_timing{
             _last_nmi_timing.in_vblank && !nmi_timing.in_vblank
         };
+
+        if (ppu_step.entered_scanline)
+        {
+            const uint16_t dma_phase_at_scanline_start{ scanline_start_dma_phase(current_timing) };
+            _dram_refresh_dot = dram_refresh_dot_v2(dma_phase_at_scanline_start);
+            _dram_refresh_pending = true;
+        }
+
+        if (ppu_step.entered_frame_start)
+        {
+            const uint16_t dma_phase_at_frame_start{ scanline_start_dma_phase(current_timing) };
+            _hdma_setup_dot = hdma_setup_dot_v2(dma_phase_at_frame_start);
+            _hdma_setup_pending = true;
+        }
 
         if (exited_vblank_on_nmi_timing)
             interrupts.clear_nmi_line();
@@ -742,11 +800,24 @@ namespace clover::core
             interrupts.clear_irq_line();
         }
 
-        if (crossed_raster_point(_last_timing,
-                                 current_timing,
-                                 video_timing.hdma_setup_scanline,
-                                 video_timing.hdma_setup_dot))
+        if (_dram_refresh_pending
+            && crossed_raster_point(_last_timing,
+                                    current_timing,
+                                    _last_timing.raster.scanline,
+                                    _dram_refresh_dot))
+        {
+            _dram_refresh_pending = false;
+        }
+
+        if (_hdma_setup_pending
+            && crossed_raster_point(_last_timing,
+                                    current_timing,
+                                    0,
+                                    _hdma_setup_dot))
+        {
             dma.request_hdma_setup();
+            _hdma_setup_pending = false;
+        }
 
         if (crossed_hdma_transfer_point(_last_timing,
                                         current_timing,

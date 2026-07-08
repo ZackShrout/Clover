@@ -20,6 +20,8 @@ namespace
     constexpr uint32_t k_watch_lowram_target{ 0x0003u };
     constexpr uint32_t k_watch_upload_window_start{ 0x0d84u };
     constexpr uint32_t k_watch_upload_window_end{ 0x0d99u };
+    constexpr uint32_t k_watch_stack_window_start{ 0x15f0u };
+    constexpr uint32_t k_watch_stack_window_end{ 0x160fu };
 
     [[nodiscard]] bool is_low_wram_mirror_bank(uint8_t bank) noexcept
     {
@@ -44,12 +46,25 @@ namespace
         }
     }
 
+    [[nodiscard]] bool should_trace_system_register_write(uint32_t address) noexcept
+    {
+        const uint16_t register_address{ static_cast<uint16_t>(address & 0xffffu) };
+        if (register_address >= 0x2181u && register_address <= 0x2183u)
+            return true;
+
+        if (register_address == 0x420bu || register_address == 0x420cu)
+            return true;
+
+        return register_address >= 0x4300u && register_address <= 0x437fu;
+    }
+
     [[nodiscard]] bool should_trace_wram_write(uint32_t offset) noexcept
     {
         return offset == k_watch_brightness_offset
             || offset == k_watch_hdmaen_offset
             || offset == k_watch_lowram_target
-            || (offset >= k_watch_upload_window_start && offset <= k_watch_upload_window_end);
+            || (offset >= k_watch_upload_window_start && offset <= k_watch_upload_window_end)
+            || (offset >= k_watch_stack_window_start && offset <= k_watch_stack_window_end);
     }
 
     void accumulate_ppu_step_result(clover::core::ppu_step_result_t& aggregate,
@@ -106,6 +121,7 @@ namespace clover::core
         _pending_apu_write_count = 0;
         _apu_progressed_cpu_clocks = 0;
         _ppu_register_write_trace_count = 0;
+        _system_register_write_trace_count = 0;
         _watched_write_trace_count = 0;
         _apu_port_trace_count = 0;
     }
@@ -266,12 +282,16 @@ namespace clover::core
 
     void bus_t::step_apu_with_cpu_writes(master_clock_delta_t elapsed_master_clocks) noexcept
     {
+        if (_apu != nullptr)
+            _apu->begin_cpu_io_window(*this, elapsed_master_clocks);
+
         if (_apu == nullptr || _pending_apu_write_count == 0)
         {
             if (_apu != nullptr)
             {
                 if (elapsed_master_clocks > _apu_progressed_cpu_clocks)
                     _apu->step(elapsed_master_clocks - _apu_progressed_cpu_clocks);
+                _apu->end_cpu_io_window();
             }
 
             _apu_progressed_cpu_clocks = 0;
@@ -280,6 +300,7 @@ namespace clover::core
         }
 
         advance_apu_to(elapsed_master_clocks);
+        _apu->end_cpu_io_window();
         _pending_apu_write_count = 0;
         _apu_progressed_cpu_clocks = 0;
     }
@@ -289,34 +310,40 @@ namespace clover::core
         if (_apu == nullptr || target_clocks <= _apu_progressed_cpu_clocks)
             return;
 
-        for (uint8_t index{ 0 }; index < _pending_apu_write_count; )
-        {
-            const pending_apu_write_t write{ _pending_apu_writes[index] };
-            const master_clock_delta_t write_target_clocks{
-                write.apply_after_clocks <= target_clocks ? write.apply_after_clocks : target_clocks
-            };
-            if (write_target_clocks > _apu_progressed_cpu_clocks)
-            {
-                _apu->step(write_target_clocks - _apu_progressed_cpu_clocks);
-                _apu_progressed_cpu_clocks = write_target_clocks;
-            }
-
-            if (write.apply_after_clocks <= target_clocks)
-            {
-                dispatch_write_u8(write.address, write.value);
-                for (uint8_t shift{ static_cast<uint8_t>(index + 1u) }; shift < _pending_apu_write_count; ++shift)
-                    _pending_apu_writes[shift - 1] = _pending_apu_writes[shift];
-                --_pending_apu_write_count;
-                continue;
-            }
-
-            ++index;
-        }
+        dispatch_pending_apu_writes_to(target_clocks);
 
         if (target_clocks > _apu_progressed_cpu_clocks)
         {
             _apu->step(target_clocks - _apu_progressed_cpu_clocks);
             _apu_progressed_cpu_clocks = target_clocks;
+        }
+    }
+
+    void bus_t::synchronize_apu_io_access(master_clock_delta_t target_clocks) noexcept
+    {
+        if (_apu == nullptr || target_clocks <= _apu_progressed_cpu_clocks)
+            return;
+
+        dispatch_pending_apu_writes_to(target_clocks);
+        if (target_clocks > _apu_progressed_cpu_clocks)
+            _apu_progressed_cpu_clocks = target_clocks;
+    }
+
+    void bus_t::dispatch_pending_apu_writes_to(master_clock_delta_t target_clocks) noexcept
+    {
+        for (uint8_t index{ 0 }; index < _pending_apu_write_count; )
+        {
+            const pending_apu_write_t write{ _pending_apu_writes[index] };
+            if (write.apply_after_clocks > target_clocks)
+            {
+                ++index;
+                continue;
+            }
+
+            dispatch_write_u8(write.address, write.value);
+            for (uint8_t shift{ static_cast<uint8_t>(index + 1u) }; shift < _pending_apu_write_count; ++shift)
+                _pending_apu_writes[shift - 1] = _pending_apu_writes[shift];
+            --_pending_apu_write_count;
         }
     }
 
@@ -335,6 +362,16 @@ namespace clover::core
         return _ppu_register_write_trace;
     }
 
+    uint8_t bus_t::system_register_write_trace_count() const noexcept
+    {
+        return _system_register_write_trace_count;
+    }
+
+    const std::array<bus_t::system_register_write_trace_t, bus_t::k_system_register_write_trace_capacity>& bus_t::system_register_write_trace() const noexcept
+    {
+        return _system_register_write_trace;
+    }
+
     uint8_t bus_t::watched_write_trace_count() const noexcept
     {
         return _watched_write_trace_count;
@@ -345,7 +382,10 @@ namespace clover::core
         return _watched_write_trace;
     }
 
-    void bus_t::trace_cpu_apu_port_access(uint32_t address, uint8_t value, bool is_write) noexcept
+    void bus_t::trace_cpu_apu_port_access(uint32_t address,
+                                          uint8_t value,
+                                          bool is_write,
+                                          master_clock_delta_t apply_after_clocks) noexcept
     {
         if (_cpu == nullptr || !is_apu_register_address(address))
             return;
@@ -355,6 +395,7 @@ namespace clover::core
             .address = address,
             .value = value,
             .is_write = is_write,
+            .apply_after_clocks = apply_after_clocks,
             .timing = _ppu != nullptr ? _ppu->timing() : timing_snapshot_t{},
             .cpu = _cpu->state()
         };
@@ -442,6 +483,31 @@ namespace clover::core
             }
             _ppu->write_register(static_cast<uint16_t>(address & 0xffffu), value);
             return;
+        }
+
+        if (_cpu != nullptr
+            && (is_cpu_register_address(address) || is_dma_register_address(address))
+            && should_trace_system_register_write(address))
+        {
+            const system_register_write_trace_t entry{
+                .frame_index = _ppu != nullptr ? _ppu->frame_index() : 0u,
+                .address = address,
+                .value = value,
+                .timing = _ppu != nullptr ? _ppu->timing() : timing_snapshot_t{},
+                .cpu = _cpu->state()
+            };
+
+            if (_system_register_write_trace_count < _system_register_write_trace.size())
+            {
+                _system_register_write_trace[_system_register_write_trace_count++] = entry;
+            }
+            else
+            {
+                std::move(std::begin(_system_register_write_trace) + 1u,
+                          std::end(_system_register_write_trace),
+                          std::begin(_system_register_write_trace));
+                _system_register_write_trace[_system_register_write_trace.size() - 1u] = entry;
+            }
         }
 
         if (_apu != nullptr && is_apu_register_address(address))

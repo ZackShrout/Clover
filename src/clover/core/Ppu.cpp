@@ -391,9 +391,7 @@ namespace clover::core
             return false;
 
         const timing_snapshot_t snapshot{ timing() };
-        return snapshot.raster.scanline < active_visible_scanlines()
-            && !snapshot.in_hblank
-            && !snapshot.in_vblank;
+        return snapshot.raster.scanline < active_visible_scanlines();
     }
 
     bool ppu_t::display_active_for_vram() const noexcept
@@ -402,9 +400,7 @@ namespace clover::core
             return false;
 
         const timing_snapshot_t snapshot{ timing() };
-        return snapshot.raster.scanline < active_visible_scanlines()
-            && !snapshot.in_hblank
-            && !snapshot.in_vblank;
+        return snapshot.raster.scanline < active_visible_scanlines();
     }
 
     bool ppu_t::display_active_for_cgram() const noexcept
@@ -448,6 +444,7 @@ namespace clover::core
         _color_math_state = {};
         _screen_state = {};
         _compositor_state = {};
+        _pipeline_state = {};
         _display_write_history = {};
         decode_render_state();
         _vram_state = {};
@@ -862,14 +859,540 @@ namespace clover::core
         layer.below = layer.below_samples[0];
     }
 
-    void ppu_t::evaluate_object_scanline(uint16_t scanline) noexcept
+    void ppu_t::begin_object_scanline(uint16_t scanline) noexcept
     {
-        _object_layer_state.evaluation_scanline = scanline;
+        _object_layer_state.evaluation_scanline =
+            static_cast<uint16_t>((scanline + 1u) % _video_timing.scanlines_per_frame);
         _object_layer_state.evaluation_first_sprite = _object_layer_state.first_sprite;
         _object_layer_state.evaluation_count = 0;
+        _object_layer_state.evaluation_progress = 0;
         _object_layer_state.evaluation_indices.fill(0);
         _object_layer_state.tile_count = 0;
         _object_layer_state.tiles.fill({});
+
+        if (scanline == active_visible_scanlines() && !_display.disabled)
+            reset_oam_address();
+    }
+
+    void ppu_t::clear_scanline_compositor_outputs() noexcept
+    {
+        _compositor_state.above = {};
+        _compositor_state.below = {};
+        _compositor_state.above_samples.fill({});
+        _compositor_state.below_samples.fill({});
+        _compositor_state.color_enable_above.fill(false);
+        _compositor_state.color_enable_below.fill(false);
+        _compositor_state.math_enable.fill(false);
+        _compositor_state.math_uses_subscreen.fill(false);
+        _compositor_state.math_uses_fixed_color.fill(false);
+        _compositor_state.color_halve_active.fill(false);
+        _compositor_state.above_transparent.fill(false);
+        _compositor_state.below_transparent.fill(false);
+        _compositor_state.above_color.fill(0);
+        _compositor_state.below_color.fill(0);
+        _compositor_state.math_rhs_color.fill(0);
+        _compositor_state.output_color.fill(0);
+        for (auto& background : _compositor_state.backgrounds)
+        {
+            background.above = {};
+            background.below = {};
+            background.above_samples.fill({});
+            background.below_samples.fill({});
+        }
+        _compositor_state.objects.above = {};
+        _compositor_state.objects.below = {};
+        _compositor_state.objects.above_samples.fill({});
+        _compositor_state.objects.below_samples.fill({});
+    }
+
+    void ppu_t::initialize_scanline_pipeline(uint16_t scanline) noexcept
+    {
+        if (_pipeline_state.initialized_scanline == scanline)
+            return;
+
+        if (scanline == 0u)
+        {
+            _object_layer_state.time_over = false;
+            _object_layer_state.range_over = false;
+        }
+
+        advance_mosaic_scanline(scanline);
+        evaluate_background_scanline(scanline);
+        clear_scanline_compositor_outputs();
+        begin_object_scanline(scanline);
+        for (uint8_t background_index{ 0 }; background_index < _background_layer_state.size(); ++background_index)
+        {
+            auto& background{ _background_layer_state[background_index] };
+            background.render_tiles = background.tiles;
+            background.rendering_index = 0u;
+            background.pixel_counter = static_cast<uint8_t>(_bg_state.hoffset[background_index] & 0x07u);
+            background.mosaic_hcounter = _mosaic_state.size;
+            background.mosaic_pixel = {};
+            if (background.tile_count != 0u)
+            {
+                for (uint8_t pair_index{ 0 }; pair_index < background.render_tiles[0].row_pair_count; ++pair_index)
+                {
+                    background.render_tiles[0].row_data[pair_index] = static_cast<uint16_t>(
+                        background.render_tiles[0].row_data[pair_index]
+                        >> (background.pixel_counter << 1u));
+                }
+            }
+        }
+
+        _object_layer_state.rendered_scanline = scanline;
+        if (_object_layer_state.fetched_scanline == scanline)
+        {
+            _object_layer_state.render_tile_count = _object_layer_state.fetched_tile_count;
+            _object_layer_state.render_tiles = _object_layer_state.fetched_tiles;
+        }
+        else
+        {
+            _object_layer_state.render_tile_count = 0;
+            _object_layer_state.render_tiles.fill({});
+        }
+
+        _pipeline_state.initialized_scanline = scanline;
+        _pipeline_state.next_object_evaluate_dot = 0u;
+        _pipeline_state.next_pixel_dot = 58u;
+        _pipeline_state.next_pixel_x = 0u;
+        _pipeline_state.object_fetch_completed = false;
+    }
+
+    void ppu_t::evaluate_object_slot(uint16_t scanline, uint8_t slot) noexcept
+    {
+        if (_display.disabled || scanline >= active_visible_scanlines() - 1u)
+            return;
+
+        const uint8_t sprite_index{
+            static_cast<uint8_t>((_object_layer_state.evaluation_first_sprite + slot) & 0x7fu)
+        };
+        if (!object_on_scanline(_object_layer_state.objects[sprite_index],
+                                _object_layer_state.evaluation_scanline))
+            return;
+
+        _oam_state.latched_address = sprite_index;
+        if (_object_layer_state.evaluation_count < _object_layer_state.evaluation_indices.size())
+            _object_layer_state.evaluation_indices[_object_layer_state.evaluation_count] = sprite_index;
+        ++_object_layer_state.evaluation_count;
+        _object_layer_state.range_over = _object_layer_state.evaluation_count > 32u;
+    }
+
+    void ppu_t::finalize_object_fetch(uint16_t scanline) noexcept
+    {
+        if (_pipeline_state.object_fetch_completed)
+            return;
+
+        _pipeline_state.object_fetch_completed = true;
+        if (_display.disabled || scanline >= active_visible_scanlines() - 1u)
+            return;
+
+        _object_layer_state.evaluation_count = std::min<uint8_t>(_object_layer_state.evaluation_count, 32u);
+        evaluate_object_tiles();
+        fetch_object_tile_rows();
+
+        _object_layer_state.fetched_scanline = _object_layer_state.evaluation_scanline;
+        _object_layer_state.fetched_tile_count = _object_layer_state.tile_count;
+        _object_layer_state.fetched_tiles = _object_layer_state.tiles;
+    }
+
+    [[nodiscard]] ppu_pixel_candidate_t ppu_t::resolve_object_pixel_candidate(uint16_t x) const noexcept
+    {
+        ppu_pixel_candidate_t candidate{};
+        for (uint8_t tile_index{ 0 }; tile_index < _object_layer_state.render_tile_count; ++tile_index)
+        {
+            const auto& tile{ _object_layer_state.render_tiles[tile_index] };
+            const int16_t screen_x{ static_cast<int16_t>(tile.x) };
+            if (x < static_cast<uint16_t>(screen_x) || x >= static_cast<uint16_t>(screen_x + 8))
+                continue;
+
+            const uint8_t lane_fine_x{ static_cast<uint8_t>(x - static_cast<uint16_t>(screen_x)) };
+            const uint8_t color{
+                static_cast<uint8_t>(extract_row_pair_pixel(tile.row_data[0], lane_fine_x)
+                    | (extract_row_pair_pixel(tile.row_data[1], lane_fine_x) << 2u))
+            };
+            if (color == 0u)
+                continue;
+
+            candidate = {
+                .priority = _object_layer_state.priority[tile.priority],
+                .palette = static_cast<uint8_t>(tile.palette_base + color),
+                .palette_group = 0u,
+                .color_math_enabled = _color_math_state.obj_color_enable,
+                .source = ppu_pixel_source_t::objects
+            };
+        }
+
+        return candidate;
+    }
+
+    [[nodiscard]] ppu_pixel_candidate_t ppu_t::resolve_background_pixel_candidate(uint8_t background_index,
+                                                                                   uint16_t x) const noexcept
+    {
+        if (_display.disabled || background_index >= _background_layer_state.size())
+            return {};
+
+        if (!_bg_state.active[background_index]
+            || _bg_state.render_mode[background_index] == ppu_background_render_state_t::mode_t::inactive
+            || _bg_state.render_mode[background_index] == ppu_background_render_state_t::mode_t::mode7)
+        {
+            return {};
+        }
+
+        auto& background{ const_cast<ppu_background_layer_state_t&>(_background_layer_state[background_index]) };
+        if (background.tile_count == 0u)
+            return {};
+
+        if (_screen_state.hires)
+            return background.samples[static_cast<size_t>(x)];
+
+        if (background.rendering_index >= background.tile_count)
+            return {};
+
+        auto& tile{ background.render_tiles[background.rendering_index] };
+        uint8_t color{ 0u };
+        for (uint8_t pair_index{ 0 }; pair_index < tile.row_pair_count; ++pair_index)
+        {
+            color |= static_cast<uint8_t>((tile.row_data[pair_index] & 0x03u) << (pair_index << 1u));
+            tile.row_data[pair_index] = static_cast<uint16_t>(tile.row_data[pair_index] >> 2u);
+        }
+
+        ppu_pixel_candidate_t candidate{};
+        if (color != 0u)
+        {
+            candidate = {
+                .priority = tile.priority,
+                .palette = static_cast<uint8_t>(tile.palette_base + color),
+                .palette_group = tile.palette_group,
+                .color_math_enabled = _color_math_state.bg_color_enable[background_index],
+                .source = background_pixel_source(background_index)
+            };
+        }
+
+        background.pixel_counter = static_cast<uint8_t>((background.pixel_counter + 1u) & 0x07u);
+        if (background.pixel_counter == 0u)
+            ++background.rendering_index;
+
+        if (x == 0u || !_mosaic_state.enabled[background_index])
+        {
+            background.mosaic_hcounter = _mosaic_state.size;
+            background.mosaic_pixel = candidate;
+        }
+        else if (background.mosaic_hcounter > 1u)
+        {
+            --background.mosaic_hcounter;
+            candidate = background.mosaic_pixel;
+        }
+        else
+        {
+            background.mosaic_hcounter = _mosaic_state.size;
+            background.mosaic_pixel = candidate;
+        }
+
+        return candidate;
+    }
+
+    void ppu_t::resolve_pixel_layers(uint16_t x,
+                                     const ppu_pixel_candidate_t& object_candidate,
+                                     ppu_pixel_candidate_t& above,
+                                     ppu_pixel_candidate_t& below) noexcept
+    {
+        const uint8_t pixel_x{ static_cast<uint8_t>(x) };
+        const size_t sample_x{ static_cast<size_t>(x) };
+
+        for (uint8_t background_index{ 0 }; background_index < 4u; ++background_index)
+        {
+            ppu_pixel_candidate_t background_above{};
+            ppu_pixel_candidate_t background_below{};
+            if (_bg_state.active[background_index])
+            {
+                const auto candidate{ resolve_background_pixel_candidate(background_index, x) };
+                _background_layer_state[background_index].samples[sample_x] = candidate;
+                background_above = _bg_state.above_enabled[background_index] ? candidate : ppu_pixel_candidate_t{};
+                background_below = _bg_state.below_enabled[background_index] ? candidate : ppu_pixel_candidate_t{};
+
+                const bool background_window_hit{
+                    window_hit(pixel_x,
+                               _window_state.one_left,
+                               _window_state.one_right,
+                               _window_state.two_left,
+                               _window_state.two_right,
+                               _window_state.one_invert[background_index],
+                               _window_state.one_enable[background_index],
+                               _window_state.two_invert[background_index],
+                               _window_state.two_enable[background_index],
+                               _bg_state.window_mask[background_index])
+                };
+                if (background_window_hit && _bg_state.window_above_enabled[background_index])
+                    background_above = {};
+                if (background_window_hit && _bg_state.window_below_enabled[background_index])
+                    background_below = {};
+            }
+
+            _compositor_state.backgrounds[background_index].above_samples[sample_x] = background_above;
+            _compositor_state.backgrounds[background_index].below_samples[sample_x] = background_below;
+            if (background_above.priority > above.priority)
+                above = background_above;
+            if (background_below.priority > below.priority)
+                below = background_below;
+        }
+
+        ppu_pixel_candidate_t object_above{
+            _object_layer_state.above_enabled ? object_candidate : ppu_pixel_candidate_t{}
+        };
+        ppu_pixel_candidate_t object_below{
+            _object_layer_state.below_enabled ? object_candidate : ppu_pixel_candidate_t{}
+        };
+        const bool object_window_hit{
+            window_hit(pixel_x,
+                       _window_state.one_left,
+                       _window_state.one_right,
+                       _window_state.two_left,
+                       _window_state.two_right,
+                       _window_state.one_invert[4],
+                       _window_state.one_enable[4],
+                       _window_state.two_invert[4],
+                       _window_state.two_enable[4],
+                       _window_state.object_mask)
+        };
+        if (object_window_hit && _object_layer_state.window_above_enabled)
+            object_above = {};
+        if (object_window_hit && _object_layer_state.window_below_enabled)
+            object_below = {};
+
+        _compositor_state.objects.above_samples[sample_x] = object_above;
+        _compositor_state.objects.below_samples[sample_x] = object_below;
+        if (object_above.priority > above.priority)
+            above = object_above;
+        if (object_below.priority > below.priority)
+            below = object_below;
+
+        const bool color_window_hit{
+            window_hit(pixel_x,
+                       _window_state.one_left,
+                       _window_state.one_right,
+                       _window_state.two_left,
+                       _window_state.two_right,
+                       _window_state.one_invert[5],
+                       _window_state.one_enable[5],
+                       _window_state.two_invert[5],
+                       _window_state.two_enable[5],
+                       _window_state.color_mask)
+        };
+        const std::array<bool, 4> color_enable{
+            true,
+            color_window_hit,
+            !color_window_hit,
+            false
+        };
+        _compositor_state.color_enable_above[sample_x] =
+            color_enable[_window_state.color_mask_above & 0x03u];
+        _compositor_state.color_enable_below[sample_x] =
+            color_enable[_window_state.color_mask_below & 0x03u];
+    }
+
+    void ppu_t::resolve_pixel_color_math(uint16_t x,
+                                         const ppu_pixel_candidate_t& above_candidate,
+                                         const ppu_pixel_candidate_t& below_candidate) noexcept
+    {
+        const size_t sample_x{ static_cast<size_t>(x) };
+        const bool hires{ _screen_state.pseudo_hires || _bg_state.mode == 5u || _bg_state.mode == 6u };
+        const bool above_transparent{ above_candidate.priority == 0u };
+        const bool below_transparent{ below_candidate.priority == 0u };
+        _compositor_state.above_transparent[sample_x] = above_transparent;
+        _compositor_state.below_transparent[sample_x] = below_transparent;
+
+        const auto resolve_candidate_color = [this](const ppu_pixel_candidate_t& candidate) noexcept -> uint16_t
+        {
+            if (candidate.priority == 0u)
+            {
+                _cgram_state.latched_address = 0u;
+                return _cgram[0];
+            }
+
+            if (_color_math_state.direct_color
+                && candidate.source == ppu_pixel_source_t::background_1
+                && (_bg_state.mode == 3u || _bg_state.mode == 4u || _bg_state.mode == 7u))
+            {
+                return direct_color(candidate.palette, candidate.palette_group);
+            }
+
+            _cgram_state.latched_address = candidate.palette;
+            return _cgram[candidate.palette];
+        };
+
+        const uint16_t above_color{ above_transparent ? _cgram[0] : resolve_candidate_color(above_candidate) };
+        const uint16_t below_color{ below_transparent ? _cgram[0] : resolve_candidate_color(below_candidate) };
+        const uint16_t fixed_color{
+            static_cast<uint16_t>(
+                (_color_math_state.fixed_blue << 10u)
+                | (_color_math_state.fixed_green << 5u)
+                | _color_math_state.fixed_red)
+        };
+        ppu_pixel_candidate_t math_source{ .source = ppu_pixel_source_t::backdrop };
+        if (!above_transparent)
+            math_source = above_candidate;
+
+        bool math_below_color_enable{
+            source_allows_color_math(math_source, _color_math_state.backdrop_color_enable)
+        };
+        if (!_compositor_state.color_enable_below[sample_x])
+            math_below_color_enable = false;
+
+        const bool math_above_color_enable{ _compositor_state.color_enable_above[sample_x] };
+        bool uses_subscreen{ false };
+        bool uses_fixed_color{ false };
+        bool color_halve_active{ false };
+        bool math_enabled{ false };
+        uint16_t math_rhs_color{ fixed_color };
+        uint16_t output_color{
+            static_cast<uint16_t>(math_above_color_enable ? above_color : 0u)
+        };
+
+        if (math_below_color_enable)
+        {
+            bool blend_mode{ _color_math_state.blend_mode };
+            if (_color_math_state.blend_mode && below_transparent)
+            {
+                blend_mode = false;
+                color_halve_active = false;
+            }
+            else
+            {
+                color_halve_active = _color_math_state.color_halve && math_above_color_enable;
+            }
+
+            uses_subscreen = blend_mode;
+            uses_fixed_color = !blend_mode;
+            math_rhs_color = blend_mode ? below_color : fixed_color;
+            math_enabled = true;
+            output_color = blend_colors(static_cast<uint16_t>(math_above_color_enable ? above_color : 0u),
+                                        math_rhs_color,
+                                        _color_math_state.color_mode_subtract,
+                                        color_halve_active);
+        }
+
+        static_cast<void>(hires);
+
+        _compositor_state.math_enable[sample_x] = math_enabled;
+        _compositor_state.math_uses_subscreen[sample_x] = uses_subscreen;
+        _compositor_state.math_uses_fixed_color[sample_x] = uses_fixed_color;
+        _compositor_state.color_halve_active[sample_x] = color_halve_active;
+        _compositor_state.above_color[sample_x] = above_color;
+        _compositor_state.below_color[sample_x] = below_color;
+        _compositor_state.math_rhs_color[sample_x] = math_rhs_color;
+        _compositor_state.output_color[sample_x] = output_color;
+    }
+
+    void ppu_t::render_pixel(uint16_t scanline, uint16_t x) noexcept
+    {
+        if (scanline == 0u || scanline >= active_visible_scanlines() || x >= framebuffer_t::k_width)
+            return;
+
+        ppu_pixel_candidate_t above{};
+        ppu_pixel_candidate_t below{};
+        const ppu_pixel_candidate_t object_candidate{ resolve_object_pixel_candidate(x) };
+        resolve_pixel_layers(x, object_candidate, above, below);
+        resolve_pixel_color_math(x, above, below);
+
+        const size_t sample_x{ static_cast<size_t>(x) };
+        _compositor_state.above_samples[sample_x] = above;
+        _compositor_state.below_samples[sample_x] = below;
+        if (x == 0u)
+        {
+            _compositor_state.above = above;
+            _compositor_state.below = below;
+            for (auto& background : _compositor_state.backgrounds)
+            {
+                background.above = background.above_samples[0];
+                background.below = background.below_samples[0];
+            }
+            _compositor_state.objects.above = _compositor_state.objects.above_samples[0];
+            _compositor_state.objects.below = _compositor_state.objects.below_samples[0];
+        }
+
+        if (!_frame_capture_enabled)
+            return;
+
+        constexpr size_t k_non_overscan_top_border{ 9u };
+        const size_t row_index{
+            static_cast<size_t>(scanline - 1u) + (_screen_state.overscan ? 0u : k_non_overscan_top_border)
+        };
+        if (row_index >= framebuffer_t::k_height)
+            return;
+
+        _composed_frame.data()[row_index * framebuffer_t::k_width + sample_x] =
+            snes_color_to_rgba8(_compositor_state.output_color[sample_x], _display.brightness);
+    }
+
+    void ppu_t::process_scanline_range(uint16_t scanline, uint16_t start_dot, uint16_t end_dot) noexcept
+    {
+        while (_pipeline_state.next_object_evaluate_dot <= end_dot
+            && _pipeline_state.next_object_evaluate_dot <= 1016u)
+        {
+            if (_pipeline_state.next_object_evaluate_dot >= start_dot
+                && _object_layer_state.evaluation_progress < 128u)
+            {
+                evaluate_object_slot(scanline, _object_layer_state.evaluation_progress);
+                ++_object_layer_state.evaluation_progress;
+            }
+            _pipeline_state.next_object_evaluate_dot =
+                static_cast<uint16_t>(_pipeline_state.next_object_evaluate_dot + 8u);
+        }
+
+        if (!_pipeline_state.object_fetch_completed
+            && start_dot <= 1080u
+            && end_dot >= 1080u)
+        {
+            finalize_object_fetch(scanline);
+        }
+
+        while (_pipeline_state.next_pixel_dot <= end_dot
+            && _pipeline_state.next_pixel_dot <= 1078u
+            && _pipeline_state.next_pixel_x < framebuffer_t::k_width)
+        {
+            if (_pipeline_state.next_pixel_dot >= start_dot)
+                render_pixel(scanline, _pipeline_state.next_pixel_x);
+
+            ++_pipeline_state.next_pixel_x;
+            _pipeline_state.next_pixel_dot =
+                static_cast<uint16_t>(_pipeline_state.next_pixel_dot + 4u);
+        }
+    }
+
+    void ppu_t::process_pipeline_range(const timing_snapshot_t& previous_timing,
+                                       const timing_snapshot_t& current_timing) noexcept
+    {
+        uint16_t scanline{ previous_timing.raster.scanline };
+        for (uint16_t remaining{ _video_timing.scanlines_per_frame }; remaining > 0; --remaining)
+        {
+            initialize_scanline_pipeline(scanline);
+
+            const uint16_t scanline_end_dot{
+                static_cast<uint16_t>(_video_timing.scanline_clocks(scanline,
+                                                                    _counter.odd_field,
+                                                                    _timing_interlace) - 1u)
+            };
+            const uint16_t start_dot{
+                static_cast<uint16_t>(scanline == previous_timing.raster.scanline
+                    ? previous_timing.raster.dot
+                    : 0u)
+            };
+            const uint16_t end_dot{
+                scanline == current_timing.raster.scanline ? current_timing.raster.dot : scanline_end_dot
+            };
+            if (end_dot >= start_dot)
+                process_scanline_range(scanline, start_dot, end_dot);
+
+            if (scanline == current_timing.raster.scanline)
+                break;
+
+            scanline = static_cast<uint16_t>((scanline + 1u) % _video_timing.scanlines_per_frame);
+        }
+    }
+
+    void ppu_t::evaluate_object_scanline(uint16_t scanline) noexcept
+    {
+        begin_object_scanline(scanline);
 
         if (_display.disabled || scanline >= active_visible_scanlines() - 1u)
             return;
@@ -895,7 +1418,6 @@ namespace clover::core
         _object_layer_state.range_over = visible_count > 32u;
         evaluate_object_tiles();
         fetch_object_tile_rows();
-        synthesize_object_layer_candidate();
     }
 
     void ppu_t::evaluate_object_tiles() noexcept
@@ -1030,16 +1552,10 @@ namespace clover::core
                     .source = ppu_pixel_source_t::objects
                 };
 
-                if (_object_layer_state.above_enabled
-                    && candidate.priority > _compositor_state.objects.above_samples[sample_x].priority)
-                {
+                if (_object_layer_state.above_enabled)
                     _compositor_state.objects.above_samples[sample_x] = candidate;
-                }
-                if (_object_layer_state.below_enabled
-                    && candidate.priority > _compositor_state.objects.below_samples[sample_x].priority)
-                {
+                if (_object_layer_state.below_enabled)
                     _compositor_state.objects.below_samples[sample_x] = candidate;
-                }
             }
         }
 
@@ -1277,7 +1793,6 @@ namespace clover::core
     void ppu_t::reset_oam_address() noexcept
     {
         _oam_state.address = static_cast<uint16_t>(_oam_state.base_address & 0x03ffu);
-        _oam_state.latched_address = _oam_state.address;
         update_first_sprite();
     }
 
@@ -1343,7 +1858,7 @@ namespace clover::core
 
     size_t ppu_t::sample_pixel_count() const noexcept
     {
-        return _frame_capture_enabled ? framebuffer_t::k_width : 8u;
+        return framebuffer_t::k_width;
     }
 
     void ppu_t::render_scanline(uint16_t scanline) noexcept
@@ -1951,36 +2466,22 @@ namespace clover::core
             result.frame_complete = true;
         }
 
+        process_pipeline_range(previous_timing, result.timing);
         result.entered_scanline = result.timing.raster.scanline != previous_timing.raster.scanline;
-        if (result.entered_scanline)
-        {
-            if (result.timing.raster.scanline == 0u)
-            {
-                _object_layer_state.time_over = false;
-                _object_layer_state.range_over = false;
-            }
-            clear_compositor_state();
-            advance_mosaic_scanline(result.timing.raster.scanline);
-            evaluate_background_scanline(result.timing.raster.scanline);
-            evaluate_object_scanline(result.timing.raster.scanline);
-            apply_window_masks();
-            resolve_compositor_candidates();
-            resolve_color_math_state();
-            render_scanline(result.timing.raster.scanline);
-        }
         result.entered_frame_start = result.frame_complete
             || crossed_raster_point(previous_timing, result.timing, 0, 0);
         result.entered_hblank = !previous_timing.in_hblank && result.timing.in_hblank;
         const bool was_in_vblank{ previous_timing.raster.scanline >= previous_visible_scanlines };
         const bool now_in_vblank{ result.timing.raster.scanline >= result.visible_scanlines };
         result.entered_vblank = !was_in_vblank && now_in_vblank;
-        if (result.entered_vblank && !_display.disabled)
-            reset_oam_address();
         result.nmi_requested = result.entered_vblank;
+        const uint16_t hdma_setup_dot{
+            hdma_setup_dot_v2(dma_phase_from_master_clock(result.timing.master_clock - result.timing.raster.dot))
+        };
         result.hdma_setup_triggered = crossed_raster_point(previous_timing,
                                                            result.timing,
-                                                           _video_timing.hdma_setup_scanline,
-                                                           _video_timing.hdma_setup_dot);
+                                                           0,
+                                                           hdma_setup_dot);
         result.hdma_transfer_triggered = crossed_raster_point(previous_timing,
                                                               result.timing,
                                                               result.timing.raster.scanline,
@@ -2074,20 +2575,28 @@ namespace clover::core
         snapshot.objects.range_over = _object_layer_state.range_over;
         snapshot.objects.time_over = _object_layer_state.time_over;
         snapshot.objects.evaluation_scanline = _object_layer_state.evaluation_scanline;
+        snapshot.objects.rendered_scanline = _object_layer_state.rendered_scanline;
+        snapshot.objects.fetched_scanline = _object_layer_state.fetched_scanline;
         snapshot.objects.evaluation_first_sprite = _object_layer_state.evaluation_first_sprite;
         snapshot.objects.evaluation_count = _object_layer_state.evaluation_count;
         snapshot.objects.tile_count = _object_layer_state.tile_count;
+        snapshot.objects.render_tile_count = _object_layer_state.render_tile_count;
+        snapshot.objects.fetched_tile_count = _object_layer_state.fetched_tile_count;
         for (size_t index{ 0 }; index < 4; ++index)
         {
             snapshot.objects.priority[index] = _object_layer_state.priority[index];
             snapshot.objects.evaluation_indices[index] = _object_layer_state.evaluation_indices[index];
             snapshot.objects.tiles[index] = _object_layer_state.tiles[index];
+            snapshot.objects.render_tiles[index] = _object_layer_state.render_tiles[index];
+            snapshot.objects.fetched_tiles[index] = _object_layer_state.fetched_tiles[index];
             snapshot.objects.samples[index] = _object_layer_state.objects[index];
         }
         for (size_t index{ 4 }; index < 8; ++index)
         {
             snapshot.objects.evaluation_indices[index] = _object_layer_state.evaluation_indices[index];
             snapshot.objects.tiles[index] = _object_layer_state.tiles[index];
+            snapshot.objects.render_tiles[index] = _object_layer_state.render_tiles[index];
+            snapshot.objects.fetched_tiles[index] = _object_layer_state.fetched_tiles[index];
         }
 
         snapshot.color_math.direct_color = _color_math_state.direct_color;
@@ -2196,8 +2705,11 @@ namespace clover::core
     void ppu_t::present(framebuffer_t& framebuffer, const ppu_presentation_options_t& options) const noexcept
     {
         static_cast<void>(options);
-        std::copy(_presented_frame.data(),
-                  _presented_frame.data() + framebuffer_t::k_pixel_count,
+        const framebuffer_t& source{
+            options.source == ppu_presentation_source_t::composed ? _composed_frame : _presented_frame
+        };
+        std::copy(source.data(),
+                  source.data() + framebuffer_t::k_pixel_count,
                   framebuffer.data());
     }
 

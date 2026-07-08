@@ -9,9 +9,13 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 
 namespace clover::core
 {
+    struct bus_t;
+    inline constexpr std::size_t k_apu_trace_capacity{ 1024 };
+
     struct apu_state_t
     {
         struct trace_entry_t
@@ -73,8 +77,8 @@ namespace clover::core
         timer_state_t timer0{};
         timer_state_t timer1{};
         timer_state_t timer2{};
-        uint8_t instruction_trace_count{ 0 };
-        uint8_t io_trace_count{ 0 };
+        uint16_t instruction_trace_count{ 0 };
+        uint16_t io_trace_count{ 0 };
     };
 
     struct apu_t
@@ -83,6 +87,8 @@ namespace clover::core
         void power_on() noexcept;
         void reset() noexcept;
         void step(master_clock_delta_t master_clocks) noexcept;
+        void begin_cpu_io_window(bus_t& bus, master_clock_delta_t target_clocks) noexcept;
+        void end_cpu_io_window() noexcept;
         [[nodiscard]] master_clock_count_t master_clock() const noexcept;
         [[nodiscard]] uint8_t read_cpu_port(uint16_t address) const noexcept;
         void write_cpu_port(uint16_t address, uint8_t value) noexcept;
@@ -90,10 +96,11 @@ namespace clover::core
         void write_output_port(uint8_t port, uint8_t value) noexcept;
         [[nodiscard]] apu_state_t state() const noexcept;
         [[nodiscard]] uint8_t peek_ram(uint16_t address) const noexcept;
-        [[nodiscard]] uint8_t instruction_trace_count() const noexcept;
-        [[nodiscard]] const std::array<apu_state_t::trace_entry_t, 128>& instruction_trace() const noexcept;
-        [[nodiscard]] uint8_t io_trace_count() const noexcept;
-        [[nodiscard]] const std::array<apu_state_t::io_trace_entry_t, 128>& io_trace() const noexcept;
+        [[nodiscard]] uint8_t peek_dsp_register(uint8_t address) const noexcept;
+        [[nodiscard]] uint16_t instruction_trace_count() const noexcept;
+        [[nodiscard]] const std::array<apu_state_t::trace_entry_t, k_apu_trace_capacity>& instruction_trace() const noexcept;
+        [[nodiscard]] uint16_t io_trace_count() const noexcept;
+        [[nodiscard]] const std::array<apu_state_t::io_trace_entry_t, k_apu_trace_capacity>& io_trace() const noexcept;
 
     private:
         template <uint8_t Frequency>
@@ -138,7 +145,13 @@ namespace clover::core
         static constexpr uint8_t k_psw_direct_page{ 0x20u };
         static constexpr uint8_t k_psw_overflow{ 0x40u };
         static constexpr uint8_t k_psw_negative{ 0x80u };
-        static constexpr master_clock_delta_t k_master_clocks_per_spc_cycle{ 21u };
+        // bsnes models the SMP on the divided APU clock (~2.05056 MHz), not on
+        // the post-wait-state effective ~1.024 MHz instruction cadence. The
+        // wait-state values {2,4,10,20} are already expressed in that divided
+        // SMP clock domain, so we convert master clocks to SMP clocks using the
+        // same frequency ratio instead of multiplying each wait unit by 21.
+        static constexpr int64_t k_master_clock_frequency_hz{ 21477270 };
+        static constexpr int64_t k_smp_clock_frequency_hz{ 32040 * 64 };
 
         void execute_instruction() noexcept;
         [[nodiscard]] bool execute_load_store_opcode(uint8_t opcode) noexcept;
@@ -147,6 +160,24 @@ namespace clover::core
         [[nodiscard]] bool execute_control_opcode(uint8_t opcode) noexcept;
         [[nodiscard]] uint8_t fetch_u8() noexcept;
         [[nodiscard]] uint16_t fetch_u16() noexcept;
+        [[nodiscard]] uint8_t spc_fetch_u8() noexcept;
+        [[nodiscard]] uint16_t spc_fetch_u16() noexcept;
+        void spc_consume_opcode_fetch() noexcept;
+        void spc_idle() noexcept;
+        [[nodiscard]] uint8_t spc_read_u8(uint16_t address) noexcept;
+        void spc_write_u8(uint16_t address, uint8_t value) noexcept;
+        [[nodiscard]] uint8_t spc_load_direct(uint8_t address) noexcept;
+        void spc_store_direct(uint8_t address, uint8_t value) noexcept;
+        [[nodiscard]] uint8_t spc_load_direct_indexed(uint8_t address, uint8_t index) noexcept;
+        [[nodiscard]] uint8_t spc_read_abs_indexed(uint16_t address, uint8_t index) noexcept;
+        [[nodiscard]] uint8_t spc_read_indexed_indirect(uint8_t address, uint8_t index) noexcept;
+        [[nodiscard]] uint8_t spc_read_indirect_indexed(uint8_t address, uint8_t index) noexcept;
+        void spc_write_abs(uint16_t address, uint8_t value) noexcept;
+        void spc_write_abs_indexed(uint16_t address, uint8_t index, uint8_t value) noexcept;
+        void spc_write_indexed_indirect(uint8_t address, uint8_t index, uint8_t value) noexcept;
+        void spc_write_indirect_indexed(uint8_t address, uint8_t index, uint8_t value) noexcept;
+        void spc_push_stack(uint8_t value) noexcept;
+        [[nodiscard]] uint8_t spc_pull_stack() noexcept;
         [[nodiscard]] uint8_t fetch_u8_phased(master_clock_delta_t before_cycles,
                                               master_clock_delta_t after_cycles) noexcept;
         [[nodiscard]] uint8_t read_u8(uint16_t address) const noexcept;
@@ -230,27 +261,36 @@ namespace clover::core
         void synchronize_timer_stage1(timer_t<Frequency>& timer) noexcept;
         template <uint8_t Frequency>
         void step_timer(timer_t<Frequency>& timer, master_clock_delta_t spc_cycles) noexcept;
+        void step_access_cycles(master_clock_delta_t cycle_clocks,
+                                master_clock_delta_t timer_clocks) noexcept;
+        void wait_for_access(std::optional<uint16_t> address, bool half) noexcept;
         void step_spc_cycles(master_clock_delta_t spc_cycles) noexcept;
+        void synchronize_cpu_io_visibility() noexcept;
         void halt_on_unimplemented_opcode(uint8_t opcode) noexcept;
         void trace_instruction(uint16_t pc, uint8_t opcode) noexcept;
         void trace_io_access(uint16_t address, uint8_t value, bool is_write) noexcept;
 
         master_clock_count_t _master_clock{ 0 };
-        int64_t _cycle_credit{ 0 };
+        int64_t _smp_clock_credit{ 0 };
         spc700_registers_t _registers{};
         bool _ipl_rom_enabled{ true };
         bool _halted{ false };
+        uint16_t _current_opcode_pc{ 0 };
         uint8_t _last_opcode{ 0 };
         io_state_t _io{};
+        std::array<uint8_t, 128> _dsp_registers{};
         timer_t<128> _timer0{};
         timer_t<128> _timer1{};
         timer_t<16> _timer2{};
         std::array<uint8_t, 4> _apu_to_cpu_ports{};
         std::array<uint8_t, 4> _cpu_to_apu_ports{};
-        std::array<apu_state_t::trace_entry_t, 128> _instruction_trace{};
-        uint8_t _instruction_trace_count{ 0 };
-        std::array<apu_state_t::io_trace_entry_t, 128> _io_trace{};
-        uint8_t _io_trace_count{ 0 };
+        bus_t* _cpu_io_window_bus{ nullptr };
+        master_clock_delta_t _cpu_io_window_target_clocks{ 0 };
+        int64_t _cpu_io_window_consumed_master_numerator{ 0 };
+        std::array<apu_state_t::trace_entry_t, k_apu_trace_capacity> _instruction_trace{};
+        uint16_t _instruction_trace_count{ 0 };
+        std::array<apu_state_t::io_trace_entry_t, k_apu_trace_capacity> _io_trace{};
+        uint16_t _io_trace_count{ 0 };
         std::array<uint8_t, 64 * 1024> _ram{};
     };
 }

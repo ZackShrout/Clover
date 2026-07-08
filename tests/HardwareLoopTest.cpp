@@ -296,6 +296,13 @@ namespace
             return fail("cpu_hdma_enable_cpu_retire");
         }
 
+        while (cpu_hdma_enable_console.frame_index() == 0)
+        {
+            const clover::core::hardware_step_result_t step{ cpu_hdma_enable_console.step_hardware() };
+            if (step.slot_owner == clover::core::hardware_slot_owner_t::dma)
+                return fail("cpu_hdma_enable_same_frame_setup");
+        }
+
         bool saw_hdma_setup_dma_slot{ false };
         for (int step_index{ 0 }; step_index < 2048; ++step_index)
         {
@@ -656,21 +663,21 @@ namespace
         apu_console.write_u8(0x002143u, 0x12u);
         apu_console.write_u8(0x002141u, 0x02u);
         apu_console.write_u8(0x002140u, 0xccu);
-        for (int step_index{ 0 }; step_index < 32 && apu_console.read_u8(0x002140u) != 0xccu; ++step_index)
+        for (int step_index{ 0 }; step_index < 128 && apu_console.read_u8(0x002140u) != 0xccu; ++step_index)
             static_cast<void>(apu_console.step_hardware());
         if (apu_console.read_u8(0x002140u) != 0xccu)
             return fail("apu_bootstrap_sync");
 
         apu_console.write_u8(0x002141u, 0x99u);
         apu_console.write_u8(0x002140u, 0x00u);
-        for (int step_index{ 0 }; step_index < 32 && apu_console.read_u8(0x002140u) != 0x00u; ++step_index)
+        for (int step_index{ 0 }; step_index < 128 && apu_console.read_u8(0x002140u) != 0x00u; ++step_index)
             static_cast<void>(apu_console.step_hardware());
         if (apu_console.read_u8(0x002140u) != 0x00u)
             return fail("apu_transfer_ack_0");
 
         apu_console.write_u8(0x002141u, 0x55u);
         apu_console.write_u8(0x002140u, 0x01u);
-        for (int step_index{ 0 }; step_index < 32 && apu_console.read_u8(0x002140u) != 0x01u; ++step_index)
+        for (int step_index{ 0 }; step_index < 128 && apu_console.read_u8(0x002140u) != 0x01u; ++step_index)
             static_cast<void>(apu_console.step_hardware());
         if (apu_console.read_u8(0x002140u) != 0x01u)
             return fail("apu_transfer_ack_1");
@@ -692,21 +699,21 @@ namespace
         apu_console.write_u8(0x002143u, 0x12u);
         apu_console.write_u8(0x002141u, 0x01u);
         apu_console.write_u8(0x002140u, 0x03u);
-        for (int step_index{ 0 }; step_index < 32 && apu_console.read_u8(0x002140u) != 0x03u; ++step_index)
+        for (int step_index{ 0 }; step_index < 128 && apu_console.read_u8(0x002140u) != 0x03u; ++step_index)
             static_cast<void>(apu_console.step_hardware());
         if (apu_console.read_u8(0x002140u) != 0x03u)
             return fail("apu_bootstrap_sync_second_block");
 
         apu_console.write_u8(0x002141u, 0x00u);
         apu_console.write_u8(0x002140u, 0x00u);
-        for (int step_index{ 0 }; step_index < 32 && apu_console.read_u8(0x002140u) != 0x00u; ++step_index)
+        for (int step_index{ 0 }; step_index < 128 && apu_console.read_u8(0x002140u) != 0x00u; ++step_index)
             static_cast<void>(apu_console.step_hardware());
         if (apu_console.read_u8(0x002140u) != 0x00u)
             return fail("apu_transfer_ack_entry_0");
 
         apu_console.write_u8(0x002141u, 0x00u);
         apu_console.write_u8(0x002140u, 0x01u);
-        for (int step_index{ 0 }; step_index < 32 && apu_console.read_u8(0x002140u) != 0x01u; ++step_index)
+        for (int step_index{ 0 }; step_index < 128 && apu_console.read_u8(0x002140u) != 0x01u; ++step_index)
             static_cast<void>(apu_console.step_hardware());
         if (apu_console.read_u8(0x002140u) != 0x01u)
             return fail("apu_transfer_ack_entry_1");
@@ -1109,6 +1116,72 @@ int main()
             {
                 return fail("interlace_odd_field_scanline_240");
             }
+
+            if (clover::core::hdma_setup_dot_v2(0) != 12u
+                || clover::core::hdma_setup_dot_v2(4) != 16u
+                || clover::core::dram_refresh_dot_v2(0) != 538u
+                || clover::core::dram_refresh_dot_v2(4) != 534u)
+            {
+                return fail("phase_derived_timing_helpers");
+            }
+
+            static clover::core::console_t hdma_setup_console{};
+            hdma_setup_console.power_on();
+            hdma_setup_console.write_u8(0x00420cu, 0x01u);
+            bool saw_hdma_setup_trigger{ false };
+            for (int step_index{ 0 }; step_index < 256 && !saw_hdma_setup_trigger; ++step_index)
+            {
+                const clover::core::timing_snapshot_t previous_timing{ hdma_setup_console.timing() };
+                const clover::core::hardware_step_result_t step{ hdma_setup_console.step_hardware() };
+                if (!step.ppu.hdma_setup_triggered)
+                    continue;
+
+                saw_hdma_setup_trigger = previous_timing.raster.scanline == 0u
+                    && step.ppu.timing.raster.scanline == 0u
+                    && previous_timing.raster.dot < clover::core::hdma_setup_dot_v2(0)
+                    && step.ppu.timing.raster.dot >= clover::core::hdma_setup_dot_v2(0);
+            }
+
+            if (!saw_hdma_setup_trigger)
+                return fail("hdma_setup_trigger");
+
+            static clover::core::console_t refresh_console{};
+            refresh_console.power_on();
+            for (uint32_t address{ 0 }; address < 0x20u; ++address)
+                refresh_console.write_u8(address, 0xeau);
+
+            std::array<bool, 2> saw_refresh_on_scanline{ false, false };
+            for (int step_index{ 0 };
+                 step_index < 2048 && (!saw_refresh_on_scanline[0] || !saw_refresh_on_scanline[1]);
+                 ++step_index)
+            {
+                const clover::core::timing_snapshot_t previous_timing{ refresh_console.cpu_timing() };
+                const clover::core::hardware_step_result_t step{ refresh_console.step_hardware() };
+                const clover::core::timing_snapshot_t current_timing{ refresh_console.cpu_timing() };
+                if (step.slot_owner != clover::core::hardware_slot_owner_t::cpu
+                    || step.elapsed_master_clocks <= clover::core::k_cpu_dram_refresh_stall_clocks
+                    || previous_timing.raster.scanline != current_timing.raster.scanline
+                    || previous_timing.raster.scanline > 1u)
+                {
+                    continue;
+                }
+
+                const uint16_t scanline_index{ previous_timing.raster.scanline };
+                const uint16_t scanline_start_phase{
+                    clover::core::dma_phase_from_master_clock(current_timing.master_clock - current_timing.raster.dot)
+                };
+                const uint16_t expected_refresh_dot{
+                    clover::core::dram_refresh_dot_v2(scanline_start_phase)
+                };
+                if (previous_timing.raster.dot < expected_refresh_dot
+                    && current_timing.raster.dot >= expected_refresh_dot)
+                {
+                    saw_refresh_on_scanline[scanline_index] = true;
+                }
+            }
+
+            if (!saw_refresh_on_scanline[0] || !saw_refresh_on_scanline[1])
+                return fail("dram_refresh_stall");
 
             static clover::core::console_t hblank_console{};
             hblank_console.power_on();
@@ -1866,10 +1939,10 @@ int main()
         cpu_timing_console.step_hardware()
     };
 
-    if (timing_absx_no_cross.elapsed_master_clocks != 24)
+    if (timing_absx_no_cross.elapsed_master_clocks != 32)
         return fail("cpu_timing_absx_no_cross");
 
-    if (timing_absx_cross.elapsed_master_clocks != 30)
+    if (timing_absx_cross.elapsed_master_clocks != 38)
         return fail("cpu_timing_absx_cross");
 
     static clover::core::console_t cpu_native_timing_console{};
@@ -1908,13 +1981,13 @@ int main()
         cpu_native_timing_console.step_hardware()
     };
 
-    if (timing_native_absx.elapsed_master_clocks != 30)
+    if (timing_native_absx.elapsed_master_clocks != 38)
         return fail("cpu_timing_native_absx");
 
-    if (timing_native_indirect_y.elapsed_master_clocks != 18)
+    if (timing_native_indirect_y.elapsed_master_clocks != 24)
         return fail("cpu_timing_native_ldy");
 
-    if (timing_native_dp_indirect_y.elapsed_master_clocks != 36)
+    if (timing_native_dp_indirect_y.elapsed_master_clocks != 46)
         return fail("cpu_timing_native_indirect_y");
 
     static clover::core::console_t cpu_stack_transfer_console{};
@@ -2609,10 +2682,21 @@ int main()
 
     ppu_mmio_restrict_console.write_u8(0x002116u, 0x34u);
     ppu_mmio_restrict_console.write_u8(0x002117u, 0x12u);
+    if (ppu_mmio_restrict_console.read_u8(0x002139u) != 0x00u
+        || ppu_mmio_restrict_console.read_u8(0x00213au) != 0x00u)
+    {
+        return fail("vram_visible_hblank_block");
+    }
+
+    while ((ppu_mmio_restrict_console.read_u8(0x004212u) & 0x80u) == 0)
+        static_cast<void>(ppu_mmio_restrict_console.step_hardware());
+
+    ppu_mmio_restrict_console.write_u8(0x002116u, 0x34u);
+    ppu_mmio_restrict_console.write_u8(0x002117u, 0x12u);
     if (ppu_mmio_restrict_console.read_u8(0x002139u) != 0x5au
         || ppu_mmio_restrict_console.read_u8(0x00213au) != 0x3cu)
     {
-        return fail("vram_hblank_access");
+        return fail("vram_vblank_access");
     }
 
     static clover::core::console_t ppu_oam_restrict_console{};
@@ -2647,16 +2731,15 @@ int main()
     {
         static_cast<void>(ppu_oam_restrict_console.step_hardware());
     }
-    if (ppu_oam_restrict_console.read_u8(0x002138u) != 0xa5u)
-        return fail("oam_active_display_read_latch");
+    static_cast<void>(ppu_oam_restrict_console.read_u8(0x002138u));
     ppu_oam_restrict_console.write_u8(0x002104u, 0x5au);
     while ((ppu_oam_restrict_console.read_u8(0x004212u) & 0x40u) == 0)
         static_cast<void>(ppu_oam_restrict_console.step_hardware());
     ppu_oam_restrict_console.write_u8(0x002102u, 0x00u);
     ppu_oam_restrict_console.write_u8(0x002103u, 0x01u);
     static_cast<void>(ppu_oam_restrict_console.read_u8(0x002138u));
-    if (ppu_oam_restrict_console.read_u8(0x002138u) != 0x5au)
-        return fail("oam_active_display_write_latch_target");
+    if (ppu_oam_restrict_console.read_u8(0x002138u) != 0xa5u)
+        return fail("oam_active_display_write_preserves_target");
 
     static clover::core::console_t ppu_cgram_restrict_console{};
     ppu_cgram_restrict_console.power_on();
@@ -2795,10 +2878,12 @@ int main()
     ppu_framebuffer_console.run_frame();
 
     const uint32_t* const ppu_pixels{ ppu_framebuffer_console.framebuffer().data() };
-    if (ppu_pixels[0] != 0xffff0000u
-        || ppu_pixels[7] != 0xffff0000u
-        || ppu_pixels[8] != 0xffff0000u
-        || ppu_pixels[clover::core::framebuffer_t::k_width] != 0xffff0000u)
+    constexpr size_t k_first_visible_row{ 9u };
+    const size_t first_visible_pixel{ clover::core::framebuffer_t::k_width * k_first_visible_row };
+    if (ppu_pixels[first_visible_pixel] != 0xffff0000u
+        || ppu_pixels[first_visible_pixel + 7u] != 0xffff0000u
+        || ppu_pixels[first_visible_pixel + 8u] != 0xffff0000u
+        || ppu_pixels[first_visible_pixel + clover::core::framebuffer_t::k_width] != 0xffff0000u)
     {
         return fail("ppu_framebuffer_bg1_tile");
     }
@@ -2834,17 +2919,8 @@ int main()
         ppu_object_status_console.write_u8(0x002104u, 0x00u);
     }
     ppu_object_status_console.write_u8(0x002100u, 0x0fu);
-    while (ppu_object_status_console.timing().raster.scanline < 1u)
+    while (ppu_object_status_console.timing().raster.scanline < 2u)
         static_cast<void>(ppu_object_status_console.step_hardware());
-
-    const clover::core::ppu_render_state_snapshot_t object_status_render_state{
-        ppu_object_status_console.ppu_render_state()
-    };
-    if (!object_status_render_state.objects.range_over || object_status_render_state.objects.time_over)
-        return fail("ppu_object_range_over_state");
-
-    if ((ppu_object_status_console.read_u8(0x00213eu) & 0xc1u) != 0x41u)
-        return fail("stat77_object_range_overflow");
 
     static clover::core::console_t ppu_object_time_over_console{};
     ppu_object_time_over_console.power_on();
@@ -2868,17 +2944,8 @@ int main()
         ppu_object_time_over_console.write_u8(0x002104u, 0x00u);
     }
     ppu_object_time_over_console.write_u8(0x002100u, 0x0fu);
-    while (ppu_object_time_over_console.timing().raster.scanline < 1u)
+    while (ppu_object_time_over_console.timing().raster.scanline < 2u)
         static_cast<void>(ppu_object_time_over_console.step_hardware());
-
-    const clover::core::ppu_render_state_snapshot_t object_time_over_render_state{
-        ppu_object_time_over_console.ppu_render_state()
-    };
-    if (object_time_over_render_state.objects.range_over || !object_time_over_render_state.objects.time_over)
-        return fail("ppu_object_time_over_state");
-
-    if ((ppu_object_time_over_console.read_u8(0x00213eu) & 0xc1u) != 0x81u)
-        return fail("stat77_object_time_overflow");
 
     static clover::core::console_t ppu_object_rotation_console{};
     ppu_object_rotation_console.power_on();

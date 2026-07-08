@@ -29,8 +29,6 @@ namespace clover::core
         master_clock_delta_t short_scanline_clocks{ 1360 };
         uint16_t hblank_start_dot{ 1096 };
         uint16_t hdma_trigger_dot{ 1104 };
-        uint16_t hdma_setup_scanline{ 0 };
-        uint16_t hdma_setup_dot{ 12 };
 
         [[nodiscard]] constexpr master_clock_delta_t scanline_clocks(uint16_t scanline,
                                                                      bool odd_field,
@@ -60,6 +58,22 @@ namespace clover::core
     };
 
     constexpr video_timing_t k_ntsc_video_timing{};
+    constexpr master_clock_delta_t k_cpu_dram_refresh_stall_clocks{ 40 };
+
+    [[nodiscard]] constexpr uint16_t dma_phase_from_master_clock(master_clock_count_t master_clock) noexcept
+    {
+        return static_cast<uint16_t>(master_clock & 7u);
+    }
+
+    [[nodiscard]] constexpr uint16_t hdma_setup_dot_v2(uint16_t dma_phase) noexcept
+    {
+        return static_cast<uint16_t>(12u + (dma_phase & 7u));
+    }
+
+    [[nodiscard]] constexpr uint16_t dram_refresh_dot_v2(uint16_t dma_phase) noexcept
+    {
+        return static_cast<uint16_t>(538u - (dma_phase & 7u));
+    }
 
     struct raster_position_t
     {

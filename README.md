@@ -31,3 +31,19 @@ cmake -S . -B build
 cmake --build build
 ctest --test-dir build
 ```
+
+## Core Validation
+
+Use the low-noise validation path for emulator core work. This keeps Clover and bsnes comparisons symmetric by default and leaves heavier bringup diagnostics opt-in.
+
+```bash
+python3 scripts/run_core_validation.py
+```
+
+That standard loop runs:
+
+- `clover_hardware_loop_test`
+- `clover_local_rom_regression_test`
+- `scripts/run_reference_sweep.py`
+
+Use `clover_rom_bringup` directly only for targeted investigation. Its default path is now summary-only; set `CLOVER_BRINGUP_VERBOSE=1` or the specific `CLOVER_CAPTURE_*` / `CLOVER_TRACE_*` knobs when you intentionally want intrusive diagnostics.

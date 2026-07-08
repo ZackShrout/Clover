@@ -34,12 +34,19 @@ namespace clover::core
         objects
     };
 
+    enum class ppu_presentation_source_t : uint8_t
+    {
+        presented,
+        composed
+    };
+
     struct ppu_presentation_options_t
     {
         static constexpr uint8_t k_all_layers_visible{ 0x1fu };
 
         uint8_t visible_layer_mask{ k_all_layers_visible };
         ppu_debug_view_t debug_view{ ppu_debug_view_t::composed };
+        ppu_presentation_source_t source{ ppu_presentation_source_t::presented };
     };
 
     struct ppu_pixel_candidate_t
@@ -150,11 +157,17 @@ namespace clover::core
         bool window_below_enabled{ false };
         uint8_t window_mask{ 0 };
         uint16_t evaluation_scanline{ 0 };
+        uint16_t rendered_scanline{ 0xffffu };
+        uint16_t fetched_scanline{ 0xffffu };
         uint8_t evaluation_first_sprite{ 0 };
         uint8_t evaluation_count{ 0 };
         uint8_t evaluation_indices[8]{ 0, 0, 0, 0, 0, 0, 0, 0 };
         uint8_t tile_count{ 0 };
         tile_candidate_t tiles[8]{};
+        uint8_t render_tile_count{ 0 };
+        tile_candidate_t render_tiles[8]{};
+        uint8_t fetched_tile_count{ 0 };
+        tile_candidate_t fetched_tiles[8]{};
         decoded_object_t samples[4]{};
     };
 
@@ -191,8 +204,8 @@ namespace clover::core
     {
         ppu_pixel_candidate_t above{};
         ppu_pixel_candidate_t below{};
-        ppu_pixel_candidate_t above_samples[8]{};
-        ppu_pixel_candidate_t below_samples[8]{};
+        ppu_pixel_candidate_t above_samples[framebuffer_t::k_width]{};
+        ppu_pixel_candidate_t below_samples[framebuffer_t::k_width]{};
     };
 
     struct ppu_compositor_snapshot_t
@@ -209,20 +222,20 @@ namespace clover::core
         uint8_t fixed_blue{ 0 };
         ppu_pixel_candidate_t above{};
         ppu_pixel_candidate_t below{};
-        ppu_pixel_candidate_t above_samples[8]{};
-        ppu_pixel_candidate_t below_samples[8]{};
-        bool color_enable_above[8]{};
-        bool color_enable_below[8]{};
-        bool math_enable[8]{};
-        bool math_uses_subscreen[8]{};
-        bool math_uses_fixed_color[8]{};
-        bool color_halve_active[8]{};
-        bool above_transparent[8]{};
-        bool below_transparent[8]{};
-        uint16_t above_color[8]{};
-        uint16_t below_color[8]{};
-        uint16_t math_rhs_color[8]{};
-        uint16_t output_color[8]{};
+        ppu_pixel_candidate_t above_samples[framebuffer_t::k_width]{};
+        ppu_pixel_candidate_t below_samples[framebuffer_t::k_width]{};
+        bool color_enable_above[framebuffer_t::k_width]{};
+        bool color_enable_below[framebuffer_t::k_width]{};
+        bool math_enable[framebuffer_t::k_width]{};
+        bool math_uses_subscreen[framebuffer_t::k_width]{};
+        bool math_uses_fixed_color[framebuffer_t::k_width]{};
+        bool color_halve_active[framebuffer_t::k_width]{};
+        bool above_transparent[framebuffer_t::k_width]{};
+        bool below_transparent[framebuffer_t::k_width]{};
+        uint16_t above_color[framebuffer_t::k_width]{};
+        uint16_t below_color[framebuffer_t::k_width]{};
+        uint16_t math_rhs_color[framebuffer_t::k_width]{};
+        uint16_t output_color[framebuffer_t::k_width]{};
         ppu_layer_compositor_state_t backgrounds[4]{};
         ppu_layer_compositor_state_t objects{};
     };
@@ -308,6 +321,25 @@ namespace clover::core
         [[nodiscard]] bool object_on_scanline(const ppu_object_render_state_t::decoded_object_t& object,
                                               uint16_t scanline) const noexcept;
         void evaluate_background_scanline(uint16_t scanline) noexcept;
+        void begin_object_scanline(uint16_t scanline) noexcept;
+        void initialize_scanline_pipeline(uint16_t scanline) noexcept;
+        void process_pipeline_range(const timing_snapshot_t& previous_timing,
+                                    const timing_snapshot_t& current_timing) noexcept;
+        void process_scanline_range(uint16_t scanline, uint16_t start_dot, uint16_t end_dot) noexcept;
+        void evaluate_object_slot(uint16_t scanline, uint8_t slot) noexcept;
+        void finalize_object_fetch(uint16_t scanline) noexcept;
+        void clear_scanline_compositor_outputs() noexcept;
+        void render_pixel(uint16_t scanline, uint16_t x) noexcept;
+        [[nodiscard]] ppu_pixel_candidate_t resolve_object_pixel_candidate(uint16_t x) const noexcept;
+        void resolve_pixel_layers(uint16_t x,
+                                  const ppu_pixel_candidate_t& object_candidate,
+                                  ppu_pixel_candidate_t& above,
+                                  ppu_pixel_candidate_t& below) noexcept;
+        void resolve_pixel_color_math(uint16_t x,
+                                      const ppu_pixel_candidate_t& above_candidate,
+                                      const ppu_pixel_candidate_t& below_candidate) noexcept;
+        [[nodiscard]] ppu_pixel_candidate_t resolve_background_pixel_candidate(uint8_t background_index,
+                                                                               uint16_t x) const noexcept;
         void populate_background_offset_cache(uint16_t scanline) noexcept;
         void evaluate_background_tiles(uint8_t background_index) noexcept;
         void fetch_background_tile_rows(uint8_t background_index) noexcept;
@@ -419,6 +451,7 @@ namespace clover::core
         {
             using decoded_object_t = ppu_object_render_state_t::decoded_object_t;
             using tile_candidate_t = ppu_object_render_state_t::tile_candidate_t;
+            static constexpr uint16_t k_uninitialized_scanline{ 0xffffu };
 
             uint8_t base_size{ 0 };
             uint8_t nameselect{ 0 };
@@ -433,11 +466,18 @@ namespace clover::core
             bool window_above_enabled{ false };
             bool window_below_enabled{ false };
             uint16_t evaluation_scanline{ 0 };
+            uint16_t rendered_scanline{ k_uninitialized_scanline };
+            uint16_t fetched_scanline{ k_uninitialized_scanline };
             uint8_t evaluation_first_sprite{ 0 };
             uint8_t evaluation_count{ 0 };
+            uint8_t evaluation_progress{ 0 };
             std::array<uint8_t, 32> evaluation_indices{};
             uint8_t tile_count{ 0 };
             std::array<tile_candidate_t, 34> tiles{};
+            uint8_t render_tile_count{ 0 };
+            std::array<tile_candidate_t, 34> render_tiles{};
+            uint8_t fetched_tile_count{ 0 };
+            std::array<tile_candidate_t, 34> fetched_tiles{};
             std::array<decoded_object_t, 128> objects{};
         };
 
@@ -451,6 +491,11 @@ namespace clover::core
             std::array<uint16_t, 34> offset_voffset{};
             std::array<ppu_pixel_candidate_t, framebuffer_t::k_width> samples{};
             std::array<tile_candidate_t, 34> tiles{};
+            std::array<tile_candidate_t, 34> render_tiles{};
+            uint8_t rendering_index{ 0 };
+            uint8_t pixel_counter{ 0 };
+            uint16_t mosaic_hcounter{ 1 };
+            ppu_pixel_candidate_t mosaic_pixel{};
         };
 
         struct ppu_color_math_state_t
@@ -514,6 +559,17 @@ namespace clover::core
             ppu_internal_layer_compositor_state_t objects{};
         };
 
+        struct ppu_pipeline_state_t
+        {
+            static constexpr uint16_t k_uninitialized_scanline{ 0xffffu };
+
+            uint16_t initialized_scanline{ k_uninitialized_scanline };
+            uint16_t next_object_evaluate_dot{ 0u };
+            uint16_t next_pixel_dot{ 58u };
+            uint16_t next_pixel_x{ 0u };
+            bool object_fetch_completed{ false };
+        };
+
         struct ppu_vram_state_t
         {
             uint8_t increment_size{ 1 };
@@ -563,6 +619,7 @@ namespace clover::core
         ppu_color_math_state_t _color_math_state{};
         ppu_screen_state_t _screen_state{};
         ppu_compositor_state_t _compositor_state{};
+        ppu_pipeline_state_t _pipeline_state{};
         ppu_vram_state_t _vram_state{};
         ppu_cgram_state_t _cgram_state{};
         ppu_counter_latch_state_t _counter_latch{};

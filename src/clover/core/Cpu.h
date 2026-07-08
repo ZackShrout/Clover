@@ -72,6 +72,7 @@ namespace clover::core
         [[nodiscard]] timing_snapshot_t delayed_timing(const video_timing_t& video_timing,
                                                        master_clock_delta_t delay) const noexcept;
         [[nodiscard]] uint32_t wram_address() const noexcept;
+        [[nodiscard]] uint64_t placeholder_opcode_count() const noexcept;
         [[nodiscard]] uint8_t read_register(uint16_t address,
                                            master_clock_delta_t elapsed_master_clocks = 0) noexcept;
         void write_register(uint16_t address, uint8_t value) noexcept;
@@ -119,6 +120,7 @@ namespace clover::core
         bool _dram_refresh_pending{ true };
         uint16_t _hdma_setup_dot{ hdma_setup_dot_v2(0) };
         bool _hdma_setup_pending{ true };
+        uint64_t _placeholder_opcode_count{ 0u };
 
         friend bool execute_system_opcode(uint8_t opcode,
                                           cpu_t& cpu,

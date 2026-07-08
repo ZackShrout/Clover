@@ -56,6 +56,7 @@ namespace clover::core
         [[nodiscard]] timing_snapshot_t cpu_timing() const noexcept;
         [[nodiscard]] const cpu_state_t& cpu_state() const noexcept;
         [[nodiscard]] uint32_t cpu_wram_address() const noexcept;
+        [[nodiscard]] uint64_t cpu_placeholder_opcode_count() const noexcept;
         [[nodiscard]] master_clock_delta_t current_scanline_clocks() const noexcept;
         void refresh_framebuffer(const ppu_presentation_options_t& options = {}) noexcept;
         [[nodiscard]] hardware_timing_snapshot_t capture_timing_snapshot() const noexcept;

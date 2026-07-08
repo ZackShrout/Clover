@@ -166,6 +166,11 @@ namespace clover::core
         return _cpu.wram_address();
     }
 
+    uint64_t console_t::cpu_placeholder_opcode_count() const noexcept
+    {
+        return _cpu.placeholder_opcode_count();
+    }
+
     master_clock_delta_t console_t::current_scanline_clocks() const noexcept
     {
         return _ppu.current_scanline_clocks();

@@ -2511,7 +2511,9 @@ int main(int argc, char** argv)
                 static_cast<unsigned long long>(summary.steps),
                 static_cast<unsigned long long>(summary.dma_steps),
                 summary.steps >= step_limit ? 1u : 0u);
-    std::printf("Diagnostics: terminal_pc=%u\n", terminal_pc_detected ? 1u : 0u);
+    std::printf("Diagnostics: terminal_pc=%u cpu_placeholder_opcodes=%llu\n",
+                terminal_pc_detected ? 1u : 0u,
+                static_cast<unsigned long long>(console.cpu_placeholder_opcode_count()));
     std::printf("Events: hblank=%llu vblank=%llu nmi=%llu irq=%llu hdma_setup=%llu hdma_transfer=%llu\n",
                 static_cast<unsigned long long>(summary.hblank_entries),
                 static_cast<unsigned long long>(summary.vblank_entries),

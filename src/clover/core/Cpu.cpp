@@ -251,6 +251,7 @@ namespace clover::core
         _dram_refresh_pending = true;
         _hdma_setup_dot = hdma_setup_dot_v2(dma_phase());
         _hdma_setup_pending = true;
+        _placeholder_opcode_count = 0u;
     }
 
     void cpu_t::reset() noexcept
@@ -284,6 +285,7 @@ namespace clover::core
         _dram_refresh_pending = true;
         _hdma_setup_dot = hdma_setup_dot_v2(dma_phase());
         _hdma_setup_pending = true;
+        _placeholder_opcode_count = 0u;
     }
 
     void cpu_t::load_reset_vector(bus_t& bus) noexcept
@@ -313,6 +315,11 @@ namespace clover::core
     uint32_t cpu_t::wram_address() const noexcept
     {
         return _io.wram_address & 0x01ffffu;
+    }
+
+    uint64_t cpu_t::placeholder_opcode_count() const noexcept
+    {
+        return _placeholder_opcode_count;
     }
 
     bool cpu_t::irq_condition(const timing_snapshot_t& irq_timing,
@@ -649,6 +656,7 @@ namespace clover::core
             // one opcode fetch plus one trailing CPU cycle. Zelda/SMW timing work
             // has shown we need real per-opcode CPU timing that stays phase-aligned
             // with bsnes and hardware, so this must be replaced rather than tuned.
+            ++_placeholder_opcode_count;
             executor.idle();
         }
 

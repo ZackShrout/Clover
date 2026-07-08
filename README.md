@@ -46,4 +46,9 @@ That standard loop runs:
 - `clover_local_rom_regression_test`
 - `scripts/run_reference_sweep.py`
 
+The reference sweep now defaults to the bsnes libretro comparison profile so
+known bottom-corner capture artifacts do not show up as emulator-core
+regressions. Use `--compare-profile exact` when you intentionally want a raw
+buffer compare.
+
 Use `clover_rom_bringup` directly only for targeted investigation. Its default path is now summary-only; set `CLOVER_BRINGUP_VERBOSE=1` or the specific `CLOVER_CAPTURE_*` / `CLOVER_TRACE_*` knobs when you intentionally want intrusive diagnostics.

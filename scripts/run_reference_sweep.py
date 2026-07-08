@@ -13,6 +13,7 @@ from pathlib import Path
 DEFAULT_FRAMES = [120, 140, 150, 240]
 DEFAULT_ROM = Path("roms/local/Super Mario World (USA).sfc")
 DEFAULT_BSNES_CORE = Path("/Users/zshrout/dev/bsnes/bsnes/out/bsnes_libretro.dylib")
+DEFAULT_COMPARE_PROFILE = "bsnes-libretro-bottom-corner-artifact"
 
 
 def run(command: list[str], cwd: Path, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -60,6 +61,11 @@ def main() -> int:
         "--verbose-bringup",
         action="store_true",
         help="Allow Clover bringup to emit full debug diagnostics instead of the standard low-noise summary"
+    )
+    parser.add_argument(
+        "--compare-profile",
+        default=DEFAULT_COMPARE_PROFILE,
+        help="Frame-compare profile passed to clover_frame_compare"
     )
     args = parser.parse_args()
 
@@ -146,6 +152,7 @@ def main() -> int:
                 str(required_tools["clover_frame_compare"]),
                 str(bsnes_dump_dir / f"frame_{frame}.ppm"),
                 str(clover_dump_dir / f"frame_{frame}.ppm"),
+                args.compare_profile,
             ],
             workspace,
         )

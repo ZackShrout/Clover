@@ -6,6 +6,10 @@
 #include "clover/core/Ppu.h"
 
 #include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
 namespace
 {
@@ -14,26 +18,167 @@ namespace
     constexpr std::array<uint8_t, 4> k_vram_increment_sizes{ 1, 32, 128, 128 };
     constexpr uint16_t k_vram_word_mask{ 0x7fffu };
 
-    [[nodiscard]] uint8_t expand_snes_channel(uint8_t value, uint8_t brightness) noexcept
+    struct presentation_lut_t
     {
-        if (brightness == 0u || value == 0u)
-            return 0u;
+        std::array<std::array<uint32_t, 32768>, 16> colors{};
+    };
 
-        const uint32_t scaled{
-            static_cast<uint32_t>(value) * static_cast<uint32_t>(brightness) * 255u / (31u * 15u)
+    [[nodiscard]] uint16_t present_channel(uint8_t brightness, uint8_t value) noexcept
+    {
+        const double luma{ static_cast<double>(brightness) / 15.0 };
+        const uint8_t adjusted{
+            static_cast<uint8_t>(std::clamp<int>(static_cast<int>(luma * static_cast<double>(value) + 0.5), 0, 31))
         };
-        return static_cast<uint8_t>(scaled);
+
+        uint16_t expanded{ static_cast<uint16_t>((adjusted << 3u) | (adjusted >> 2u)) };
+        expanded = static_cast<uint16_t>((expanded << 8u) | expanded);
+
+        constexpr double k_gamma{ 1.5 };
+        constexpr double k_reciprocal{ 1.0 / 32767.0 };
+        if (expanded <= 32767u)
+            expanded = static_cast<uint16_t>(32767.0 * std::pow(static_cast<double>(expanded) * k_reciprocal, k_gamma));
+        return expanded;
+    }
+
+    [[nodiscard]] const presentation_lut_t& presentation_lut() noexcept
+    {
+        static const presentation_lut_t table = []() noexcept
+        {
+            presentation_lut_t lut{};
+            for (uint32_t brightness{ 0 }; brightness < lut.colors.size(); ++brightness)
+            {
+                for (uint32_t color{ 0 }; color < lut.colors[brightness].size(); ++color)
+                {
+                    const uint8_t red5{ static_cast<uint8_t>(color & 0x001fu) };
+                    const uint8_t green5{ static_cast<uint8_t>((color >> 5u) & 0x001fu) };
+                    const uint8_t blue5{ static_cast<uint8_t>((color >> 10u) & 0x001fu) };
+                    const uint8_t red8{ static_cast<uint8_t>(present_channel(static_cast<uint8_t>(brightness), red5) >> 8u) };
+                    const uint8_t green8{
+                        static_cast<uint8_t>(present_channel(static_cast<uint8_t>(brightness), green5) >> 8u)
+                    };
+                    const uint8_t blue8{
+                        static_cast<uint8_t>(present_channel(static_cast<uint8_t>(brightness), blue5) >> 8u)
+                    };
+                    lut.colors[brightness][color] = 0xff000000u
+                        | (static_cast<uint32_t>(red8) << 16u)
+                        | (static_cast<uint32_t>(green8) << 8u)
+                        | blue8;
+                }
+            }
+            return lut;
+        }();
+        return table;
     }
 
     [[nodiscard]] uint32_t snes_color_to_rgba8(uint16_t color, uint8_t brightness) noexcept
     {
-        const uint8_t red5{ static_cast<uint8_t>(color & 0x001fu) };
-        const uint8_t green5{ static_cast<uint8_t>((color >> 5u) & 0x001fu) };
-        const uint8_t blue5{ static_cast<uint8_t>((color >> 10u) & 0x001fu) };
-        const uint8_t red8{ expand_snes_channel(red5, brightness) };
-        const uint8_t green8{ expand_snes_channel(green5, brightness) };
-        const uint8_t blue8{ expand_snes_channel(blue5, brightness) };
-        return 0xff000000u | (static_cast<uint32_t>(red8) << 16u) | (static_cast<uint32_t>(green8) << 8u) | blue8;
+        return presentation_lut().colors[brightness & 0x0fu][color & 0x7fffu];
+    }
+
+    struct render_write_trace_filter_t
+    {
+        bool enabled{ false };
+        uint64_t frame{ 0 };
+        uint16_t scanline{ 0 };
+        uint16_t x{ 0 };
+    };
+
+    struct inidisp_trace_filter_t
+    {
+        bool enabled{ false };
+        uint64_t frame_min{ 0 };
+        uint64_t frame_max{ 0 };
+    };
+
+    struct obj_tile_trace_filter_t
+    {
+        bool enabled{ false };
+        uint64_t frame{ 0 };
+        uint16_t scanline{ 0 };
+    };
+
+    struct vram_write_trace_filter_t
+    {
+        bool enabled{ false };
+        uint16_t address_min{ 0 };
+        uint16_t address_max{ 0 };
+        uint64_t frame_min{ 0 };
+        uint64_t frame_max{ 0 };
+    };
+
+    [[nodiscard]] uint64_t parse_trace_u64_env(const char* name, uint64_t fallback) noexcept
+    {
+        const char* raw{ std::getenv(name) };
+        if (raw == nullptr || *raw == '\0')
+            return fallback;
+
+        char* end{ nullptr };
+        const unsigned long long parsed{ std::strtoull(raw, &end, 0) };
+        if (end == raw)
+            return fallback;
+        return static_cast<uint64_t>(parsed);
+    }
+
+    [[nodiscard]] render_write_trace_filter_t load_render_write_trace_filter() noexcept
+    {
+        render_write_trace_filter_t filter{};
+        const char* frame_raw{ std::getenv("CLOVER_RENDER_WRITE_TRACE_FRAME") };
+        if (frame_raw == nullptr || *frame_raw == '\0')
+            return filter;
+
+        filter.enabled = true;
+        filter.frame = parse_trace_u64_env("CLOVER_RENDER_WRITE_TRACE_FRAME", 0u);
+        filter.scanline = static_cast<uint16_t>(parse_trace_u64_env("CLOVER_RENDER_WRITE_TRACE_SCANLINE", 0u) & 0xffffu);
+        filter.x = static_cast<uint16_t>(parse_trace_u64_env("CLOVER_RENDER_WRITE_TRACE_X", 0u) & 0xffffu);
+        return filter;
+    }
+
+    [[nodiscard]] inidisp_trace_filter_t load_inidisp_trace_filter() noexcept
+    {
+        inidisp_trace_filter_t filter{};
+        const char* frame_raw{ std::getenv("CLOVER_INIDISP_TRACE_FRAME_MIN") };
+        if (frame_raw == nullptr || *frame_raw == '\0')
+            return filter;
+
+        filter.enabled = true;
+        filter.frame_min = parse_trace_u64_env("CLOVER_INIDISP_TRACE_FRAME_MIN", 0u);
+        filter.frame_max = parse_trace_u64_env("CLOVER_INIDISP_TRACE_FRAME_MAX", filter.frame_min);
+        if (filter.frame_min > filter.frame_max)
+            std::swap(filter.frame_min, filter.frame_max);
+        return filter;
+    }
+
+    [[nodiscard]] obj_tile_trace_filter_t load_obj_tile_trace_filter() noexcept
+    {
+        obj_tile_trace_filter_t filter{};
+        const char* frame_raw{ std::getenv("CLOVER_OBJ_TILE_TRACE_FRAME") };
+        if (frame_raw == nullptr || *frame_raw == '\0')
+            return filter;
+
+        filter.enabled = true;
+        filter.frame = parse_trace_u64_env("CLOVER_OBJ_TILE_TRACE_FRAME", 0u);
+        filter.scanline = static_cast<uint16_t>(parse_trace_u64_env("CLOVER_OBJ_TILE_TRACE_SCANLINE", 0u) & 0xffffu);
+        return filter;
+    }
+
+    [[nodiscard]] vram_write_trace_filter_t load_vram_write_trace_filter() noexcept
+    {
+        vram_write_trace_filter_t filter{};
+        const char* addr_min_raw{ std::getenv("CLOVER_VRAM_WRITE_TRACE_ADDR_MIN") };
+        if (addr_min_raw == nullptr || *addr_min_raw == '\0')
+            return filter;
+
+        filter.enabled = true;
+        filter.address_min = static_cast<uint16_t>(parse_trace_u64_env("CLOVER_VRAM_WRITE_TRACE_ADDR_MIN", 0u) & 0x7fffu);
+        filter.address_max = static_cast<uint16_t>(
+            parse_trace_u64_env("CLOVER_VRAM_WRITE_TRACE_ADDR_MAX", filter.address_min) & 0x7fffu);
+        filter.frame_min = parse_trace_u64_env("CLOVER_VRAM_WRITE_TRACE_FRAME_MIN", 0u);
+        filter.frame_max = parse_trace_u64_env("CLOVER_VRAM_WRITE_TRACE_FRAME_MAX", UINT64_MAX);
+        if (filter.address_min > filter.address_max)
+            std::swap(filter.address_min, filter.address_max);
+        if (filter.frame_min > filter.frame_max)
+            std::swap(filter.frame_min, filter.frame_max);
+        return filter;
     }
 
     void set_window_bits(bool& one_invert,
@@ -247,6 +392,54 @@ namespace
     [[nodiscard]] uint8_t extract_row_pair_pixel(uint16_t row_data, uint8_t fine_x) noexcept
     {
         return static_cast<uint8_t>((row_data >> (fine_x << 1u)) & 0x03u);
+    }
+
+    template <typename TileArray>
+    void maybe_trace_obj_tiles(uint64_t frame_index,
+                               uint16_t scanline,
+                               const char* stage,
+                               const TileArray& tiles,
+                               uint8_t tile_count,
+                               uint8_t pipeline_tile_count,
+                               uint8_t visible_tile_count) noexcept
+    {
+        static const obj_tile_trace_filter_t filter{ load_obj_tile_trace_filter() };
+        if (!filter.enabled || filter.frame != frame_index || filter.scanline != scanline)
+            return;
+
+        std::printf("OBJ tile trace: frame=%llu scanline=%u stage=%s tile_count=%u pipeline=%u visible=%u\n",
+                    static_cast<unsigned long long>(frame_index),
+                    static_cast<unsigned>(scanline),
+                    stage,
+                    static_cast<unsigned>(tile_count),
+                    static_cast<unsigned>(pipeline_tile_count),
+                    static_cast<unsigned>(visible_tile_count));
+        for (size_t index{ 0 }; index < tiles.size(); ++index)
+        {
+            const auto& entry{ tiles[index] };
+            if (!entry.valid)
+            {
+                std::printf("  tile[%zu]: invalid\n", index);
+                break;
+            }
+
+            const auto& tile{ entry.candidate };
+            std::printf(
+                "  tile[%zu]: obj=%u x=%u tile_x=%u src_y=%u fine_y=%u vram=%04x pal=%u pri=%u hflip=%u data=%08x row0=%04x row1=%04x\n",
+                index,
+                static_cast<unsigned>(tile.object_index),
+                static_cast<unsigned>(tile.x),
+                static_cast<unsigned>(tile.tile_x),
+                static_cast<unsigned>(tile.source_y),
+                static_cast<unsigned>(tile.fine_y),
+                static_cast<unsigned>(tile.vram_address),
+                static_cast<unsigned>(tile.palette_base),
+                static_cast<unsigned>(tile.priority),
+                tile.hflip ? 1u : 0u,
+                static_cast<unsigned>(tile.data),
+                static_cast<unsigned>(tile.row_data[0]),
+                static_cast<unsigned>(tile.row_data[1]));
+        }
     }
 
     [[nodiscard]] bool window_test(bool one_enable,
@@ -636,11 +829,35 @@ namespace clover::core
         if (display_active_for_vram())
             return;
 
-        uint16_t& word{ _vram[address_vram() & 0x7fffu] };
+        const uint16_t effective_address{ static_cast<uint16_t>(address_vram() & 0x7fffu) };
+        uint16_t& word{ _vram[effective_address] };
+        const uint16_t previous_word{ word };
         if (high_byte)
             word = static_cast<uint16_t>((word & 0x00ffu) | (value << 8u));
         else
             word = static_cast<uint16_t>((word & 0xff00u) | value);
+
+        static const vram_write_trace_filter_t trace_filter{ load_vram_write_trace_filter() };
+        if (trace_filter.enabled
+            && _frame_counter >= trace_filter.frame_min
+            && _frame_counter <= trace_filter.frame_max
+            && effective_address >= trace_filter.address_min
+            && effective_address <= trace_filter.address_max)
+        {
+            const timing_snapshot_t current_timing{ timing() };
+            std::printf("VRAM write: frame=%llu scanline=%u dot=%u addr=%04x %s=%02x before=%04x after=%04x raw_vmadd=%04x inc=%u high_inc=%u\n",
+                        static_cast<unsigned long long>(_frame_counter),
+                        static_cast<unsigned>(current_timing.raster.scanline),
+                        static_cast<unsigned>(current_timing.raster.dot),
+                        static_cast<unsigned>(effective_address),
+                        high_byte ? "hi" : "lo",
+                        static_cast<unsigned>(value),
+                        static_cast<unsigned>(previous_word),
+                        static_cast<unsigned>(word),
+                        static_cast<unsigned>(_vram_state.address),
+                        static_cast<unsigned>(_vram_state.increment_size),
+                        _vram_state.increment_on_high ? 1u : 0u);
+        }
     }
 
     uint8_t ppu_t::read_oam_byte(uint16_t address) const noexcept
@@ -1538,8 +1755,53 @@ namespace clover::core
         if (row_index >= framebuffer_t::k_height)
             return;
 
-        _composed_frame.data()[row_index * framebuffer_t::k_width + sample_x] =
-            snes_color_to_rgba8(_compositor_state.output_color[sample_x], _display.brightness);
+        const uint32_t rgba8{
+            snes_color_to_rgba8(_compositor_state.output_color[sample_x], _display.brightness)
+        };
+        _composed_frame.data()[row_index * framebuffer_t::k_width + sample_x] = rgba8;
+
+        static const render_write_trace_filter_t trace_filter{ load_render_write_trace_filter() };
+        if (trace_filter.enabled
+            && _frame_counter == trace_filter.frame
+            && scanline == trace_filter.scanline
+            && x == trace_filter.x)
+        {
+            const auto& object_above{ _compositor_state.objects.above_samples[sample_x] };
+            const auto& object_below{ _compositor_state.objects.below_samples[sample_x] };
+            std::printf(
+                "PPU render write: frame=%llu scanline=%u x=%u out=%04x rgba=%08x "
+                "above=%04x below=%04x objA(pri=%u pal=%u grp=%u math=%u src=%u) "
+                "objB(pri=%u pal=%u grp=%u math=%u src=%u) "
+                "topA(pri=%u pal=%u grp=%u math=%u src=%u) "
+                "topB(pri=%u pal=%u grp=%u math=%u src=%u)\n",
+                static_cast<unsigned long long>(_frame_counter),
+                static_cast<unsigned>(scanline),
+                static_cast<unsigned>(x),
+                static_cast<unsigned>(_compositor_state.output_color[sample_x]),
+                static_cast<unsigned>(rgba8),
+                static_cast<unsigned>(_compositor_state.above_color[sample_x]),
+                static_cast<unsigned>(_compositor_state.below_color[sample_x]),
+                static_cast<unsigned>(object_above.priority),
+                static_cast<unsigned>(object_above.palette),
+                static_cast<unsigned>(object_above.palette_group),
+                object_above.color_math_enabled ? 1u : 0u,
+                static_cast<unsigned>(object_above.source),
+                static_cast<unsigned>(object_below.priority),
+                static_cast<unsigned>(object_below.palette),
+                static_cast<unsigned>(object_below.palette_group),
+                object_below.color_math_enabled ? 1u : 0u,
+                static_cast<unsigned>(object_below.source),
+                static_cast<unsigned>(_compositor_state.above_samples[sample_x].priority),
+                static_cast<unsigned>(_compositor_state.above_samples[sample_x].palette),
+                static_cast<unsigned>(_compositor_state.above_samples[sample_x].palette_group),
+                _compositor_state.above_samples[sample_x].color_math_enabled ? 1u : 0u,
+                static_cast<unsigned>(_compositor_state.above_samples[sample_x].source),
+                static_cast<unsigned>(_compositor_state.below_samples[sample_x].priority),
+                static_cast<unsigned>(_compositor_state.below_samples[sample_x].palette),
+                static_cast<unsigned>(_compositor_state.below_samples[sample_x].palette_group),
+                _compositor_state.below_samples[sample_x].color_math_enabled ? 1u : 0u,
+                static_cast<unsigned>(_compositor_state.below_samples[sample_x].source));
+        }
     }
 
     void ppu_t::process_scanline_range(uint16_t scanline, uint16_t start_dot, uint16_t end_dot) noexcept
@@ -1659,6 +1921,29 @@ namespace clover::core
             const uint8_t object_index{ item.index };
             _oam_state.latched_address = static_cast<uint16_t>(0x0200u + (object_index >> 2u));
             const auto& object{ _object_layer_state.objects[object_index] };
+            static const obj_tile_trace_filter_t trace_filter{ load_obj_tile_trace_filter() };
+            if (trace_filter.enabled
+                && trace_filter.frame == _frame_counter
+                && trace_filter.scanline == _object_layer_state.evaluation_scanline)
+            {
+                const uint16_t base_address{ static_cast<uint16_t>(object_index << 2u) };
+                const uint16_t high_address{ static_cast<uint16_t>(0x0200u | (object_index >> 2u)) };
+                std::printf(
+                    "  objsrc[%u]: raw=%02x %02x %02x %02x high=%02x decoded_x=%u decoded_y=%u w=%u h=%u hflip=%u vflip=%u size=%u\n",
+                    static_cast<unsigned>(object_index),
+                    static_cast<unsigned>(_oam[base_address + 0u]),
+                    static_cast<unsigned>(_oam[base_address + 1u]),
+                    static_cast<unsigned>(_oam[base_address + 2u]),
+                    static_cast<unsigned>(_oam[base_address + 3u]),
+                    static_cast<unsigned>(_oam[high_address]),
+                    static_cast<unsigned>(object.x),
+                    static_cast<unsigned>(object.y),
+                    static_cast<unsigned>(object.width),
+                    static_cast<unsigned>(object.height),
+                    object.hflip ? 1u : 0u,
+                    object.vflip ? 1u : 0u,
+                    object.size_select ? 1u : 0u);
+            }
             const uint8_t tile_width{ static_cast<uint8_t>(object.width >> 3u) };
             const uint16_t masked_x{ static_cast<uint16_t>(object.x & 0x01ffu) };
             uint16_t source_y{
@@ -1739,6 +2024,13 @@ namespace clover::core
         _object_layer_state.tiles.fill({});
         for (uint8_t tile_index{ 0 }; tile_index < visible_tile_count; ++tile_index)
             _object_layer_state.tiles[tile_index] = active_tiles[tile_index].candidate;
+        maybe_trace_obj_tiles(_frame_counter,
+                              _object_layer_state.evaluation_scanline,
+                              "pre-fetch",
+                              active_tiles,
+                              _object_layer_state.tile_count,
+                              pipeline_tile_count,
+                              visible_tile_count);
     }
 
     void ppu_t::fetch_object_tile_rows() noexcept
@@ -1762,6 +2054,13 @@ namespace clover::core
         _object_layer_state.tiles.fill({});
         for (uint8_t tile_index{ 0 }; tile_index < _object_layer_state.tile_count; ++tile_index)
             _object_layer_state.tiles[tile_index] = active_tiles[tile_index].candidate;
+        maybe_trace_obj_tiles(_frame_counter,
+                              _object_layer_state.evaluation_scanline,
+                              "post-fetch",
+                              active_tiles,
+                              _object_layer_state.tile_count,
+                              _object_layer_state.tile_count,
+                              _object_layer_state.tile_count);
     }
 
     void ppu_t::synthesize_object_layer_candidate() noexcept
@@ -2424,6 +2723,20 @@ namespace clover::core
             };
             record_display_write();
 
+            static const inidisp_trace_filter_t trace_filter{ load_inidisp_trace_filter() };
+            if (trace_filter.enabled
+                && _frame_counter >= trace_filter.frame_min
+                && _frame_counter <= trace_filter.frame_max)
+            {
+                std::printf("PPU INIDISP write: frame=%llu scanline=%u dot=%u value=%02x brightness=%u disabled=%u\n",
+                            static_cast<unsigned long long>(_frame_counter),
+                            static_cast<unsigned>(timing().raster.scanline),
+                            static_cast<unsigned>(timing().raster.dot),
+                            static_cast<unsigned>(value),
+                            static_cast<unsigned>(value & 0x0fu),
+                            (value & 0x80u) != 0 ? 1u : 0u);
+            }
+
             _display.brightness = static_cast<uint8_t>(value & 0x0fu);
             _display.disabled = (value & 0x80u) != 0;
             return;
@@ -2859,18 +3172,20 @@ namespace clover::core
         for (size_t index{ 0 }; index < 4; ++index)
         {
             snapshot.objects.priority[index] = _object_layer_state.priority[index];
-            snapshot.objects.evaluation_indices[index] = _object_layer_state.evaluation_indices[index];
-            snapshot.objects.tiles[index] = _object_layer_state.tiles[index];
-            snapshot.objects.render_tiles[index] = _object_layer_state.render_tiles[index];
-            snapshot.objects.fetched_tiles[index] = _object_layer_state.fetched_tiles[index];
-            snapshot.objects.samples[index] = _object_layer_state.objects[index];
         }
-        for (size_t index{ 4 }; index < 8; ++index)
+        for (size_t index{ 0 }; index < 32; ++index)
         {
             snapshot.objects.evaluation_indices[index] = _object_layer_state.evaluation_indices[index];
+        }
+        for (size_t index{ 0 }; index < 34; ++index)
+        {
             snapshot.objects.tiles[index] = _object_layer_state.tiles[index];
             snapshot.objects.render_tiles[index] = _object_layer_state.render_tiles[index];
             snapshot.objects.fetched_tiles[index] = _object_layer_state.fetched_tiles[index];
+        }
+        for (size_t index{ 0 }; index < 128; ++index)
+        {
+            snapshot.objects.samples[index] = _object_layer_state.objects[index];
         }
 
         snapshot.color_math.direct_color = _color_math_state.direct_color;

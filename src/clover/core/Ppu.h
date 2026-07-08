@@ -168,14 +168,14 @@ namespace clover::core
         uint16_t fetched_scanline{ 0xffffu };
         uint8_t evaluation_first_sprite{ 0 };
         uint8_t evaluation_count{ 0 };
-        uint8_t evaluation_indices[8]{ 0, 0, 0, 0, 0, 0, 0, 0 };
+        uint8_t evaluation_indices[32]{};
         uint8_t tile_count{ 0 };
-        tile_candidate_t tiles[8]{};
+        tile_candidate_t tiles[34]{};
         uint8_t render_tile_count{ 0 };
-        tile_candidate_t render_tiles[8]{};
+        tile_candidate_t render_tiles[34]{};
         uint8_t fetched_tile_count{ 0 };
-        tile_candidate_t fetched_tiles[8]{};
-        decoded_object_t samples[4]{};
+        tile_candidate_t fetched_tiles[34]{};
+        decoded_object_t samples[128]{};
     };
 
     struct ppu_color_math_render_state_t

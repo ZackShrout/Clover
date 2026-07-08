@@ -21,18 +21,18 @@ namespace clover::core
             enter_interrupt_handler(state, executor, cop_vector(state), true, false);
             return true;
         case 0xeau:
-            executor.retire_opcode_boundary(state);
+            executor.retire_internal_operation();
             return true;
         case 0x18u:
-            executor.retire_opcode_boundary(state);
+            executor.retire_internal_operation();
             state.p &= static_cast<uint8_t>(~k_status_carry);
             return true;
         case 0x38u:
-            executor.retire_opcode_boundary(state);
+            executor.retire_internal_operation();
             state.p |= k_status_carry;
             return true;
         case 0xd8u:
-            executor.retire_opcode_boundary(state);
+            executor.retire_internal_operation();
             state.p &= static_cast<uint8_t>(~k_status_decimal);
             return true;
         case 0xc2u:
@@ -52,27 +52,24 @@ namespace clover::core
             return true;
         }
         case 0x58u:
-            executor.retire_opcode_boundary(state);
+            executor.retire_internal_operation();
             state.p &= static_cast<uint8_t>(~k_status_irq_disable);
-            // CLI defers newly-visible IRQ delivery until the following opcode
-            // boundary; the next CPU step clears this lock before executing.
-            executor.set_irq_lock();
             return true;
         case 0x78u:
-            executor.retire_opcode_boundary(state);
+            executor.retire_internal_operation();
             state.p |= k_status_irq_disable;
             return true;
         case 0xb8u:
-            executor.retire_opcode_boundary(state);
+            executor.retire_internal_operation();
             state.p &= static_cast<uint8_t>(~k_status_overflow);
             return true;
         case 0xf8u:
-            executor.retire_opcode_boundary(state);
+            executor.retire_internal_operation();
             state.p |= k_status_decimal;
             return true;
         case 0xfbu:
         {
-            executor.retire_opcode_boundary(state);
+            executor.retire_internal_operation();
             const bool carry{ (state.p & k_status_carry) != 0 };
             const bool previous_emulation_mode{ state.emulation_mode };
             if (previous_emulation_mode)

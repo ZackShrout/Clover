@@ -37,8 +37,8 @@ namespace clover::core
             const uint16_t target{ executor.fetch_operand_u16(state) };
             executor.idle();
             executor.push_u16(state, static_cast<uint16_t>(state.pc - 1u));
-            state.pc = target;
             executor.retire_instruction();
+            state.pc = target;
             return true;
         }
         case 0x22u:
@@ -48,43 +48,55 @@ namespace clover::core
             executor.idle();
             const uint8_t target_bank{ executor.fetch_operand_u8(state) };
             executor.push_u16(state, static_cast<uint16_t>(state.pc - 1u));
+            executor.retire_instruction();
             state.pb = target_bank;
             state.pc = target_low_word;
-            executor.retire_instruction();
             return true;
         }
         case 0x4cu:
-            state.pc = executor.fetch_operand_u16(state);
+        {
+            const uint16_t target{ executor.fetch_operand_u16(state) };
             executor.retire_instruction();
+            state.pc = target;
             return true;
+        }
         case 0x5cu:
         {
             const uint32_t target{ executor.fetch_operand_u24(state) };
+            executor.retire_instruction();
             state.pb = static_cast<uint8_t>(target >> 16u);
             state.pc = static_cast<uint16_t>(target & 0x00ffffu);
-            executor.retire_instruction();
             return true;
         }
         case 0x60u:
+        {
             executor.idle();
             executor.idle();
-            state.pc = static_cast<uint16_t>(executor.pull_u16(state) + 1u);
+            const uint16_t target{ executor.pull_u16(state) };
             executor.idle();
             executor.retire_instruction();
+            state.pc = static_cast<uint16_t>(target + 1u);
             return true;
+        }
         case 0x6bu:
         {
             executor.idle();
             executor.idle();
-            state.pc = static_cast<uint16_t>(executor.pull_u16(state) + 1u);
-            state.pb = executor.pull_u8(state);
+            const uint8_t low{ executor.pull_u8(state) };
+            const uint8_t high{ executor.pull_u8(state) };
+            const uint8_t bank{ executor.pull_u8(state) };
             executor.retire_instruction();
+            state.pc = static_cast<uint16_t>((low | (high << 8u)) + 1u);
+            state.pb = bank;
             return true;
         }
         case 0x6cu:
-            state.pc = read_indirect_pointer_u16(executor, executor.fetch_operand_u16(state));
+        {
+            const uint16_t target{ read_indirect_pointer_u16(executor, executor.fetch_operand_u16(state)) };
             executor.retire_instruction();
+            state.pc = target;
             return true;
+        }
         case 0x7cu:
         {
             const uint16_t pointer_base{ executor.fetch_operand_u16(state) };
@@ -96,23 +108,25 @@ namespace clover::core
             const uint8_t low{ executor.read_u8(pointer_address) };
             const uint8_t high{ executor.read_u8((pointer_address & 0xff0000u)
                 | static_cast<uint16_t>(pointer_base + state.x + 1u)) };
-            state.pc = static_cast<uint16_t>(low | (high << 8u));
             executor.retire_instruction();
+            state.pc = static_cast<uint16_t>(low | (high << 8u));
             return true;
         }
         case 0xdcu:
         {
             const uint32_t target{ read_indirect_pointer_u24(executor, executor.fetch_operand_u16(state)) };
+            executor.retire_instruction();
             state.pb = static_cast<uint8_t>(target >> 16u);
             state.pc = static_cast<uint16_t>(target & 0x00ffffu);
-            executor.retire_instruction();
             return true;
         }
         case 0xfcu:
         {
-            const uint16_t pointer_base{ executor.fetch_operand_u16(state) };
+            const uint8_t pointer_low{ executor.fetch_operand_u8(state) };
+            executor.push_u16(state, state.pc);
+            const uint8_t pointer_high{ executor.fetch_operand_u8(state) };
             executor.idle();
-            executor.push_u16(state, static_cast<uint16_t>(state.pc - 1u));
+            const uint16_t pointer_base{ static_cast<uint16_t>(pointer_low | (pointer_high << 8u)) };
             const uint32_t pointer_address{
                 (static_cast<uint32_t>(state.pb) << 16u)
                 | static_cast<uint16_t>(pointer_base + state.x)
@@ -120,8 +134,8 @@ namespace clover::core
             const uint8_t low{ executor.read_u8(pointer_address) };
             const uint8_t high{ executor.read_u8((pointer_address & 0xff0000u)
                 | static_cast<uint16_t>(pointer_base + state.x + 1u)) };
-            state.pc = static_cast<uint16_t>(low | (high << 8u));
             executor.retire_instruction();
+            state.pc = static_cast<uint16_t>(low | (high << 8u));
             return true;
         }
         default:

@@ -107,6 +107,7 @@ namespace clover::core
         void commit_cpu_writes() noexcept;
         [[nodiscard]] ppu_step_result_t step_ppu_with_cpu_writes(master_clock_delta_t elapsed_master_clocks) noexcept;
         void step_apu_with_cpu_writes(master_clock_delta_t elapsed_master_clocks) noexcept;
+        void step_apu(master_clock_delta_t elapsed_master_clocks) noexcept;
         void synchronize_apu_io_access(master_clock_delta_t target_clocks) noexcept;
         [[nodiscard]] uint8_t open_bus() const noexcept;
         [[nodiscard]] uint8_t ppu_register_write_trace_count() const noexcept;

@@ -199,6 +199,23 @@ namespace
         return clover::core::dma_phase_from_master_clock(timing.master_clock - timing.raster.dot);
     }
 
+    void accumulate_ppu_step_result(clover::core::ppu_step_result_t& aggregate,
+                                    const clover::core::ppu_step_result_t& step) noexcept
+    {
+        aggregate.timing = step.timing;
+        aggregate.visible_scanlines = step.visible_scanlines;
+        aggregate.interlace = step.interlace;
+        aggregate.frame_complete = aggregate.frame_complete || step.frame_complete;
+        aggregate.entered_scanline = aggregate.entered_scanline || step.entered_scanline;
+        aggregate.entered_frame_start = aggregate.entered_frame_start || step.entered_frame_start;
+        aggregate.entered_hblank = aggregate.entered_hblank || step.entered_hblank;
+        aggregate.entered_vblank = aggregate.entered_vblank || step.entered_vblank;
+        aggregate.hdma_setup_triggered = aggregate.hdma_setup_triggered || step.hdma_setup_triggered;
+        aggregate.hdma_transfer_triggered = aggregate.hdma_transfer_triggered || step.hdma_transfer_triggered;
+        aggregate.nmi_requested = aggregate.nmi_requested || step.nmi_requested;
+        aggregate.irq_requested = aggregate.irq_requested || step.irq_requested;
+    }
+
 } // anonymous namespace
 
 namespace clover::core
@@ -558,10 +575,10 @@ namespace clover::core
     }
 
     cpu_step_result_t cpu_t::step(bus_t& bus,
-                                  const dma_t& dma,
+                                  dma_t& dma,
                                   interrupt_controller_t& interrupts) noexcept
     {
-        cpu_step_executor_t executor{ bus, interrupts, _io.fast_rom_enabled };
+        cpu_step_executor_t executor{ bus, *this, dma, interrupts, _io.fast_rom_enabled };
 
         if (_stopped)
         {
@@ -652,10 +669,11 @@ namespace clover::core
             && !execute_system_opcode(opcode, *this, _state, executor)
             && !execute_branch_opcode(opcode, _state, executor))
         {
-            // TODO(hardware-timing): This is still a placeholder execution model:
-            // one opcode fetch plus one trailing CPU cycle. Zelda/SMW timing work
-            // has shown we need real per-opcode CPU timing that stays phase-aligned
-            // with bsnes and hardware, so this must be replaced rather than tuned.
+            // TODO(hardware-timing): Unsupported opcodes still retire through a
+            // placeholder execution model: one opcode fetch plus one trailing
+            // internal CPU cycle. This path was not hit in the recent Zelda/SMW
+            // timing regressions, but it still must be replaced with real
+            // per-opcode behavior for full hardware-faithful coverage.
             ++_placeholder_opcode_count;
             executor.idle();
         }
@@ -665,12 +683,61 @@ namespace clover::core
 
         const cpu_step_result_t result{ executor.finish() };
         _master_clock += result.master_clocks;
-        // DMA requests raised by CPU MMIO writes become visible only after the
-        // current opcode retires, so the scheduler hands ownership to DMA on
-        // the following hardware slot rather than mid-instruction.
-        if (dma.has_pending_work())
-            _dma_active = true;
         return result;
+    }
+
+    master_clock_delta_t cpu_t::advance_execution(master_clock_delta_t elapsed_master_clocks,
+                                                  dma_t& dma,
+                                                  interrupt_controller_t& interrupts,
+                                                  ppu_step_result_t& aggregate) noexcept
+    {
+        if (elapsed_master_clocks == 0 || _ppu == nullptr)
+            return 0;
+
+        const master_clock_delta_t adjusted_elapsed{
+            apply_system_timing(elapsed_master_clocks, _ppu->video_timing())
+        };
+        const ppu_step_result_t ppu_step{ _ppu->step(adjusted_elapsed) };
+        accumulate_ppu_step_result(aggregate, ppu_step);
+        if (_bus != nullptr)
+            _bus->step_apu(adjusted_elapsed);
+        on_ppu_step(adjusted_elapsed,
+                    _ppu->video_timing(),
+                    ppu_step,
+                    dma,
+                    interrupts);
+        return adjusted_elapsed;
+    }
+
+    master_clock_delta_t cpu_t::service_dma_edge(bus_t& bus,
+                                                 dma_t& dma,
+                                                 interrupt_controller_t& interrupts,
+                                                 ppu_step_result_t& aggregate) noexcept
+    {
+        master_clock_delta_t elapsed_master_clocks{ 0 };
+        if (!_dma_active)
+        {
+            if (dma.has_pending_work())
+                _dma_active = true;
+            return 0;
+        }
+
+        while (_dma_active)
+        {
+            const dma_step_result_t dma_step{ dma.step(bus, dma_phase()) };
+            if (dma_step.master_clocks != 0)
+            {
+                elapsed_master_clocks = static_cast<master_clock_delta_t>(
+                    elapsed_master_clocks + advance_execution(dma_step.master_clocks, dma, interrupts, aggregate)
+                );
+            }
+            on_dma_step(dma, interrupts);
+            if (dma_step.master_clocks == 0 && !dma.has_pending_work())
+                break;
+            if (dma_step.master_clocks == 0 && !_dma_active)
+                break;
+        }
+        return elapsed_master_clocks;
     }
 
     master_clock_delta_t cpu_t::apply_system_timing(master_clock_delta_t elapsed_master_clocks,

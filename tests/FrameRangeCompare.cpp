@@ -11,10 +11,17 @@
 #include <fstream>
 #include <limits>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace
 {
+    enum class compare_profile_t : uint8_t
+    {
+        exact,
+        bsnes_libretro_bottom_corner_artifact
+    };
+
     struct ppm_image_t
     {
         uint32_t width{ 0 };
@@ -28,6 +35,7 @@ namespace
         uint64_t differing_channels{ 0 };
         uint8_t max_channel_delta{ 0 };
         uint64_t total_channel_delta{ 0 };
+        uint64_t ignored_pixels{ 0 };
         uint32_t first_diff_x{ 0 };
         uint32_t first_diff_y{ 0 };
         bool has_difference{ false };
@@ -49,10 +57,50 @@ namespace
     void print_usage(const char* executable)
     {
         std::fprintf(stderr,
-                     "Usage: %s <expected_dir> <actual_dir> <start_frame> <end_frame> [min_offset] [max_offset]\n"
-                     "Example: %s /tmp/bsnes /tmp/clover 84 100 -1 1\n",
+                     "Usage: %s <expected_dir> <actual_dir> <start_frame> <end_frame> [min_offset] [max_offset] [profile]\n"
+                     "Profiles: exact, bsnes-libretro-bottom-corner-artifact\n"
+                     "Example: %s /tmp/bsnes /tmp/clover 84 100 -1 1 exact\n",
                      executable,
                      executable);
+    }
+
+    [[nodiscard]] compare_profile_t parse_profile(std::string_view raw) noexcept
+    {
+        if (raw == "bsnes-libretro-bottom-corner-artifact")
+            return compare_profile_t::bsnes_libretro_bottom_corner_artifact;
+
+        return compare_profile_t::exact;
+    }
+
+    [[nodiscard]] compare_profile_t load_profile(int argc, char** argv) noexcept
+    {
+        if (argc >= 8)
+            return parse_profile(argv[7]);
+
+        if (const char* raw{ std::getenv("CLOVER_FRAME_COMPARE_PROFILE") }; raw != nullptr)
+            return parse_profile(raw);
+
+        return compare_profile_t::exact;
+    }
+
+    [[nodiscard]] bool ignore_pixel(compare_profile_t profile,
+                                    uint32_t width,
+                                    uint32_t height,
+                                    uint32_t x,
+                                    uint32_t y) noexcept
+    {
+        switch (profile)
+        {
+        case compare_profile_t::exact:
+            return false;
+        case compare_profile_t::bsnes_libretro_bottom_corner_artifact:
+            return width == 256u
+                && height == 240u
+                && y >= 227u
+                && (x < 8u || x >= 248u);
+        }
+
+        return false;
     }
 
     [[nodiscard]] bool read_token(std::ifstream& input, std::string& token)
@@ -122,12 +170,22 @@ namespace
         return input.good() || input.eof();
     }
 
-    [[nodiscard]] compare_summary_t compare_images(const ppm_image_t& expected, const ppm_image_t& actual)
+    [[nodiscard]] compare_summary_t compare_images(const ppm_image_t& expected,
+                                                   const ppm_image_t& actual,
+                                                   compare_profile_t profile)
     {
         compare_summary_t summary{};
         const size_t pixel_count{ static_cast<size_t>(expected.width) * expected.height };
         for (size_t pixel_index{ 0 }; pixel_index < pixel_count; ++pixel_index)
         {
+            const uint32_t x{ static_cast<uint32_t>(pixel_index % expected.width) };
+            const uint32_t y{ static_cast<uint32_t>(pixel_index / expected.width) };
+            if (ignore_pixel(profile, expected.width, expected.height, x, y))
+            {
+                summary.ignored_pixels += 1u;
+                continue;
+            }
+
             bool pixel_differs{ false };
             for (size_t channel{ 0 }; channel < 3u; ++channel)
             {
@@ -154,8 +212,8 @@ namespace
             if (!summary.has_difference)
             {
                 summary.has_difference = true;
-                summary.first_diff_x = static_cast<uint32_t>(pixel_index % expected.width);
-                summary.first_diff_y = static_cast<uint32_t>(pixel_index / expected.width);
+                summary.first_diff_x = x;
+                summary.first_diff_y = y;
             }
 
             summary.differing_pixels += 1u;
@@ -194,7 +252,7 @@ namespace
 
 int main(int argc, char** argv)
 {
-    if (argc < 5 || argc > 7)
+    if (argc < 5 || argc > 8)
     {
         print_usage(argv[0]);
         return 1;
@@ -220,6 +278,7 @@ int main(int argc, char** argv)
         max_offset = static_cast<int32_t>(std::strtol(argv[6], nullptr, 10));
     else
         max_offset = min_offset;
+    const compare_profile_t profile{ load_profile(argc, argv) };
 
     if (min_offset > max_offset)
     {
@@ -288,7 +347,7 @@ int main(int argc, char** argv)
                 return 1;
             }
 
-            const compare_summary_t compare{ compare_images(expected, actual) };
+            const compare_summary_t compare{ compare_images(expected, actual, profile) };
             if (!compare.has_difference)
             {
                 ++summary.exact_matches;

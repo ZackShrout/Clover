@@ -9,6 +9,8 @@
 #include "clover/core/Cpu.h"
 #include "clover/core/Interrupts.h"
 
+#include <cstdio>
+
 namespace clover::core
 {
     inline constexpr master_clock_delta_t k_cpu_bus_cycle_clocks{ 6 };
@@ -191,9 +193,13 @@ namespace clover::core
     {
     public:
         explicit cpu_step_executor_t(bus_t& bus,
+                                     cpu_t& cpu,
+                                     dma_t& dma,
                                      interrupt_controller_t& interrupts,
                                      bool fast_rom_enabled) noexcept
             : _bus(bus)
+            , _cpu(cpu)
+            , _dma(dma)
             , _interrupts(interrupts)
             , _fast_rom_enabled(fast_rom_enabled)
         {
@@ -201,21 +207,29 @@ namespace clover::core
 
         [[nodiscard]] uint8_t read_u8(uint32_t address) noexcept
         {
+            const master_clock_delta_t access_clocks{ cpu_access_clocks(address, _fast_rom_enabled) };
             _master_clocks = static_cast<master_clock_delta_t>(
-                _master_clocks + cpu_access_clocks(address, _fast_rom_enabled)
+                _master_clocks + _cpu.service_dma_edge(_bus, _dma, _interrupts, _ppu_step_result)
             );
-            const uint8_t value{ _bus.read_cpu_u8(address, _master_clocks) };
+            _master_clocks = static_cast<master_clock_delta_t>(
+                _master_clocks + _cpu.advance_execution(access_clocks, _dma, _interrupts, _ppu_step_result)
+            );
+            const uint8_t value{ _bus.read_u8(address) };
             _bus.trace_cpu_apu_port_access(address, value, false, _master_clocks);
             return value;
         }
 
         void write_u8(uint32_t address, uint8_t value) noexcept
         {
+            const master_clock_delta_t access_clocks{ cpu_access_clocks(address, _fast_rom_enabled) };
             _master_clocks = static_cast<master_clock_delta_t>(
-                _master_clocks + cpu_access_clocks(address, _fast_rom_enabled)
+                _master_clocks + _cpu.service_dma_edge(_bus, _dma, _interrupts, _ppu_step_result)
+            );
+            _master_clocks = static_cast<master_clock_delta_t>(
+                _master_clocks + _cpu.advance_execution(access_clocks, _dma, _interrupts, _ppu_step_result)
             );
             _bus.trace_cpu_apu_port_access(address, value, true, _master_clocks);
-            _bus.write_cpu_u8(address, value, _master_clocks);
+            _bus.write_u8(address, value);
         }
 
         [[nodiscard]] uint8_t fetch_opcode(cpu_state_t& state) noexcept
@@ -635,6 +649,20 @@ namespace clover::core
             const uint16_t base_address{ effective_absolute_address(fetch_operand_u16(state)) };
             idle();
             const uint16_t address{ static_cast<uint16_t>(base_address + index) };
+            if (state.pb == 0x09u
+                && address >= 0xee80u
+                && address <= 0xeea0u)
+            {
+                std::printf("CPU abs-indexed write8: PB:%02x PC:%04x base=%04x index=%04x addr=%04x value=%02x DB:%02x P:%02x\n",
+                            state.pb,
+                            state.pc,
+                            base_address,
+                            index,
+                            address,
+                            value,
+                            state.db,
+                            state.p);
+            }
             write_u8(data_address(state, address), value);
         }
 
@@ -643,6 +671,20 @@ namespace clover::core
             const uint16_t base_address{ effective_absolute_address(fetch_operand_u16(state)) };
             idle();
             const uint16_t address{ static_cast<uint16_t>(base_address + index) };
+            if (state.pb == 0x09u
+                && address >= 0xee80u
+                && address <= 0xeea0u)
+            {
+                std::printf("CPU abs-indexed write16: PB:%02x PC:%04x base=%04x index=%04x addr=%04x value=%04x DB:%02x P:%02x\n",
+                            state.pb,
+                            state.pc,
+                            base_address,
+                            index,
+                            address,
+                            value,
+                            state.db,
+                            state.p);
+            }
             write_u8(data_address(state, address), static_cast<uint8_t>(value & 0x00ffu));
             write_u8(data_address(state, static_cast<uint16_t>(address + 1u)),
                      static_cast<uint8_t>(value >> 8u));
@@ -838,12 +880,12 @@ namespace clover::core
 
         void idle() noexcept
         {
-            _master_clocks = static_cast<master_clock_delta_t>(_master_clocks + k_cpu_bus_cycle_clocks);
-        }
-
-        void commit_cpu_writes() noexcept
-        {
-            _bus.commit_cpu_writes();
+            _master_clocks = static_cast<master_clock_delta_t>(
+                _master_clocks + _cpu.service_dma_edge(_bus, _dma, _interrupts, _ppu_step_result)
+            );
+            _master_clocks = static_cast<master_clock_delta_t>(
+                _master_clocks + _cpu.advance_execution(k_cpu_bus_cycle_clocks, _dma, _interrupts, _ppu_step_result)
+            );
         }
 
         void observe_opcode_edge() noexcept
@@ -859,15 +901,14 @@ namespace clover::core
 
         void retire_instruction() noexcept
         {
-            commit_cpu_writes();
             observe_opcode_edge();
             _retired_instruction = true;
         }
 
-        void retire_opcode_boundary(const cpu_state_t& state) noexcept
+        void retire_internal_operation() noexcept
         {
+            idle();
             retire_instruction();
-            static_cast<void>(read_u8(program_address(state)));
         }
 
         [[nodiscard]] bool observed_opcode_edge() const noexcept
@@ -882,16 +923,23 @@ namespace clover::core
 
         [[nodiscard]] cpu_step_result_t finish() const noexcept
         {
-            return { .master_clocks = _master_clocks };
+            return {
+                .master_clocks = _master_clocks,
+                .ppu = _ppu_step_result,
+                .stepped_hardware = true
+            };
         }
 
     private:
         bus_t& _bus;
+        cpu_t& _cpu;
+        dma_t& _dma;
         interrupt_controller_t& _interrupts;
         bool _fast_rom_enabled{ false };
         master_clock_delta_t _master_clocks{ 0 };
         bool _observed_opcode_edge{ false };
         bool _retired_instruction{ false };
+        ppu_step_result_t _ppu_step_result{};
     };
 
     inline void enter_interrupt_handler(cpu_state_t& state,

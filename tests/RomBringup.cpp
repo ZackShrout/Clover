@@ -276,6 +276,13 @@ namespace
         uint64_t frame_max{ UINT64_MAX };
     };
 
+    struct bus_window_filter_t
+    {
+        bool enabled{ false };
+        uint32_t address{ 0x000000u };
+        uint16_t count{ 0u };
+    };
+
     struct generic_trace_filter_t
     {
         bool enabled{ false };
@@ -464,6 +471,7 @@ namespace
                                   const clover::core::timing_snapshot_t& timing,
                                   const clover::core::ppu_render_state_snapshot_t& ppu_state,
                                   const clover::core::ppu_compositor_snapshot_t& compositor_state,
+                                  uint16_t cgram0,
                                   const ppu_probe_filter_t& filter) noexcept
     {
         constexpr const char* k_probe_header_format =
@@ -492,10 +500,32 @@ namespace
                     static_cast<unsigned>(compositor_state.fixed_red),
                     static_cast<unsigned>(compositor_state.fixed_green),
                     static_cast<unsigned>(compositor_state.fixed_blue));
+        std::printf("  cgram0=%04x\n", static_cast<unsigned>(cgram0));
         std::printf("  obj_eval_indices:");
         for (size_t index{ 0 }; index < std::size(ppu_state.objects.evaluation_indices); ++index)
             std::printf(" %u", ppu_state.objects.evaluation_indices[index]);
         std::printf("\n");
+        const size_t evaluated_object_count{
+            std::min<size_t>(ppu_state.objects.evaluation_count, std::size(ppu_state.objects.evaluation_indices))
+        };
+        for (size_t index{ 0 }; index < evaluated_object_count; ++index)
+        {
+            const uint8_t object_index{ ppu_state.objects.evaluation_indices[index] };
+            const auto& object{ ppu_state.objects.samples[object_index] };
+            std::printf("  objstate[%u] x=%u y=%u chr=%u w=%u h=%u nameselect=%u pal=%u pri=%u hflip=%u vflip=%u size=%u\n",
+                        static_cast<unsigned>(object_index),
+                        static_cast<unsigned>(object.x),
+                        static_cast<unsigned>(object.y),
+                        static_cast<unsigned>(object.character),
+                        static_cast<unsigned>(object.width),
+                        static_cast<unsigned>(object.height),
+                        object.nameselect ? 1u : 0u,
+                        static_cast<unsigned>(object.palette),
+                        static_cast<unsigned>(object.priority),
+                        object.hflip ? 1u : 0u,
+                        object.vflip ? 1u : 0u,
+                        object.size_select ? 1u : 0u);
+        }
         for (size_t background_index{ 0 }; background_index < 4u; ++background_index)
         {
             const auto& background{ ppu_state.backgrounds[background_index] };
@@ -555,7 +585,7 @@ namespace
             std::printf("\n");
         }
 
-        const uint8_t object_tile_count{ std::min<uint8_t>(ppu_state.objects.tile_count, 8u) };
+        const uint8_t object_tile_count{ std::min<uint8_t>(ppu_state.objects.tile_count, 16u) };
         for (uint8_t tile_index{ 0 }; tile_index < object_tile_count; ++tile_index)
         {
             const auto& tile{ ppu_state.objects.tiles[tile_index] };
@@ -573,7 +603,7 @@ namespace
                         tile.row_data[0],
                         tile.row_data[1]);
         }
-        const uint8_t render_tile_count{ std::min<uint8_t>(ppu_state.objects.render_tile_count, 8u) };
+        const uint8_t render_tile_count{ std::min<uint8_t>(ppu_state.objects.render_tile_count, 16u) };
         for (uint8_t tile_index{ 0 }; tile_index < render_tile_count; ++tile_index)
         {
             const auto& tile{ ppu_state.objects.render_tiles[tile_index] };
@@ -766,6 +796,21 @@ namespace
         return filter;
     }
 
+    [[nodiscard]] bus_window_filter_t load_bus_window_filter() noexcept
+    {
+        bus_window_filter_t filter{};
+        const char* address_raw{ std::getenv("CLOVER_BUS_WINDOW_ADDR") };
+        if (address_raw == nullptr || *address_raw == '\0')
+            return filter;
+
+        filter.enabled = true;
+        filter.address = static_cast<uint32_t>(parse_u64_env("CLOVER_BUS_WINDOW_ADDR", 0u) & 0xffffffu);
+        filter.count = static_cast<uint16_t>(parse_u64_env("CLOVER_BUS_WINDOW_COUNT", 0x20u) & 0xffffu);
+        if (filter.count == 0u)
+            filter.count = 0x20u;
+        return filter;
+    }
+
     [[nodiscard]] bool cgram_trace_enabled() noexcept
     {
         return parse_bool_env("CLOVER_CAPTURE_CGRAM_TRACE");
@@ -786,6 +831,20 @@ namespace
     {
         const uint64_t fallback{ dump_start_frame > 0 ? dump_start_frame - 1u : 0u };
         return parse_u64_env("CLOVER_CAPTURE_OAM_TRACE_START_FRAME", fallback);
+    }
+
+    [[nodiscard]] clover::core::ppu_presentation_source_t load_dump_source() noexcept
+    {
+        if (const char* raw{ std::getenv("CLOVER_DUMP_SOURCE") }; raw != nullptr && *raw != '\0')
+        {
+            const std::string_view value{ raw };
+            if (value == "presented" || value == "PRESENTED")
+                return clover::core::ppu_presentation_source_t::presented;
+            if (value == "composed" || value == "COMPOSED")
+                return clover::core::ppu_presentation_source_t::composed;
+        }
+
+        return clover::core::ppu_presentation_source_t::composed;
     }
 
     struct wram_dump_config_t
@@ -1840,6 +1899,7 @@ int main(int argc, char** argv)
     console.power_on();
     const hot_path_filter_t hot_path_filter{ load_hot_path_filter() };
     const watched_write_filter_t watched_write_filter{ load_watched_write_filter() };
+    const bus_window_filter_t bus_window_filter{ load_bus_window_filter() };
     const generic_trace_filter_t generic_trace_filter{ load_generic_trace_filter() };
     const ppu_probe_filter_t ppu_probe_filter{ load_ppu_probe_filter() };
     const bool verbose_output{ parse_bool_env("CLOVER_BRINGUP_VERBOSE") };
@@ -1847,6 +1907,7 @@ int main(int argc, char** argv)
     const uint64_t cgram_trace_start{ cgram_trace_start_frame(dump_start_frame) };
     const bool capture_oam_trace{ oam_trace_enabled() };
     const uint64_t oam_trace_start{ oam_trace_start_frame(dump_start_frame) };
+    const clover::core::ppu_presentation_source_t dump_source{ load_dump_source() };
     const wram_dump_config_t wram_dump_config{ load_wram_dump_config() };
     const bool capture_direct_page_watch{ parse_bool_env("CLOVER_CAPTURE_DIRECT_PAGE") };
     const bool capture_transfer_pointer_changes{ parse_bool_env("CLOVER_CAPTURE_TRANSFER_POINTERS") };
@@ -1905,6 +1966,12 @@ int main(int argc, char** argv)
         const clover::core::hardware_timing_snapshot_t timing_snapshot{ console.capture_timing_snapshot() };
         if (should_emit_generic_trace(generic_trace_filter, current_cpu, timing_snapshot, active_frame))
         {
+            const uint8_t dp_00{ console.read_u8(0x000000u) };
+            const uint8_t dp_01{ console.read_u8(0x000001u) };
+            const uint8_t dp_02{ console.read_u8(0x000002u) };
+            const uint8_t dp_03{ console.read_u8(0x000003u) };
+            const uint8_t dp_04{ console.read_u8(0x000004u) };
+            const uint8_t dp_05{ console.read_u8(0x000005u) };
             const uint8_t dp_f3{ console.read_u8(0x0000f3u) };
             const uint8_t dp_f4{ console.read_u8(0x0000f4u) };
             const uint8_t dp_f5{ console.read_u8(0x0000f5u) };
@@ -1915,6 +1982,7 @@ int main(int argc, char** argv)
                          "CPUHOT step=%llu frame=%llu scanline=%u dot=%u PB:%02x PC:%04x OP:%02x "
                          "A:%04x X:%04x Y:%04x SP:%04x D:%04x DB:%02x P:%02x E:%u "
                          "wmadd=%05x irq=%u nmi=%u dma=%u hdma=%u gdma=%u in_hblank=%u in_vblank=%u "
+                         "dp00-05=%02x,%02x,%02x,%02x,%02x,%02x "
                          "src=%02x:%02x%02x dst=%02x:%02x%02x f9-fc=%02x,%02x,%02x,%02x\n",
                          static_cast<unsigned long long>(summary.steps),
                          static_cast<unsigned long long>(active_frame),
@@ -1939,6 +2007,12 @@ int main(int argc, char** argv)
                          timing_snapshot.general_dma_pending ? 1u : 0u,
                          timing_snapshot.ppu_timing.in_hblank ? 1u : 0u,
                          timing_snapshot.ppu_timing.in_vblank ? 1u : 0u,
+                         dp_00,
+                         dp_01,
+                         dp_02,
+                         dp_03,
+                         dp_04,
+                         dp_05,
                          dp_f5,
                          dp_f4,
                          dp_f3,
@@ -2259,6 +2333,7 @@ int main(int argc, char** argv)
                                      step.ppu.timing,
                                      console.ppu_render_state(),
                                      console.ppu_compositor_state(),
+                                     console.ppu_cgram()[0],
                                      ppu_probe_filter);
         }
         const bool should_dump_frame{
@@ -2268,11 +2343,8 @@ int main(int argc, char** argv)
         };
         if (step.ppu.entered_vblank && should_dump_frame)
         {
-            // bsnes/libretro emits its frame at vblank entry, so dump the
-            // currently composed Clover frame at the same point to keep
-            // frame labels analogous across both harnesses.
             console.refresh_framebuffer({
-                .source = clover::core::ppu_presentation_source_t::composed
+                .source = dump_source
             });
 
             const std::string frame_basename{ "frame_" + std::to_string(active_frame) };
@@ -2576,6 +2648,8 @@ int main(int argc, char** argv)
         print_bus_window(console, "Bus window", 0x7ffbe0u, 0x30u);
     }
     print_bus_window(console, "WRAM window", 0x000d84u, 0x16u);
+    if (bus_window_filter.enabled)
+        print_bus_window(console, "Bus window", bus_window_filter.address, bus_window_filter.count);
     print_ppu_summary(ppu_state);
     print_system_register_write_trace(console);
     print_ppu_register_write_trace(console);

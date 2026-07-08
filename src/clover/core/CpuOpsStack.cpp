@@ -27,15 +27,15 @@ namespace clover::core
             executor.idle();
             executor.idle();
             state.p = executor.pull_u8(state);
-            normalize_status_for_mode(state);
             executor.retire_instruction();
+            normalize_status_for_mode(state);
             return true;
         case 0x2bu:
             executor.idle();
             executor.idle();
             state.d = executor.pull_u16(state);
-            set_zero_negative_flags(state, state.d, false);
             executor.retire_instruction();
+            set_zero_negative_flags(state, state.d, false);
             return true;
         case 0x4bu:
             executor.idle();
@@ -56,14 +56,15 @@ namespace clover::core
             if (accumulator_is_8bit(state))
             {
                 state.a = static_cast<uint16_t>((state.a & 0xff00u) | executor.pull_u8(state));
+                executor.retire_instruction();
                 set_zero_negative_flags(state, state.a, true);
             }
             else
             {
                 state.a = executor.pull_u16(state);
+                executor.retire_instruction();
                 set_zero_negative_flags(state, state.a, false);
             }
-            executor.retire_instruction();
             return true;
         case 0x5au:
             executor.idle();
@@ -95,14 +96,15 @@ namespace clover::core
             if (index_is_8bit(state))
             {
                 state.x = executor.pull_u8(state);
+                executor.retire_instruction();
                 set_zero_negative_flags(state, state.x, true);
             }
             else
             {
                 state.x = executor.pull_u16(state);
+                executor.retire_instruction();
                 set_zero_negative_flags(state, state.x, false);
             }
-            executor.retire_instruction();
             return true;
         case 0x7au:
             executor.idle();
@@ -110,14 +112,15 @@ namespace clover::core
             if (index_is_8bit(state))
             {
                 state.y = executor.pull_u8(state);
+                executor.retire_instruction();
                 set_zero_negative_flags(state, state.y, true);
             }
             else
             {
                 state.y = executor.pull_u16(state);
+                executor.retire_instruction();
                 set_zero_negative_flags(state, state.y, false);
             }
-            executor.retire_instruction();
             return true;
         case 0x62u:
         {
@@ -144,8 +147,8 @@ namespace clover::core
             executor.idle();
             executor.idle();
             state.db = executor.pull_u8(state);
-            set_zero_negative_flags(state, state.db, true);
             executor.retire_instruction();
+            set_zero_negative_flags(state, state.db, true);
             return true;
         default:
             return false;

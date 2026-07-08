@@ -78,7 +78,7 @@ namespace clover::core
         void write_register(uint16_t address, uint8_t value) noexcept;
         [[nodiscard]] hardware_slot_owner_t next_slot_owner(const dma_t& dma) const noexcept;
         [[nodiscard]] cpu_step_result_t step(bus_t& bus,
-                                             const dma_t& dma,
+                                             dma_t& dma,
                                              interrupt_controller_t& interrupts) noexcept;
         [[nodiscard]] master_clock_delta_t apply_system_timing(master_clock_delta_t elapsed_master_clocks,
                                                                const video_timing_t& video_timing) noexcept;
@@ -94,6 +94,14 @@ namespace clover::core
         [[nodiscard]] bool irq_condition(const timing_snapshot_t& irq_timing,
                                          const timing_snapshot_t& irq_gate_timing) const noexcept;
         void repoll_irq_on_register_write(interrupt_controller_t& interrupts) noexcept;
+        [[nodiscard]] master_clock_delta_t advance_execution(master_clock_delta_t elapsed_master_clocks,
+                                                             dma_t& dma,
+                                                             interrupt_controller_t& interrupts,
+                                                             ppu_step_result_t& aggregate) noexcept;
+        [[nodiscard]] master_clock_delta_t service_dma_edge(bus_t& bus,
+                                                            dma_t& dma,
+                                                            interrupt_controller_t& interrupts,
+                                                            ppu_step_result_t& aggregate) noexcept;
         void set_waiting(bool waiting) noexcept;
         void set_stopped(bool stopped) noexcept;
 
@@ -122,6 +130,7 @@ namespace clover::core
         bool _hdma_setup_pending{ true };
         uint64_t _placeholder_opcode_count{ 0u };
 
+        friend struct cpu_step_executor_t;
         friend bool execute_system_opcode(uint8_t opcode,
                                           cpu_t& cpu,
                                           cpu_state_t& state,

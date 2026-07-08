@@ -58,6 +58,11 @@ Unless a test says otherwise, a "match" currently means:
 - identical Clover-side dump timing for VRAM/CGRAM/OAM/WRAM when requested
 - comparable CPU/PPU/APU event summaries in the bringup harness
 
+The standard reference sweep uses the
+`bsnes-libretro-bottom-corner-artifact` compare profile. This masks a verified
+bsnes libretro capture artifact in the extreme bottom corners of the 256x240
+output buffer, while leaving the active picture comparison exact.
+
 ## Milestone ROMs
 
 These ROMs are our current real-world baseline set:
@@ -92,11 +97,11 @@ Bulk one-pass capture archives for the same 300-frame window are stored under:
 - `bulk-ff3-clover-300`
 
 These 300-frame sweeps are the authoritative post-startup-semantics baseline,
-and they corrected an overly optimistic assumption from earlier spot checks:
+and the current harness interpretation is:
 
-- Zelda is exact through frame 167, first mismatch at frame 168
-- SMW is exact through frame 193, first mismatch at frame 194
-- FF3 is exact through frame 300
+- Zelda matches through frame 300 in the active picture
+- SMW matches through frame 300
+- FF3 matches through frame 300
 
 ## Known Strong Checkpoints
 
@@ -116,9 +121,10 @@ investigating drift, so they remain useful spot-check frames even when the full
 Under the deterministic Clover-vs-bsnes harness:
 
 - `Legend of Zelda, The - A Link to the Past (USA).sfc`
-  matches through frame 167 and first diverges at frame 168
+  matches through frame 300 in the active picture; raw exact-buffer compares
+  still expose a known bsnes libretro bottom-corner artifact
 - `Super Mario World (USA).sfc`
-  matches through frame 193 and first diverges at frame 194
+  matches through frame 300
 - `Final Fantasy 3 (USA).smc`
   matches through frame 300 in the current archived sweep
 
@@ -133,6 +139,6 @@ The bringup harness now reports:
 non-zero value means execution hit the CPU fallback path for an opcode that does
 not yet have an explicit Clover timing/execution model.
 
-Notably, the current Zelda frame-168 drift and SMW frame-194 drift both occur
-with `cpu_placeholder_opcodes=0`, so those mismatches are not explained by the
-CPU fallback opcode path.
+Notably, the milestone ROM bringup path now reaches the current 300-frame
+baseline with `cpu_placeholder_opcodes=0`, so the CPU fallback opcode path is
+not responsible for the previously investigated Zelda/SMW drift work.

@@ -39,26 +39,22 @@ namespace clover::core
         {
             const cpu_step_result_t cpu_step{ cpu.step(bus, dma, interrupts) };
             result.elapsed_master_clocks = cpu_step.master_clocks;
+            result.ppu = cpu_step.ppu;
         }
 
-        result.elapsed_master_clocks = cpu.apply_system_timing(result.elapsed_master_clocks, ppu.video_timing());
+        if (result.slot_owner == hardware_slot_owner_t::dma)
+        {
+            result.elapsed_master_clocks = cpu.apply_system_timing(result.elapsed_master_clocks, ppu.video_timing());
+            result.ppu = ppu.step(result.elapsed_master_clocks);
+            apu.step(result.elapsed_master_clocks);
+            cpu.on_ppu_step(result.elapsed_master_clocks,
+                            ppu.video_timing(),
+                            result.ppu,
+                            dma,
+                            interrupts);
+        }
 
         _master_clock += result.elapsed_master_clocks;
-
-        if (result.slot_owner == hardware_slot_owner_t::cpu)
-            result.ppu = bus.step_ppu_with_cpu_writes(result.elapsed_master_clocks);
-        else
-            result.ppu = ppu.step(result.elapsed_master_clocks);
-
-        if (result.slot_owner == hardware_slot_owner_t::cpu)
-            bus.step_apu_with_cpu_writes(result.elapsed_master_clocks);
-        else
-            apu.step(result.elapsed_master_clocks);
-        cpu.on_ppu_step(result.elapsed_master_clocks,
-                        ppu.video_timing(),
-                        result.ppu,
-                        dma,
-                        interrupts);
         if (result.ppu.frame_complete)
             ++_frame_index;
 

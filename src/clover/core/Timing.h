@@ -200,17 +200,6 @@ namespace clover::core
         dma
     };
 
-    struct cpu_step_result_t
-    {
-        master_clock_delta_t master_clocks{ 0 };
-    };
-
-    struct dma_step_result_t
-    {
-        master_clock_delta_t master_clocks{ 0 };
-        bool consumed_alignment{ false };
-    };
-
     struct ppu_step_result_t
     {
         timing_snapshot_t timing{};
@@ -225,6 +214,19 @@ namespace clover::core
         bool hdma_transfer_triggered{ false };
         bool nmi_requested{ false };
         bool irq_requested{ false };
+    };
+
+    struct cpu_step_result_t
+    {
+        master_clock_delta_t master_clocks{ 0 };
+        ppu_step_result_t ppu{};
+        bool stepped_hardware{ false };
+    };
+
+    struct dma_step_result_t
+    {
+        master_clock_delta_t master_clocks{ 0 };
+        bool consumed_alignment{ false };
     };
 
     struct hardware_step_result_t

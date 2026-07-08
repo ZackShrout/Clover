@@ -3,7 +3,7 @@
 // Copyright (c) 2026 BunnySoft. All rights reserved.
 //
 
-#include "clover/core/Interrupts.h"
+#include "clover/core/snes/Interrupts.h"
 
 namespace clover::core
 {

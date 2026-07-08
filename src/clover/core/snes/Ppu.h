@@ -6,8 +6,8 @@
 #pragma once
 
 #include "clover/core/FrameBuffer.h"
-#include "clover/core/StartupEntropy.h"
-#include "clover/core/Timing.h"
+#include "clover/core/snes/StartupEntropy.h"
+#include "clover/core/snes/Timing.h"
 
 #include <array>
 #include <cstdint>

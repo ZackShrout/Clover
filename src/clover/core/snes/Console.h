@@ -5,15 +5,15 @@
 
 #pragma once
 
-#include "clover/core/Apu.h"
-#include "clover/core/Bus.h"
-#include "clover/core/Cartridge.h"
-#include "clover/core/Cpu.h"
-#include "clover/core/Dma.h"
+#include "clover/core/snes/Apu.h"
+#include "clover/core/snes/Bus.h"
+#include "clover/core/snes/Cartridge.h"
+#include "clover/core/snes/Cpu.h"
+#include "clover/core/snes/Dma.h"
 #include "clover/core/FrameBuffer.h"
-#include "clover/core/Interrupts.h"
-#include "clover/core/Ppu.h"
-#include "clover/core/Scheduler.h"
+#include "clover/core/snes/Interrupts.h"
+#include "clover/core/snes/Ppu.h"
+#include "clover/core/snes/Scheduler.h"
 
 #include <cstddef>
 #include <span>

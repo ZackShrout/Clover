@@ -5,8 +5,8 @@
 
 #pragma once
 
-#include "clover/core/Cpu.h"
-#include "clover/core/StartupEntropy.h"
+#include "clover/core/snes/Cpu.h"
+#include "clover/core/snes/StartupEntropy.h"
 
 #include <array>
 #include <cstdint>

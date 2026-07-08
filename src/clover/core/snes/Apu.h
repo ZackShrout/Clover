@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "clover/core/Timing.h"
+#include "clover/core/snes/Timing.h"
 
 #include <array>
 #include <cstdint>

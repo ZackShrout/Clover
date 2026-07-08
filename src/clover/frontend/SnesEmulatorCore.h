@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "clover/core/Console.h"
+#include "clover/core/snes/Console.h"
 #include "clover/frontend/EmulatorCore.h"
 
 namespace clover::frontend

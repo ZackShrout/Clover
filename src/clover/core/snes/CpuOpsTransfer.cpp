@@ -3,7 +3,7 @@
 // Copyright (c) 2026 BunnySoft. All rights reserved.
 //
 
-#include "clover/core/CpuInternal.h"
+#include "clover/core/snes/CpuInternal.h"
 
 namespace clover::core
 {

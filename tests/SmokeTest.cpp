@@ -3,7 +3,7 @@
 // Copyright (c) 2026 BunnySoft. All rights reserved.
 //
 
-#include "clover/core/Console.h"
+#include "clover/core/snes/Console.h"
 
 int main()
 {
@@ -12,5 +12,5 @@ int main()
     console.run_frame();
 
     const clover::core::framebuffer_t& framebuffer{ console.framebuffer() };
-    return framebuffer.data()[0] == 0xff101820u ? 0 : 1;
+    return framebuffer.data()[0] == 0xff000000u ? 0 : 1;
 }

@@ -3,9 +3,9 @@
 // Copyright (c) 2026 BunnySoft. All rights reserved.
 //
 
-#include "clover/core/Dma.h"
+#include "clover/core/snes/Dma.h"
 
-#include "clover/core/Bus.h"
+#include "clover/core/snes/Bus.h"
 
 namespace
 {

@@ -3,7 +3,7 @@
 // Copyright (c) 2026 BunnySoft. All rights reserved.
 //
 
-#include "clover/core/Cartridge.h"
+#include "clover/core/snes/Cartridge.h"
 
 #include <algorithm>
 #include <span>

@@ -3,7 +3,7 @@
 // Copyright (c) 2026 BunnySoft. All rights reserved.
 //
 
-#include "clover/core/Apu.h"
+#include "clover/core/snes/Apu.h"
 
 namespace clover::core
 {

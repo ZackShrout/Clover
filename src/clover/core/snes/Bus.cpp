@@ -3,13 +3,13 @@
 // Copyright (c) 2026 BunnySoft. All rights reserved.
 //
 
-#include "clover/core/Bus.h"
+#include "clover/core/snes/Bus.h"
 
-#include "clover/core/Apu.h"
-#include "clover/core/Cartridge.h"
-#include "clover/core/Cpu.h"
-#include "clover/core/Dma.h"
-#include "clover/core/Ppu.h"
+#include "clover/core/snes/Apu.h"
+#include "clover/core/snes/Cartridge.h"
+#include "clover/core/snes/Cpu.h"
+#include "clover/core/snes/Dma.h"
+#include "clover/core/snes/Ppu.h"
 
 #include <algorithm>
 #include <cstdio>

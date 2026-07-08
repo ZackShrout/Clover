@@ -8,29 +8,29 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(CLOVER_BUILD_SDL_FRONTEND "Build the SDL3 desktop frontend." OFF)
 
 set(CLOVER_CORE_SOURCES
-    src/clover/core/Apu.cpp
-    src/clover/core/ApuOpsAlu.cpp
-    src/clover/core/ApuOpsBranchBit.cpp
-    src/clover/core/ApuOpsControl.cpp
-    src/clover/core/ApuOpsLoadStore.cpp
-    src/clover/core/Bus.cpp
-    src/clover/core/Cartridge.cpp
-    src/clover/core/Console.cpp
-    src/clover/core/Cpu.cpp
-    src/clover/core/CpuOpsAlu.cpp
-    src/clover/core/CpuOpsBranch.cpp
-    src/clover/core/CpuOpsJump.cpp
-    src/clover/core/CpuOpsLoad.cpp
-    src/clover/core/CpuOpsMemory.cpp
-    src/clover/core/CpuOpsModify.cpp
-    src/clover/core/CpuOpsStack.cpp
-    src/clover/core/CpuOpsSystem.cpp
-    src/clover/core/CpuOpsTransfer.cpp
-    src/clover/core/Dma.cpp
+    src/clover/core/snes/Apu.cpp
+    src/clover/core/snes/ApuOpsAlu.cpp
+    src/clover/core/snes/ApuOpsBranchBit.cpp
+    src/clover/core/snes/ApuOpsControl.cpp
+    src/clover/core/snes/ApuOpsLoadStore.cpp
+    src/clover/core/snes/Bus.cpp
+    src/clover/core/snes/Cartridge.cpp
+    src/clover/core/snes/Console.cpp
+    src/clover/core/snes/Cpu.cpp
+    src/clover/core/snes/CpuOpsAlu.cpp
+    src/clover/core/snes/CpuOpsBranch.cpp
+    src/clover/core/snes/CpuOpsJump.cpp
+    src/clover/core/snes/CpuOpsLoad.cpp
+    src/clover/core/snes/CpuOpsMemory.cpp
+    src/clover/core/snes/CpuOpsModify.cpp
+    src/clover/core/snes/CpuOpsStack.cpp
+    src/clover/core/snes/CpuOpsSystem.cpp
+    src/clover/core/snes/CpuOpsTransfer.cpp
+    src/clover/core/snes/Dma.cpp
     src/clover/core/FrameBuffer.cpp
-    src/clover/core/Interrupts.cpp
-    src/clover/core/Ppu.cpp
-    src/clover/core/Scheduler.cpp
+    src/clover/core/snes/Interrupts.cpp
+    src/clover/core/snes/Ppu.cpp
+    src/clover/core/snes/Scheduler.cpp
 )
 
 set(CLOVER_APP_SOURCES

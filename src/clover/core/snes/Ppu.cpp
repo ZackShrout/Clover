@@ -3,7 +3,7 @@
 // Copyright (c) 2026 BunnySoft. All rights reserved.
 //
 
-#include "clover/core/Ppu.h"
+#include "clover/core/snes/Ppu.h"
 
 #include <algorithm>
 #include <array>

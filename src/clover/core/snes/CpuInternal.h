@@ -5,9 +5,9 @@
 
 #pragma once
 
-#include "clover/core/Bus.h"
-#include "clover/core/Cpu.h"
-#include "clover/core/Interrupts.h"
+#include "clover/core/snes/Bus.h"
+#include "clover/core/snes/Cpu.h"
+#include "clover/core/snes/Interrupts.h"
 
 #include <cstdio>
 

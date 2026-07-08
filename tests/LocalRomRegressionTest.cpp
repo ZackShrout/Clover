@@ -3,7 +3,7 @@
 // Copyright (c) 2026 BunnySoft. All rights reserved.
 //
 
-#include "clover/core/Console.h"
+#include "clover/core/snes/Console.h"
 
 #include <algorithm>
 #include <cstddef>

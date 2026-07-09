@@ -99,6 +99,9 @@ namespace
     using retro_run_t = void (*)();
     using retro_unload_game_t = void (*)();
     using retro_reset_t = void (*)();
+    using retro_serialize_size_t = size_t (*)();
+    using retro_serialize_t = bool (*)(void*, size_t);
+    using retro_unserialize_t = bool (*)(const void*, size_t);
 
     struct frame_capture_t
     {
@@ -227,6 +230,552 @@ namespace
 
         std::fprintf(stderr, "Missing libretro symbol: %s\n", symbol_name);
         return nullptr;
+    }
+
+    struct serializer_cursor_t
+    {
+        std::vector<uint8_t>& bytes;
+        size_t offset{ 0 };
+
+        void skip(size_t size) noexcept
+        {
+            offset += size;
+        }
+
+        void write_u8(uint8_t value) noexcept
+        {
+            bytes[offset++] = value;
+        }
+
+        void write_u16(uint16_t value) noexcept
+        {
+            bytes[offset++] = static_cast<uint8_t>(value & 0xffu);
+            bytes[offset++] = static_cast<uint8_t>((value >> 8u) & 0xffu);
+        }
+
+        void write_u32(uint32_t value) noexcept
+        {
+            bytes[offset++] = static_cast<uint8_t>(value & 0xffu);
+            bytes[offset++] = static_cast<uint8_t>((value >> 8u) & 0xffu);
+            bytes[offset++] = static_cast<uint8_t>((value >> 16u) & 0xffu);
+            bytes[offset++] = static_cast<uint8_t>((value >> 24u) & 0xffu);
+        }
+
+        void write_u64(uint64_t value) noexcept
+        {
+            for (unsigned shift{ 0 }; shift < 64u; shift += 8u)
+                bytes[offset++] = static_cast<uint8_t>((value >> shift) & 0xffu);
+        }
+
+        void patch_wram(size_t wram_base, uint32_t address, uint8_t value) noexcept
+        {
+            bytes[wram_base + address] = value;
+        }
+    };
+
+    [[nodiscard]] bool apply_hirq_cli_seeded_patch(std::vector<uint8_t>& state)
+    {
+        serializer_cursor_t cursor{ state };
+
+        constexpr size_t k_header_size{ 4u + 4u + 16u + 512u + 1u + 1u };
+        constexpr size_t k_random_size{ 4u + 8u + 8u };
+        constexpr size_t k_cartridge_ram_size{ 0u };
+        constexpr size_t k_wram_size{ 128u * 1024u };
+
+        cursor.skip(k_header_size + k_random_size + k_cartridge_ram_size);
+
+        cursor.write_u32(0x000000u);  // PC
+        cursor.write_u16(0x0000u);    // A
+        cursor.write_u16(0x0000u);    // X
+        cursor.write_u16(0x0000u);    // Y
+        cursor.write_u16(0x0000u);    // Z
+        cursor.write_u16(0x01ffu);    // S
+        cursor.write_u16(0x0000u);    // D
+        cursor.write_u8(0x00u);       // B
+
+        cursor.write_u8(0u);  // C
+        cursor.write_u8(0u);  // Z
+        cursor.write_u8(1u);  // I
+        cursor.write_u8(0u);  // D
+        cursor.write_u8(1u);  // X
+        cursor.write_u8(1u);  // M
+        cursor.write_u8(0u);  // V
+        cursor.write_u8(0u);  // N
+
+        cursor.write_u8(1u);  // E
+        cursor.write_u8(0u);  // IRQ pin
+        cursor.write_u8(0u);  // WAI
+        cursor.write_u8(0u);  // STP
+
+        cursor.write_u16(0xfffcu);    // vector
+        cursor.write_u32(0x000000u);  // MAR
+        cursor.write_u8(0x00u);       // MDR
+        cursor.write_u32(0x000000u);  // U
+        cursor.write_u32(0x000000u);  // V
+        cursor.write_u32(0x000000u);  // W
+
+        cursor.skip(4u + 8u);         // Thread
+        cursor.write_u8(0u);          // interlace
+        cursor.write_u8(0u);          // field
+        cursor.write_u32(262u);       // vperiod
+        cursor.write_u32(1364u);      // hperiod
+        cursor.write_u32(0u);         // vcounter
+        cursor.write_u32(0u);         // hcounter
+        cursor.write_u32(262u);       // last.vperiod
+        cursor.write_u32(1364u);      // last.hperiod
+
+        const size_t wram_base{ cursor.offset };
+        cursor.patch_wram(wram_base, 0x0000u, 0x58u);
+        for (uint32_t address{ 0x0001u }; address <= 0x000au; ++address)
+            cursor.patch_wram(wram_base, address, 0xeau);
+        cursor.patch_wram(wram_base, 0x1234u, 0xeau);
+        cursor.skip(k_wram_size);
+
+        cursor.skip(4u);               // version
+        cursor.skip(4u);               // counter.cpu
+        cursor.skip(4u);               // counter.dma
+        cursor.skip(4u);               // status.clockCount
+        cursor.write_u8(1u);           // status.irqLock
+
+        cursor.skip(4u);               // dramRefreshPosition
+        cursor.skip(4u);               // dramRefresh
+        cursor.skip(4u);               // hdmaSetupPosition
+        cursor.skip(1u);               // hdmaSetupTriggered
+        cursor.skip(4u);               // hdmaPosition
+        cursor.skip(1u);               // hdmaTriggered
+
+        cursor.write_u8(0u);           // nmiValid
+        cursor.write_u8(0u);           // nmiLine
+        cursor.write_u8(0u);           // nmiTransition
+        cursor.write_u8(0u);           // nmiPending
+        cursor.write_u8(0u);           // nmiHold
+
+        cursor.write_u8(0u);           // irqValid
+        cursor.write_u8(0u);           // irqLine
+        cursor.write_u8(0u);           // irqTransition
+        cursor.write_u8(0u);           // irqPending
+        cursor.write_u8(0u);           // irqHold
+
+        cursor.write_u8(0u);           // resetPending
+        cursor.write_u8(0u);           // interruptPending
+        cursor.write_u8(0u);           // dmaActive
+        cursor.write_u8(0u);           // dmaPending
+        cursor.write_u8(0u);           // hdmaPending
+        cursor.write_u8(0u);           // hdmaMode
+
+        cursor.skip(4u);               // autoJoypadCounter
+        cursor.skip(1u);               // autoJoypadPort1
+        cursor.skip(1u);               // autoJoypadPort2
+        cursor.write_u8(0u);           // cpuLatch
+        cursor.write_u8(0u);           // autoJoypadLatch
+
+        cursor.skip(4u);               // io.wramAddress
+        cursor.write_u8(1u);           // hirqEnable
+        cursor.write_u8(0u);           // virqEnable
+        cursor.write_u8(1u);           // irqEnable
+        cursor.write_u8(0u);           // nmiEnable
+        cursor.write_u8(0u);           // autoJoypadPoll
+
+        cursor.skip(1u);               // pio
+        cursor.skip(1u);               // wrmpya
+        cursor.skip(1u);               // wrmpyb
+        cursor.skip(2u);               // wrdiva
+        cursor.skip(1u);               // wrdivb
+        cursor.write_u16(0x0044u);     // htime = ($0010 + 1) << 2
+        cursor.write_u16(0x01ffu);     // vtime
+
+        return cursor.offset <= state.size();
+    }
+
+    struct bsnes_cpu_summary_t
+    {
+        uint32_t pc{ 0 };
+        uint16_t a{ 0 };
+        uint16_t x{ 0 };
+        uint16_t y{ 0 };
+        uint16_t sp{ 0 };
+        uint8_t p{ 0 };
+        uint8_t emulation{ 0 };
+        uint16_t scanline{ 0 };
+        uint16_t dot{ 0 };
+        uint8_t irq_lock{ 0 };
+        uint8_t irq_line{ 0 };
+        uint8_t irq_transition{ 0 };
+        uint8_t irq_pending{ 0 };
+        uint8_t interrupt_pending{ 0 };
+        uint8_t hirq_enable{ 0 };
+        uint8_t virq_enable{ 0 };
+        uint8_t irq_enable{ 0 };
+        uint16_t htime{ 0 };
+        uint16_t vtime{ 0 };
+        uint8_t stp{ 0 };
+    };
+
+    [[nodiscard]] std::vector<uint8_t> capture_state_blob(const retro_serialize_size_t retro_serialize_size,
+                                                          const retro_serialize_t retro_serialize);
+    void print_hirq_seed_probe(const char* label, const std::vector<uint8_t>& state);
+    void dump_blob_window(const char* label,
+                          const std::vector<uint8_t>& state,
+                          size_t start,
+                          size_t count);
+
+    struct serializer_reader_t
+    {
+        const std::vector<uint8_t>& bytes;
+        size_t offset{ 0 };
+
+        void skip(size_t size) noexcept
+        {
+            offset += size;
+        }
+
+        [[nodiscard]] uint8_t read_u8() noexcept
+        {
+            return bytes[offset++];
+        }
+
+        [[nodiscard]] uint16_t read_u16() noexcept
+        {
+            const uint16_t value = static_cast<uint16_t>(
+                static_cast<uint16_t>(bytes[offset])
+                | static_cast<uint16_t>(static_cast<uint16_t>(bytes[offset + 1u]) << 8u)
+            );
+            offset += 2u;
+            return value;
+        }
+
+        [[nodiscard]] uint32_t read_u32() noexcept
+        {
+            const uint32_t value{
+                static_cast<uint32_t>(bytes[offset])
+                | (static_cast<uint32_t>(bytes[offset + 1u]) << 8u)
+                | (static_cast<uint32_t>(bytes[offset + 2u]) << 16u)
+                | (static_cast<uint32_t>(bytes[offset + 3u]) << 24u)
+            };
+            offset += 4u;
+            return value;
+        }
+
+        [[nodiscard]] uint64_t read_u64() noexcept
+        {
+            uint64_t value{ 0 };
+            for (unsigned shift{ 0 }; shift < 64u; shift += 8u)
+                value |= static_cast<uint64_t>(bytes[offset++]) << shift;
+            return value;
+        }
+    };
+
+    [[nodiscard]] bsnes_cpu_summary_t summarize_state(const std::vector<uint8_t>& state)
+    {
+        serializer_reader_t cursor{ state };
+        bsnes_cpu_summary_t summary{};
+
+        constexpr size_t k_header_size{ 4u + 4u + 16u + 512u + 1u + 1u };
+        constexpr size_t k_random_size{ 4u + 8u + 8u };
+        constexpr size_t k_cartridge_ram_size{ 0u };
+        constexpr size_t k_wram_size{ 128u * 1024u };
+
+        cursor.skip(k_header_size + k_random_size + k_cartridge_ram_size);
+
+        summary.pc = cursor.read_u32();
+        summary.a = cursor.read_u16();
+        summary.x = cursor.read_u16();
+        summary.y = cursor.read_u16();
+        cursor.skip(2u);               // Z
+        summary.sp = cursor.read_u16();
+        cursor.skip(2u);               // D
+        cursor.skip(1u);               // B
+        const uint8_t c{ cursor.read_u8() };
+        const uint8_t z{ cursor.read_u8() };
+        const uint8_t i{ cursor.read_u8() };
+        const uint8_t d{ cursor.read_u8() };
+        const uint8_t xf{ cursor.read_u8() };
+        const uint8_t mf{ cursor.read_u8() };
+        const uint8_t v{ cursor.read_u8() };
+        const uint8_t n{ cursor.read_u8() };
+        summary.p = static_cast<uint8_t>(
+            (c << 0u) | (z << 1u) | (i << 2u) | (d << 3u)
+            | (xf << 4u) | (mf << 5u) | (v << 6u) | (n << 7u)
+        );
+        summary.emulation = cursor.read_u8();
+        cursor.skip(1u);               // IRQ pin
+        cursor.skip(1u);               // WAI
+        summary.stp = cursor.read_u8();
+        cursor.skip(2u + 4u + 1u + 4u + 4u + 4u);
+
+        cursor.skip(4u + 8u);         // Thread
+        cursor.skip(1u);              // interlace
+        cursor.skip(1u);              // field
+        cursor.skip(4u);              // vperiod
+        cursor.skip(4u);              // hperiod
+        summary.scanline = static_cast<uint16_t>(cursor.read_u32());
+        summary.dot = static_cast<uint16_t>(cursor.read_u32());
+        cursor.skip(4u + 4u);         // last periods
+
+        cursor.skip(k_wram_size);
+        cursor.skip(4u + 4u + 4u + 4u);
+        summary.irq_lock = cursor.read_u8();
+        cursor.skip(4u + 4u + 4u + 1u + 4u + 1u);
+        cursor.skip(1u + 1u + 1u + 1u + 1u);
+        summary.irq_line = cursor.read_u8();
+        summary.irq_transition = cursor.read_u8();
+        summary.irq_pending = cursor.read_u8();
+        cursor.skip(1u);
+        cursor.skip(1u);
+        summary.interrupt_pending = cursor.read_u8();
+        cursor.skip(1u + 1u + 1u + 1u + 4u + 1u + 1u + 1u + 1u);
+        cursor.skip(4u);
+        summary.hirq_enable = cursor.read_u8();
+        summary.virq_enable = cursor.read_u8();
+        summary.irq_enable = cursor.read_u8();
+        cursor.skip(1u + 1u + 1u + 2u + 1u);
+        summary.htime = cursor.read_u16();
+        summary.vtime = cursor.read_u16();
+        return summary;
+    }
+
+    void print_state_summary(const char* label, const std::vector<uint8_t>& state)
+    {
+        const bsnes_cpu_summary_t summary{ summarize_state(state) };
+        std::fprintf(stderr,
+                     "%s: scanline=%u dot=%u PB:%02x PC:%04x A:%04x X:%04x Y:%04x SP:%04x P:%02x E:%u stp=%u irq_lock=%u irq_line=%u irq_transition=%u irq_pending=%u interrupt_pending=%u hirq=%u virq=%u irq_en=%u htime=%u vtime=%u\n",
+                     label,
+                     summary.scanline,
+                     summary.dot,
+                     static_cast<unsigned>((summary.pc >> 16u) & 0xffu),
+                     static_cast<unsigned>(summary.pc & 0xffffu),
+                     summary.a,
+                     summary.x,
+                     summary.y,
+                     summary.sp,
+                     summary.p,
+                     summary.emulation,
+                     summary.stp,
+                     summary.irq_lock,
+                     summary.irq_line,
+                     summary.irq_transition,
+                     summary.irq_pending,
+                     summary.interrupt_pending,
+                     summary.hirq_enable,
+                     summary.virq_enable,
+                     summary.irq_enable,
+                     summary.htime,
+                     summary.vtime);
+    }
+
+    [[nodiscard]] bool maybe_apply_state_patch(const retro_serialize_size_t retro_serialize_size,
+                                               const retro_serialize_t retro_serialize,
+                                               const retro_unserialize_t retro_unserialize)
+    {
+        const char* patch_raw{ std::getenv("CLOVER_BSNES_STATE_PATCH") };
+        if (patch_raw == nullptr || *patch_raw == '\0')
+            return true;
+
+        const std::string_view patch_name{ patch_raw };
+        if (patch_name != "hirq_cli_seeded")
+        {
+            std::fprintf(stderr, "Unknown bsnes state patch: %s\n", patch_raw);
+            return false;
+        }
+
+        const size_t state_size{ retro_serialize_size() };
+        if (state_size == 0)
+        {
+            std::fprintf(stderr, "bsnes returned empty serialize size for state patch\n");
+            return false;
+        }
+
+        std::vector<uint8_t> state(state_size);
+        if (!retro_serialize(state.data(), state.size()))
+        {
+            std::fprintf(stderr, "bsnes serialize failed before state patch\n");
+            return false;
+        }
+
+        if (!apply_hirq_cli_seeded_patch(state))
+        {
+            std::fprintf(stderr, "bsnes state patch failed: malformed serializer walk\n");
+            return false;
+        }
+
+        print_hirq_seed_probe("bsnes patched blob", state);
+        dump_blob_window("bsnes patched flags bytes",
+                         state,
+                         575u,
+                         8u);
+        dump_blob_window("bsnes patched CPU I/O bytes",
+                         state,
+                         131775u,
+                         18u);
+
+        if (!retro_unserialize(state.data(), state.size()))
+        {
+            std::fprintf(stderr, "bsnes unserialize failed after state patch\n");
+            return false;
+        }
+
+        const std::vector<uint8_t> seeded_state{ capture_state_blob(retro_serialize_size, retro_serialize) };
+        if (!seeded_state.empty())
+        {
+            print_hirq_seed_probe("bsnes post-unserialize state", seeded_state);
+            dump_blob_window("bsnes post-unserialize flags bytes",
+                             seeded_state,
+                             575u,
+                             8u);
+            dump_blob_window("bsnes post-unserialize CPU I/O bytes",
+                             seeded_state,
+                             131775u,
+                             18u);
+        }
+
+        std::printf("Applied bsnes state patch: %s\n", patch_raw);
+        return true;
+    }
+
+    [[nodiscard]] std::vector<uint8_t> capture_state_blob(const retro_serialize_size_t retro_serialize_size,
+                                                          const retro_serialize_t retro_serialize)
+    {
+        const size_t state_size{ retro_serialize_size() };
+        if (state_size == 0)
+            return {};
+
+        std::vector<uint8_t> state(state_size);
+        if (!retro_serialize(state.data(), state.size()))
+            return {};
+        return state;
+    }
+
+    [[nodiscard]] uint8_t read_blob_u8(const std::vector<uint8_t>& blob, size_t offset)
+    {
+        return offset < blob.size() ? blob[offset] : 0u;
+    }
+
+    [[nodiscard]] uint16_t read_blob_u16(const std::vector<uint8_t>& blob, size_t offset)
+    {
+        if (offset + 1u >= blob.size())
+            return 0u;
+        return static_cast<uint16_t>(
+            static_cast<uint16_t>(blob[offset])
+            | static_cast<uint16_t>(static_cast<uint16_t>(blob[offset + 1u]) << 8u)
+        );
+    }
+
+    [[nodiscard]] uint32_t read_blob_u32(const std::vector<uint8_t>& blob, size_t offset)
+    {
+        if (offset + 3u >= blob.size())
+            return 0u;
+        return static_cast<uint32_t>(blob[offset])
+            | (static_cast<uint32_t>(blob[offset + 1u]) << 8u)
+            | (static_cast<uint32_t>(blob[offset + 2u]) << 16u)
+            | (static_cast<uint32_t>(blob[offset + 3u]) << 24u);
+    }
+
+    [[nodiscard]] uint8_t read_blob_p(const std::vector<uint8_t>& blob, size_t offset)
+    {
+        return static_cast<uint8_t>(
+            (read_blob_u8(blob, offset + 0u) << 0u)
+            | (read_blob_u8(blob, offset + 1u) << 1u)
+            | (read_blob_u8(blob, offset + 2u) << 2u)
+            | (read_blob_u8(blob, offset + 3u) << 3u)
+            | (read_blob_u8(blob, offset + 4u) << 4u)
+            | (read_blob_u8(blob, offset + 5u) << 5u)
+            | (read_blob_u8(blob, offset + 6u) << 6u)
+            | (read_blob_u8(blob, offset + 7u) << 7u)
+        );
+    }
+
+    void dump_blob_window(const char* label,
+                          const std::vector<uint8_t>& state,
+                          size_t start,
+                          size_t count)
+    {
+        std::fprintf(stderr, "%s", label);
+        for (size_t index{ 0 }; index < count; ++index)
+        {
+            const size_t offset{ start + index };
+            if (offset >= state.size())
+                break;
+            std::fprintf(stderr,
+                         "%s%zu:%02x",
+                         index == 0 ? " " : " ",
+                         offset,
+                         static_cast<unsigned>(state[offset]));
+        }
+        std::fprintf(stderr, "\n");
+    }
+
+    void print_hirq_seed_probe(const char* label, const std::vector<uint8_t>& state)
+    {
+        constexpr size_t k_pc_offset{ 558u };
+        constexpr size_t k_p_offset{ 575u };
+        constexpr size_t k_emulation_offset{ 583u };
+        constexpr size_t k_vcounter_offset{ 628u };
+        constexpr size_t k_hcounter_offset{ 632u };
+        constexpr size_t k_irq_lock_offset{ 131732u };
+        constexpr size_t k_counter_cpu_offset{ 131720u };
+        constexpr size_t k_clock_count_offset{ 131728u };
+        constexpr size_t k_irq_line_offset{ 131757u };
+        constexpr size_t k_irq_transition_offset{ 131758u };
+        constexpr size_t k_irq_pending_offset{ 131759u };
+        constexpr size_t k_interrupt_pending_offset{ 131762u };
+        constexpr size_t k_wram_address_offset{ 131775u };
+        constexpr size_t k_hirq_enable_offset{ 131779u };
+        constexpr size_t k_virq_enable_offset{ 131780u };
+        constexpr size_t k_irq_enable_offset{ 131781u };
+        constexpr size_t k_nmi_enable_offset{ 131782u };
+        constexpr size_t k_autojoy_offset{ 131783u };
+        constexpr size_t k_pio_offset{ 131784u };
+        constexpr size_t k_htime_offset{ 131790u };
+        constexpr size_t k_vtime_offset{ 131792u };
+
+        std::fprintf(stderr,
+                     "%s: PB:%02x PC:%04x P:%02x E:%u scanline=%u dot=%u cpu_counter=%u clock_count=%u irq_lock=%u irq_line=%u irq_transition=%u irq_pending=%u interrupt_pending=%u wmadd=%05x hirq=%u virq=%u irq_en=%u nmi_en=%u autojoy=%u pio=%02x htime=%u vtime=%u\n",
+                     label,
+                     static_cast<unsigned>((read_blob_u32(state, k_pc_offset) >> 16u) & 0xffu),
+                     static_cast<unsigned>(read_blob_u32(state, k_pc_offset) & 0xffffu),
+                     static_cast<unsigned>(read_blob_p(state, k_p_offset)),
+                     static_cast<unsigned>(read_blob_u8(state, k_emulation_offset)),
+                     static_cast<unsigned>(read_blob_u32(state, k_vcounter_offset)),
+                     static_cast<unsigned>(read_blob_u32(state, k_hcounter_offset)),
+                     static_cast<unsigned>(read_blob_u32(state, k_counter_cpu_offset)),
+                     static_cast<unsigned>(read_blob_u32(state, k_clock_count_offset)),
+                     static_cast<unsigned>(read_blob_u8(state, k_irq_lock_offset)),
+                     static_cast<unsigned>(read_blob_u8(state, k_irq_line_offset)),
+                     static_cast<unsigned>(read_blob_u8(state, k_irq_transition_offset)),
+                     static_cast<unsigned>(read_blob_u8(state, k_irq_pending_offset)),
+                     static_cast<unsigned>(read_blob_u8(state, k_interrupt_pending_offset)),
+                     static_cast<unsigned>(read_blob_u32(state, k_wram_address_offset)),
+                     static_cast<unsigned>(read_blob_u8(state, k_hirq_enable_offset)),
+                     static_cast<unsigned>(read_blob_u8(state, k_virq_enable_offset)),
+                     static_cast<unsigned>(read_blob_u8(state, k_irq_enable_offset)),
+                     static_cast<unsigned>(read_blob_u8(state, k_nmi_enable_offset)),
+                     static_cast<unsigned>(read_blob_u8(state, k_autojoy_offset)),
+                     static_cast<unsigned>(read_blob_u8(state, k_pio_offset)),
+                     static_cast<unsigned>(read_blob_u16(state, k_htime_offset)),
+                     static_cast<unsigned>(read_blob_u16(state, k_vtime_offset)));
+    }
+
+    void dump_state_diff(const std::vector<uint8_t>& before,
+                         const std::vector<uint8_t>& after,
+                         size_t max_differences = 128u)
+    {
+        size_t printed{ 0 };
+        for (size_t index{ 0 }; index < before.size() && index < after.size(); ++index)
+        {
+            if (before[index] == after[index])
+                continue;
+
+            std::fprintf(stderr,
+                         "state-diff offset=%zu before=%02x after=%02x\n",
+                         index,
+                         static_cast<unsigned>(before[index]),
+                         static_cast<unsigned>(after[index]));
+            if (++printed >= max_differences)
+                break;
+        }
+
+        if (printed == 0)
+            std::fprintf(stderr, "state-diff: no differences\n");
     }
 
     void configure_reference_entropy(libretro_state_t& state)
@@ -424,9 +973,13 @@ int main(int argc, char** argv)
     const auto retro_run{ reinterpret_cast<retro_run_t>(load_symbol(handle, "retro_run")) };
     const auto retro_unload_game{ reinterpret_cast<retro_unload_game_t>(load_symbol(handle, "retro_unload_game")) };
     const auto retro_reset{ reinterpret_cast<retro_reset_t>(load_symbol(handle, "retro_reset")) };
+    const auto retro_serialize_size{ reinterpret_cast<retro_serialize_size_t>(load_symbol(handle, "retro_serialize_size")) };
+    const auto retro_serialize{ reinterpret_cast<retro_serialize_t>(load_symbol(handle, "retro_serialize")) };
+    const auto retro_unserialize{ reinterpret_cast<retro_unserialize_t>(load_symbol(handle, "retro_unserialize")) };
     if (!retro_init || !retro_deinit || !retro_set_environment || !retro_set_video_refresh || !retro_set_audio_sample
         || !retro_set_audio_sample_batch || !retro_set_input_poll || !retro_set_input_state || !retro_get_system_av_info
-        || !retro_load_game || !retro_run || !retro_unload_game || !retro_reset)
+        || !retro_load_game || !retro_run || !retro_unload_game || !retro_reset
+        || !retro_serialize_size || !retro_serialize || !retro_unserialize)
     {
         dlclose(handle);
         return 1;
@@ -455,6 +1008,19 @@ int main(int argc, char** argv)
     }
 
     retro_reset();
+    const bool dump_state_diff_enabled{ std::getenv("CLOVER_BSNES_STATE_DIFF") != nullptr };
+    std::vector<uint8_t> state_before{};
+    if (dump_state_diff_enabled)
+        state_before = capture_state_blob(retro_serialize_size, retro_serialize);
+    if (!state_before.empty())
+        print_hirq_seed_probe("bsnes pre-run state", state_before);
+    if (!maybe_apply_state_patch(retro_serialize_size, retro_serialize, retro_unserialize))
+    {
+        retro_unload_game();
+        retro_deinit();
+        dlclose(handle);
+        return 1;
+    }
     retro_get_system_av_info(&state.geometry);
 
     uint64_t dumped_frames{ 0 };
@@ -479,6 +1045,21 @@ int main(int argc, char** argv)
                         static_cast<unsigned long long>(frame_number),
                         static_cast<unsigned long long>(state.latest_frame.frame_index));
             ++dumped_frames;
+        }
+    }
+
+    if (dump_state_diff_enabled)
+    {
+        const std::vector<uint8_t> state_after{ capture_state_blob(retro_serialize_size, retro_serialize) };
+        if (!state_after.empty())
+            print_hirq_seed_probe("bsnes post-run state", state_after);
+        if (state_before.empty() || state_after.empty())
+        {
+            std::fprintf(stderr, "state-diff: failed to capture serialized state\n");
+        }
+        else
+        {
+            dump_state_diff(state_before, state_after);
         }
     }
 

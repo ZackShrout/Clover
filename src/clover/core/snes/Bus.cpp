@@ -113,6 +113,13 @@ namespace
             || (live_filter.enabled && offset >= live_filter.address_min && offset <= live_filter.address_max);
     }
 
+    [[nodiscard]] bool cpu_internal_mmio_preserves_open_bus(uint32_t address) noexcept
+    {
+        // Match bsnes CPU MDR behavior: reads in $00-3f,80-bf:$4000-$43ff are
+        // internal to the CPU complex and do not refresh the CPU MDR/open bus.
+        return (address & 0x40fc00u) == 0x4000u;
+    }
+
     struct ppu_register_live_trace_filter_t
     {
         bool enabled{ false };
@@ -285,14 +292,18 @@ namespace clover::core
 
         if (_dma != nullptr && is_dma_register_address(address))
         {
-            _open_bus = _dma->read_register(static_cast<uint16_t>(address & 0xffffu));
-            return _open_bus;
+            const uint8_t value{ _dma->read_register(static_cast<uint16_t>(address & 0xffffu)) };
+            if (!cpu_internal_mmio_preserves_open_bus(address))
+                _open_bus = value;
+            return value;
         }
 
         if (_cpu != nullptr && is_cpu_register_address(address))
         {
-            _open_bus = _cpu->read_register(static_cast<uint16_t>(address & 0xffffu));
-            return _open_bus;
+            const uint8_t value{ _cpu->read_register(static_cast<uint16_t>(address & 0xffffu)) };
+            if (!cpu_internal_mmio_preserves_open_bus(address))
+                _open_bus = value;
+            return value;
         }
 
         if (_cartridge != nullptr)
@@ -311,8 +322,10 @@ namespace clover::core
 
         if (_cpu != nullptr && is_cpu_register_address(address))
         {
-            _open_bus = _cpu->read_register(static_cast<uint16_t>(address & 0xffffu), apply_after_clocks);
-            return _open_bus;
+            const uint8_t value{ _cpu->read_register(static_cast<uint16_t>(address & 0xffffu), apply_after_clocks) };
+            if (!cpu_internal_mmio_preserves_open_bus(address))
+                _open_bus = value;
+            return value;
         }
 
         return read_u8(address);

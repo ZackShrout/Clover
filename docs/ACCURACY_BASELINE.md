@@ -103,6 +103,11 @@ and the current harness interpretation is:
 - SMW matches through frame 300
 - FF3 matches through frame 300
 
+Lower-level observable-behavior questions that were intentionally removed from
+the main pass/fail harness are tracked separately in:
+
+- `docs/REFERENCE_RECONCILIATION.md`
+
 ## Known Strong Checkpoints
 
 The following deterministic checkpoints were explicitly re-verified after the

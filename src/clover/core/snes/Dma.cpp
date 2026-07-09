@@ -76,7 +76,7 @@ namespace clover::core
     {
         for (uint8_t channel_index{ 0 }; channel_index < _channels.size(); ++channel_index)
         {
-            if (_channels[channel_index].hdma_active)
+            if (hdma_channel_active(_channels[channel_index]))
                 _pending_hdma_transfer_mask |= static_cast<uint8_t>(1u << channel_index);
         }
     }
@@ -105,6 +105,11 @@ namespace clover::core
     dma_activity_t dma_t::activity() const noexcept
     {
         return _activity;
+    }
+
+    bool dma_t::hdma_channel_active(const dma_channel_t& channel) noexcept
+    {
+        return channel.hdma_enabled && !channel.hdma_completed;
     }
 
     uint8_t dma_t::read_register(uint16_t address) const noexcept
@@ -534,7 +539,7 @@ namespace clover::core
 
     master_clock_delta_t dma_t::run_hdma_transfer(bus_t& bus, dma_channel_t& channel) noexcept
     {
-        if (!channel.hdma_active || !channel.hdma_enabled)
+        if (!hdma_channel_active(channel))
         {
             channel.hdma_active = false;
             finish_active_channel();

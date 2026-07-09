@@ -76,6 +76,18 @@ add_executable(clover_bsnes_bringup
 )
 target_include_directories(clover_bsnes_bringup PRIVATE src)
 
+add_executable(clover_seeded_micro_bringup
+    tests/SeededMicroBringup.cpp
+)
+target_include_directories(clover_seeded_micro_bringup PRIVATE src)
+target_link_libraries(clover_seeded_micro_bringup PRIVATE clover_core)
+
+add_executable(clover_dma_visibility_bringup
+    tests/DmaVisibilityBringup.cpp
+)
+target_include_directories(clover_dma_visibility_bringup PRIVATE src)
+target_link_libraries(clover_dma_visibility_bringup PRIVATE clover_core)
+
 add_executable(clover_frame_compare
     tests/FrameCompare.cpp
 )

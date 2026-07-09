@@ -171,6 +171,16 @@ namespace clover::core
         return _cpu.placeholder_opcode_count();
     }
 
+    void console_t::set_cpu_interrupt_poll_phase_for_testing(master_clock_delta_t phase) noexcept
+    {
+        _cpu.set_interrupt_poll_phase_for_testing(phase);
+    }
+
+    master_clock_delta_t console_t::cpu_interrupt_poll_phase_for_testing() const noexcept
+    {
+        return _cpu.interrupt_poll_phase_for_testing();
+    }
+
     master_clock_delta_t console_t::current_scanline_clocks() const noexcept
     {
         return _ppu.current_scanline_clocks();

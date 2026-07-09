@@ -74,6 +74,9 @@ namespace clover::core
         if (_state.irq_hold)
         {
             _state.irq_hold = false;
+        }
+        else if (_state.irq_line)
+        {
             _state.irq_transition = true;
         }
     }
@@ -82,11 +85,6 @@ namespace clover::core
     {
         if (_state.irq_lock)
             return;
-
-        _state.nmi_pending = _state.nmi_pending || _state.nmi_transition;
-        _state.nmi_transition = false;
-        _state.irq_pending = _state.irq_pending || _state.irq_transition;
-        _state.irq_transition = false;
     }
 
     void interrupt_controller_t::observe_opcode_edge() noexcept

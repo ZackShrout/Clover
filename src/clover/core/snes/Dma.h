@@ -52,10 +52,10 @@ namespace clover::core
         uint8_t indirect_bank{ 0xff };
         uint16_t indirect_address{ 0xffffu };
         uint16_t hdma_table_address{ 0xffffu };
-        uint8_t line_counter{ 0 };
+        uint8_t line_counter{ 0xff };
         uint8_t unused{ 0xff };
         uint8_t transfer_units{ 0 };
-        uint16_t transfer_size{ 0 };
+        uint16_t transfer_size{ 0xffffu };
     };
 
     struct dma_t
@@ -79,6 +79,7 @@ namespace clover::core
         [[nodiscard]] static bool fixed_transfer(const dma_channel_t& channel) noexcept;
         [[nodiscard]] static bool reverse_transfer(const dma_channel_t& channel) noexcept;
         [[nodiscard]] static bool indirect_hdma(const dma_channel_t& channel) noexcept;
+        [[nodiscard]] static bool hdma_channel_active(const dma_channel_t& channel) noexcept;
         [[nodiscard]] static uint8_t transfer_mode(const dma_channel_t& channel) noexcept;
         [[nodiscard]] static uint8_t transfer_length(const dma_channel_t& channel) noexcept;
         [[nodiscard]] static uint8_t target_address_offset(const dma_channel_t& channel,

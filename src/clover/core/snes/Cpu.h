@@ -89,6 +89,8 @@ namespace clover::core
                          dma_t& dma,
                          interrupt_controller_t& interrupts) noexcept;
         [[nodiscard]] const cpu_state_t& state() const noexcept;
+        void set_interrupt_poll_phase_for_testing(master_clock_delta_t phase) noexcept;
+        [[nodiscard]] master_clock_delta_t interrupt_poll_phase_for_testing() const noexcept;
 
     private:
         [[nodiscard]] bool irq_condition(const timing_snapshot_t& irq_timing,

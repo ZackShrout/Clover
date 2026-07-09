@@ -214,6 +214,9 @@ namespace clover::core
             _master_clocks = static_cast<master_clock_delta_t>(
                 _master_clocks + _cpu.advance_execution(access_clocks, _dma, _interrupts, _ppu_step_result)
             );
+            _master_clocks = static_cast<master_clock_delta_t>(
+                _master_clocks + _cpu.service_dma_edge(_bus, _dma, _interrupts, _ppu_step_result)
+            );
             const uint8_t value{ _bus.read_u8(address) };
             _bus.trace_cpu_apu_port_access(address, value, false, _master_clocks);
             return value;
@@ -227,6 +230,9 @@ namespace clover::core
             );
             _master_clocks = static_cast<master_clock_delta_t>(
                 _master_clocks + _cpu.advance_execution(access_clocks, _dma, _interrupts, _ppu_step_result)
+            );
+            _master_clocks = static_cast<master_clock_delta_t>(
+                _master_clocks + _cpu.service_dma_edge(_bus, _dma, _interrupts, _ppu_step_result)
             );
             _bus.trace_cpu_apu_port_access(address, value, true, _master_clocks);
             _bus.write_u8(address, value);
@@ -888,6 +894,18 @@ namespace clover::core
             );
         }
 
+        void idle_irq(cpu_state_t& state) noexcept
+        {
+            const interrupt_state_t interrupt_state{ _interrupts.sample() };
+            if (interrupt_state.nmi_pending || interrupt_state.irq_pending)
+            {
+                static_cast<void>(read_u8(program_address(state)));
+                return;
+            }
+
+            idle();
+        }
+
         void observe_opcode_edge() noexcept
         {
             _interrupts.observe_opcode_edge();
@@ -909,6 +927,13 @@ namespace clover::core
         {
             idle();
             retire_instruction();
+        }
+
+        void retire_irq_sensitive_internal_operation(cpu_state_t& state) noexcept
+        {
+            observe_opcode_edge();
+            idle_irq(state);
+            _retired_instruction = true;
         }
 
         [[nodiscard]] bool observed_opcode_edge() const noexcept

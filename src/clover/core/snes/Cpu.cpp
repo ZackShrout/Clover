@@ -194,6 +194,25 @@ namespace
         return static_cast<uint16_t>((htime + 1u) << 2u);
     }
 
+    [[nodiscard]] bool irq_condition_now(const clover::core::cpu_io_t& io,
+                                         const clover::core::timing_snapshot_t& irq_timing,
+                                         const clover::core::timing_snapshot_t& irq_gate_timing) noexcept
+    {
+        if (!io.irq_enabled)
+            return false;
+
+        if (irq_gate_timing.raster.scanline == 0 && irq_gate_timing.raster.dot == 0)
+            return false;
+
+        if (io.virq_enabled && irq_timing.raster.scanline != io.vtime)
+            return false;
+
+        if (io.hirq_enabled && irq_timing.raster.dot != hirq_target_dot(io))
+            return false;
+
+        return true;
+    }
+
     [[nodiscard]] uint16_t scanline_start_dma_phase(const clover::core::timing_snapshot_t& timing) noexcept
     {
         return clover::core::dma_phase_from_master_clock(timing.master_clock - timing.raster.dot);
@@ -342,19 +361,7 @@ namespace clover::core
     bool cpu_t::irq_condition(const timing_snapshot_t& irq_timing,
                               const timing_snapshot_t& irq_gate_timing) const noexcept
     {
-        if (!_io.irq_enabled)
-            return false;
-
-        if (irq_gate_timing.raster.scanline == 0 && irq_gate_timing.raster.dot == 0)
-            return false;
-
-        if (_io.virq_enabled && irq_timing.raster.scanline != _io.vtime)
-            return false;
-
-        if (_io.hirq_enabled && irq_timing.raster.dot != hirq_target_dot(_io))
-            return false;
-
-        return true;
+        return irq_condition_now(_io, irq_timing, irq_gate_timing);
     }
 
     void cpu_t::repoll_irq_on_register_write(interrupt_controller_t& interrupts) noexcept
@@ -776,6 +783,8 @@ namespace clover::core
                             dma_t& dma,
                             interrupt_controller_t& interrupts) noexcept
     {
+        const raster_counter_t previous_counter{ _counter };
+        const master_clock_delta_t previous_interrupt_poll_phase{ _interrupt_poll_phase };
         _interrupt_poll_phase = static_cast<master_clock_delta_t>(_interrupt_poll_phase + elapsed_master_clocks);
         _counter.advance(elapsed_master_clocks, video_timing, _interlace);
         _visible_scanlines = ppu_step.visible_scanlines;
@@ -840,43 +849,6 @@ namespace clover::core
         if (entered_vblank && _io.auto_joypad_poll)
             _io.auto_joypad_busy_clocks = k_auto_joypad_busy_clocks;
 
-        const bool irq_gate_open{
-            irq_gate_timing.raster.scanline != 0 || irq_gate_timing.raster.dot != 0
-        };
-        const bool irq_condition_now{ irq_condition(irq_timing, irq_gate_timing) };
-        bool irq_edge{ false };
-        switch (irq_timer_mode(_io))
-        {
-        case irq_timer_mode_t::none:
-            break;
-        case irq_timer_mode_t::h_counter:
-            irq_edge = _io.irq_enabled
-                && irq_gate_open
-                && crossed_hirq_point(_last_irq_timing, irq_timing, hirq_target_dot(_io));
-            break;
-        case irq_timer_mode_t::v_counter:
-            irq_edge = _io.irq_enabled
-                && irq_gate_open
-                && crossed_irq_point(_last_irq_timing, irq_timing, _io.vtime, 0);
-            break;
-        case irq_timer_mode_t::hv_counter:
-            irq_edge = _io.irq_enabled
-                && irq_gate_open
-                && crossed_irq_point(_last_irq_timing, irq_timing, _io.vtime, hirq_target_dot(_io));
-            break;
-        }
-
-        if (irq_edge)
-        {
-            _io.irq_flag = true;
-            _io.irq_hold_clocks = 4;
-            interrupts.assert_irq_line();
-        }
-        else
-        {
-            interrupts.clear_irq_line();
-        }
-
         if (_dram_refresh_pending
             && crossed_raster_point(_last_timing,
                                     current_timing,
@@ -902,23 +874,61 @@ namespace clover::core
                                         video_timing.hdma_trigger_dot))
             dma.request_hdma_transfer();
 
-        while (_interrupt_poll_phase >= 4)
+        raster_counter_t interrupt_counter{ previous_counter };
+        master_clock_delta_t interrupt_phase{ _interrupt_poll_phase };
+        master_clock_delta_t poll_advance{
+            previous_interrupt_poll_phase == 0
+                ? 4u
+                : static_cast<master_clock_delta_t>(4u - previous_interrupt_poll_phase)
+        };
+        while (interrupt_phase >= 4)
         {
+            interrupt_counter.advance(poll_advance, video_timing, _interlace);
+            const timing_snapshot_t poll_irq_timing{
+                interrupt_counter.snapshot_delayed(video_timing, _visible_scanlines, 10, _interlace)
+            };
+            const timing_snapshot_t poll_irq_gate_timing{
+                interrupt_counter.snapshot_delayed(video_timing, _visible_scanlines, 6, _interlace)
+            };
+
             interrupts.advance_to_observation_point();
             interrupts.latch_from_lines();
-            _interrupt_poll_phase = static_cast<master_clock_delta_t>(_interrupt_poll_phase - 4);
+
+            const bool current_irq_condition{
+                irq_condition_now(_io, poll_irq_timing, poll_irq_gate_timing)
+            };
+            if (current_irq_condition && !_irq_condition_valid)
+            {
+                _io.irq_flag = true;
+                _io.irq_hold_clocks = 4;
+                interrupts.assert_irq_line();
+            }
+
+            _irq_condition_valid = current_irq_condition;
+            interrupt_phase = static_cast<master_clock_delta_t>(interrupt_phase - 4);
+            poll_advance = 4u;
         }
+        _interrupt_poll_phase = interrupt_phase;
 
         _last_timing = current_timing;
         _last_nmi_timing = nmi_timing;
         _last_irq_timing = irq_timing;
         _last_irq_gate_timing = irq_gate_timing;
-        _irq_condition_valid = irq_condition_now;
     }
 
     const cpu_state_t& cpu_t::state() const noexcept
     {
         return _state;
+    }
+
+    void cpu_t::set_interrupt_poll_phase_for_testing(master_clock_delta_t phase) noexcept
+    {
+        _interrupt_poll_phase = static_cast<master_clock_delta_t>(phase & 3u);
+    }
+
+    master_clock_delta_t cpu_t::interrupt_poll_phase_for_testing() const noexcept
+    {
+        return _interrupt_poll_phase;
     }
 
     void cpu_t::set_waiting(bool waiting) noexcept

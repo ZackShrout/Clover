@@ -9,7 +9,7 @@ should not be mistaken for already-solved behavior.
 
 Location:
 
-- `src/clover/core/Cpu.cpp`
+- `src/clover/core/snes/Cpu.cpp`
 
 Current behavior:
 
@@ -32,31 +32,12 @@ Next step:
 - replace fallback timing with explicit opcode coverage until the fallback is no
   longer reachable for any intended software path
 
-### CPU timing still needs broader systematic proof
-
-Even though the current ROM milestone is strong, CPU timing work is not "done."
-Areas that still deserve targeted validation include:
-
-- exhaustive opcode timing coverage
-- interrupt entry / observation edge cases beyond the current tests
-- auto-joypad / controller latch edge timing
-- additional DMA / HDMA race scenarios
-
-Current evidence that this remains unfinished:
-
-- Zelda stays exact through frame 167 and diverges at 168
-- SMW stays exact through frame 193 and diverges at 194
-- both divergences occur with `cpu_placeholder_opcodes=0`
-
-That means the active-path timing mismatch is elsewhere than the explicit
-fallback opcode placeholder, even though the placeholder still needs eventual removal.
-
 ## PPU
 
-### Coverage is stronger than before, but not exhaustive
+### Coverage is not exhaustive
 
-The OBJ path and active-display behavior are much closer to bsnes now, but we
-should still expect future work in:
+The current milestone coverage does not imply full PPU closure. We should still
+expect future work in:
 
 - window / mosaic / Mode 7 edge cases
 - mid-scanline register effects
@@ -64,9 +45,9 @@ should still expect future work in:
 
 ## APU / DSP
 
-### Reset semantics are aligned more closely than runtime internals
+### Reset semantics are stronger than runtime-internal proof
 
-Cold-boot and warm-reset state handling are now more bsnes-like for:
+Cold-boot and warm-reset state handling are covered for:
 
 - APURAM preservation across warm reset
 - DSP `FLG` soft-reset behavior

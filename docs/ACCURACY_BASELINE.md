@@ -106,7 +106,7 @@ and the current harness interpretation is:
 Lower-level observable-behavior questions that were intentionally removed from
 the main pass/fail harness are tracked separately in:
 
-- `docs/REFERENCE_RECONCILIATION.md`
+- `docs/archive/REFERENCE_RECONCILIATION.md`
 
 ## Known Strong Checkpoints
 

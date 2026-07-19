@@ -87,15 +87,21 @@ namespace clover::core
             return;
     }
 
-    void interrupt_controller_t::observe_opcode_edge() noexcept
+    void interrupt_controller_t::observe_opcode_edge(bool irq_disabled) noexcept
     {
         if (_state.irq_lock)
             return;
 
         _state.nmi_pending = _state.nmi_pending || _state.nmi_transition;
         _state.nmi_transition = false;
-        _state.irq_pending = _state.irq_pending || _state.irq_transition;
-        _state.irq_transition = false;
+
+        if (_state.irq_transition)
+        {
+            if (!irq_disabled)
+                _state.irq_pending = true;
+
+            _state.irq_transition = false;
+        }
     }
 
     interrupt_state_t interrupt_controller_t::sample() const noexcept

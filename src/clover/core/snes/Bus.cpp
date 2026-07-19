@@ -286,6 +286,7 @@ namespace clover::core
 
         if (_apu != nullptr && is_apu_register_address(address))
         {
+            _apu->synchronize_cpu_thread();
             _open_bus = _apu->read_cpu_port(static_cast<uint16_t>(address & 0xffffu));
             return _open_bus;
         }
@@ -459,6 +460,12 @@ namespace clover::core
     {
         if (_apu != nullptr && elapsed_master_clocks != 0)
             _apu->step(elapsed_master_clocks);
+    }
+
+    void bus_t::synchronize_apu_cpu_thread() noexcept
+    {
+        if (_apu != nullptr)
+            _apu->synchronize_cpu_thread();
     }
 
     void bus_t::advance_apu_to(master_clock_delta_t target_clocks) noexcept
@@ -733,6 +740,7 @@ namespace clover::core
 
         if (_apu != nullptr && is_apu_register_address(address))
         {
+            _apu->synchronize_cpu_thread();
             _apu->write_cpu_port(static_cast<uint16_t>(address & 0xffffu), value);
             return;
         }
@@ -770,12 +778,18 @@ namespace clover::core
 
     bool bus_t::is_apu_register_address(uint32_t address) noexcept
     {
+        if (!is_low_wram_mirror_bank(static_cast<uint8_t>(address >> 16u)))
+            return false;
+
         const uint16_t register_address{ static_cast<uint16_t>(address & 0xffffu) };
         return register_address >= 0x2140u && register_address <= 0x217fu;
     }
 
     bool bus_t::is_cpu_register_address(uint32_t address) noexcept
     {
+        if (!is_low_wram_mirror_bank(static_cast<uint8_t>(address >> 16u)))
+            return false;
+
         const uint16_t register_address{ static_cast<uint16_t>(address & 0xffffu) };
         return (register_address >= 0x2180u && register_address <= 0x2183u)
             || register_address == 0x4016u
@@ -785,12 +799,18 @@ namespace clover::core
 
     bool bus_t::is_ppu_register_address(uint32_t address) noexcept
     {
+        if (!is_low_wram_mirror_bank(static_cast<uint8_t>(address >> 16u)))
+            return false;
+
         const uint16_t register_address{ static_cast<uint16_t>(address & 0xffffu) };
         return register_address >= 0x2100u && register_address <= 0x213fu;
     }
 
     bool bus_t::is_dma_register_address(uint32_t address) noexcept
     {
+        if (!is_low_wram_mirror_bank(static_cast<uint8_t>(address >> 16u)))
+            return false;
+
         const uint16_t register_address{ static_cast<uint16_t>(address & 0xffffu) };
         return (register_address >= 0x420bu && register_address <= 0x420cu)
             || (register_address >= 0x4300u && register_address <= 0x437fu);

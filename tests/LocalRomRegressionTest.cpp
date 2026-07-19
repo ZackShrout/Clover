@@ -28,6 +28,8 @@ namespace
         bool load_failed{ false };
         bool step_limit_hit{ false };
         bool frame_target_hit{ false };
+        bool apu_halted{ false };
+        uint8_t apu_last_opcode{ 0 };
         uint8_t terminal_pb{ 0 };
         uint16_t terminal_pc{ 0 };
     };
@@ -114,25 +116,29 @@ namespace
 
         result.step_limit_hit = result.steps >= step_limit;
         result.frame_target_hit = result.frames_completed >= target_frames;
+        const clover::core::apu_state_t apu{ console.apu_state() };
+        result.apu_halted = apu.halted;
+        result.apu_last_opcode = apu.last_opcode;
         return result;
     }
 
     void print_result(const regression_result_t& result)
     {
-        std::printf("Local ROM regression: rom=%s frames=%llu/%llu steps=%llu terminal_pc=%u\n",
+        std::printf("Local ROM regression: rom=%s frames=%llu/%llu steps=%llu terminal_pc=%u apu_halted=%u\n",
                     result.rom_path.string().c_str(),
                     static_cast<unsigned long long>(result.frames_completed),
                     static_cast<unsigned long long>(result.target_frames),
                     static_cast<unsigned long long>(result.steps),
-                    result.terminal_pc_detected ? 1u : 0u);
+                    result.terminal_pc_detected ? 1u : 0u,
+                    result.apu_halted ? 1u : 0u);
     }
 }
 
 int main(int argc, char** argv)
 {
     std::filesystem::path rom_path{};
-    uint64_t target_frames{ 300u };
-    uint64_t step_limit{ 10'000'000u };
+    uint64_t target_frames{ 800u };
+    uint64_t step_limit{ 20'000'000u };
 
     if (argc >= 2)
         rom_path = argv[1];
@@ -190,6 +196,16 @@ int main(int argc, char** argv)
                          "Local ROM regression failed: terminal PC at PB:%02x PC:%04x for %s\n",
                          result.terminal_pb,
                          result.terminal_pc,
+                         current_rom_path.string().c_str());
+            had_failure = true;
+            continue;
+        }
+
+        if (result.apu_halted)
+        {
+            std::fprintf(stderr,
+                         "Local ROM regression failed: APU halted on opcode %02x for %s\n",
+                         result.apu_last_opcode,
                          current_rom_path.string().c_str());
             had_failure = true;
             continue;

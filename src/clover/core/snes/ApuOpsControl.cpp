@@ -21,6 +21,21 @@ namespace clover::core
             spc_idle();
             return true;
 
+        case 0x0fu: // BRK
+        {
+            (void)spc_read_u8(_registers.pc);
+            spc_push_stack(static_cast<uint8_t>(_registers.pc >> 8u));
+            spc_push_stack(static_cast<uint8_t>(_registers.pc & 0x00ffu));
+            spc_push_stack(_registers.psw);
+            spc_idle();
+            const uint8_t low{ spc_read_u8(0xffdeu) };
+            const uint8_t high{ spc_read_u8(0xffdfu) };
+            _registers.pc = static_cast<uint16_t>(low | (static_cast<uint16_t>(high) << 8u));
+            _registers.psw &= static_cast<uint8_t>(~0x04u);
+            _registers.psw |= k_psw_break;
+            return true;
+        }
+
         case 0x01u:
         case 0x11u:
         case 0x21u:
@@ -101,6 +116,12 @@ namespace clover::core
             return true;
         }
 
+        case 0x40u: // SETP
+            spc_consume_opcode_fetch();
+            (void)spc_read_u8(_registers.pc);
+            _registers.psw |= k_psw_direct_page;
+            return true;
+
         case 0x4fu: // CALL $ffxx
         {
             const uint8_t low{ spc_fetch_u8() };
@@ -169,6 +190,17 @@ namespace clover::core
             set_nz_flags(_registers.a);
             return true;
 
+        case 0x7fu: // RETI
+        {
+            (void)spc_read_u8(_registers.pc);
+            spc_idle();
+            _registers.psw = spc_pull_stack();
+            const uint8_t low{ spc_pull_stack() };
+            const uint8_t high{ spc_pull_stack() };
+            _registers.pc = static_cast<uint16_t>(low | (static_cast<uint16_t>(high) << 8u));
+            return true;
+        }
+
         case 0x8eu: // POP P
             spc_idle();
             _registers.psw = spc_pull_stack();
@@ -179,6 +211,13 @@ namespace clover::core
             (void)spc_read_u8(_registers.pc);
             _registers.x = _registers.sp;
             set_nz_flags(_registers.x);
+            return true;
+
+        case 0xa0u: // EI / set interrupt enable
+            spc_consume_opcode_fetch();
+            (void)spc_read_u8(_registers.pc);
+            spc_idle();
+            _registers.psw |= 0x04u;
             return true;
 
         case 0xceu: // POP X
@@ -218,6 +257,14 @@ namespace clover::core
             spc_consume_opcode_fetch();
             (void)spc_read_u8(_registers.pc);
             _registers.psw ^= k_psw_carry;
+            return true;
+
+        case 0xefu: // SLEEP
+            _waiting = true;
+            return true;
+
+        case 0xffu: // STOP
+            _stopped = true;
             return true;
 
         default:

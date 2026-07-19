@@ -28,6 +28,7 @@ namespace
         const uint8_t channel_index{ static_cast<uint8_t>((address - 0x4300u) >> 4u) };
         return channels[channel_index & 7u];
     }
+
 } // anonymous namespace
 
 namespace clover::core
@@ -43,9 +44,12 @@ namespace clover::core
         _substep = dma_substep_t::idle;
         _alignment_pending = false;
         _general_dma_batch_started = false;
+        _cpu_bus_cycle_clocks = 6;
+        _dma_counter = 0;
         _general_dma_units_remaining = 0;
         _general_dma_transfer_index = 0;
         _hdma_transfer_index = 0;
+        _hdma_reload_pending = false;
     }
 
     void dma_t::request_general_dma() noexcept
@@ -110,6 +114,19 @@ namespace clover::core
     bool dma_t::hdma_channel_active(const dma_channel_t& channel) noexcept
     {
         return channel.hdma_enabled && !channel.hdma_completed;
+    }
+
+    bool dma_t::hdma_later_channel_active() const noexcept
+    {
+        for (uint8_t channel_index{ static_cast<uint8_t>(_active_channel_index + 1u) };
+             channel_index < _channels.size();
+             ++channel_index)
+        {
+            if (hdma_channel_active(_channels[channel_index]))
+                return true;
+        }
+
+        return false;
     }
 
     uint8_t dma_t::read_register(uint16_t address) const noexcept
@@ -243,8 +260,12 @@ namespace clover::core
         }
     }
 
-    dma_step_result_t dma_t::step(bus_t& bus, uint8_t cpu_dma_phase) noexcept
+    dma_step_result_t dma_t::step(bus_t& bus,
+                                  uint8_t cpu_dma_phase,
+                                  master_clock_delta_t cpu_bus_cycle_clocks) noexcept
     {
+        _cpu_bus_cycle_clocks = cpu_bus_cycle_clocks;
+
         if (_activity == dma_activity_t::idle)
         {
             if (_pending_hdma_setup_mask != 0)
@@ -262,10 +283,19 @@ namespace clover::core
         {
             _alignment_pending = false;
             _substep = dma_substep_t::idle;
-            prepare_current_channel();
             const master_clock_delta_t k_dma_alignment_clocks{
                 cpu_dma_phase == 0 ? 8u : static_cast<master_clock_delta_t>(8u - cpu_dma_phase)
             };
+            _dma_counter = k_dma_alignment_clocks;
+            if (_activity == dma_activity_t::hdma_setup
+                || _activity == dma_activity_t::hdma_transfer)
+            {
+                _substep = dma_substep_t::hdma_batch_setup;
+            }
+            else
+            {
+                prepare_current_channel();
+            }
             return {
                 .master_clocks = k_dma_alignment_clocks,
                 .consumed_alignment = true
@@ -276,6 +306,30 @@ namespace clover::core
         {
             if (_activity == dma_activity_t::idle)
                 return { .master_clocks = 0 };
+
+            if (_substep == dma_substep_t::hdma_batch_setup)
+            {
+                prepare_current_channel();
+                _dma_counter = static_cast<master_clock_delta_t>(_dma_counter + 8u);
+                return { .master_clocks = 8 };
+            }
+
+            if (_substep == dma_substep_t::finish_sync)
+            {
+                const master_clock_delta_t remainder{
+                    static_cast<master_clock_delta_t>(_dma_counter % _cpu_bus_cycle_clocks)
+                };
+                const master_clock_delta_t clocks{
+                    static_cast<master_clock_delta_t>(_cpu_bus_cycle_clocks - remainder)
+                };
+                _dma_counter = static_cast<master_clock_delta_t>(_dma_counter + clocks);
+                _substep = dma_substep_t::idle;
+                _activity = dma_activity_t::idle;
+                _active_channel_index = 0;
+                _alignment_pending = false;
+                _general_dma_batch_started = false;
+                return { .master_clocks = clocks };
+            }
 
             dma_channel_t& channel{ _channels[_active_channel_index] };
             master_clock_delta_t clocks{ 0 };
@@ -296,6 +350,9 @@ namespace clover::core
                 clocks = 0;
                 break;
             }
+
+            if (clocks != 0)
+                _dma_counter = static_cast<master_clock_delta_t>(_dma_counter + clocks);
 
             if (clocks != 0 || _activity == dma_activity_t::idle)
                 return { .master_clocks = clocks };
@@ -452,16 +509,6 @@ namespace clover::core
             return 8;
         }
 
-        if (_substep == dma_substep_t::general_finish_sync)
-        {
-            _substep = dma_substep_t::idle;
-            _activity = dma_activity_t::idle;
-            _active_channel_index = 0;
-            _alignment_pending = false;
-            _general_dma_batch_started = false;
-            return 8;
-        }
-
         if (!channel.dma_enabled)
         {
             finish_active_channel();
@@ -502,26 +549,38 @@ namespace clover::core
         switch (_substep)
         {
         case dma_substep_t::hdma_reload_line_counter:
-            channel.line_counter = read_a_bus(
+        {
+            const uint8_t line_counter_data{ read_a_bus(
                 bus,
                 (static_cast<uint32_t>(channel.source_bank) << 16u) | channel.hdma_table_address
-            );
+            ) };
+            if (!_hdma_reload_pending)
+            {
+                finish_active_channel();
+                return 8;
+            }
+
+            channel.line_counter = line_counter_data;
             ++channel.hdma_table_address;
             channel.hdma_completed = channel.line_counter == 0;
             channel.hdma_do_transfer = !channel.hdma_completed;
             channel.hdma_active = channel.hdma_enabled && !channel.hdma_completed;
-            if (!indirect_hdma(channel) || channel.hdma_completed)
+            if (!indirect_hdma(channel))
                 finish_active_channel();
             else
                 _substep = dma_substep_t::hdma_reload_indirect_low;
             return 8;
+        }
         case dma_substep_t::hdma_reload_indirect_low:
             channel.indirect_address = read_a_bus(
                 bus,
                 (static_cast<uint32_t>(channel.source_bank) << 16u) | channel.hdma_table_address
             );
             ++channel.hdma_table_address;
-            _substep = dma_substep_t::hdma_reload_indirect_high;
+            if (channel.hdma_completed && !hdma_later_channel_active())
+                finish_active_channel();
+            else
+                _substep = dma_substep_t::hdma_reload_indirect_high;
             return 8;
         case dma_substep_t::hdma_reload_indirect_high:
             channel.indirect_address |= static_cast<uint16_t>(
@@ -565,14 +624,7 @@ namespace clover::core
         case dma_substep_t::hdma_advance:
             --channel.line_counter;
             channel.hdma_do_transfer = (channel.line_counter & 0x80u) != 0;
-            if ((channel.line_counter & 0x7fu) == 0)
-            {
-                schedule_hdma_reload(channel);
-            }
-            else
-            {
-                finish_active_channel();
-            }
+            schedule_hdma_reload(channel);
             return 0;
         case dma_substep_t::hdma_reload_line_counter:
         case dma_substep_t::hdma_reload_indirect_low:
@@ -594,12 +646,7 @@ namespace clover::core
 
     void dma_t::schedule_hdma_reload(const dma_channel_t& channel) noexcept
     {
-        if ((channel.line_counter & 0x7fu) != 0)
-        {
-            _substep = dma_substep_t::idle;
-            return;
-        }
-
+        _hdma_reload_pending = (channel.line_counter & 0x7fu) == 0;
         _substep = dma_substep_t::hdma_reload_line_counter;
     }
 
@@ -612,8 +659,7 @@ namespace clover::core
             {
                 _active_channel_index = first_channel_index(_pending_general_dma_mask);
                 _pending_general_dma_mask &= static_cast<uint8_t>(~(1u << _active_channel_index));
-                _substep = dma_substep_t::alignment;
-                _alignment_pending = true;
+                prepare_current_channel();
                 return;
             }
             break;
@@ -622,8 +668,7 @@ namespace clover::core
             {
                 _active_channel_index = first_channel_index(_pending_hdma_setup_mask);
                 _pending_hdma_setup_mask &= static_cast<uint8_t>(~(1u << _active_channel_index));
-                _substep = dma_substep_t::alignment;
-                _alignment_pending = true;
+                prepare_current_channel();
                 return;
             }
             break;
@@ -632,8 +677,7 @@ namespace clover::core
             {
                 _active_channel_index = first_channel_index(_pending_hdma_transfer_mask);
                 _pending_hdma_transfer_mask &= static_cast<uint8_t>(~(1u << _active_channel_index));
-                _substep = dma_substep_t::alignment;
-                _alignment_pending = true;
+                prepare_current_channel();
                 return;
             }
             break;
@@ -642,11 +686,7 @@ namespace clover::core
             break;
         }
 
-        _activity = dma_activity_t::idle;
-        _active_channel_index = 0;
-        _substep = dma_substep_t::idle;
-        _alignment_pending = false;
-        _general_dma_batch_started = false;
+        _substep = dma_substep_t::finish_sync;
     }
 
     void dma_t::prepare_current_channel() noexcept
@@ -668,6 +708,7 @@ namespace clover::core
             channel.hdma_completed = false;
             channel.hdma_do_transfer = true;
             channel.hdma_active = channel.hdma_enabled;
+            _hdma_reload_pending = true;
             _substep = dma_substep_t::hdma_reload_line_counter;
             return;
         case dma_activity_t::hdma_transfer:
@@ -728,7 +769,7 @@ namespace clover::core
                 _general_dma_units_remaining = 0;
                 _general_dma_transfer_index = 0;
                 _hdma_transfer_index = 0;
-                _substep = dma_substep_t::general_finish_sync;
+                _substep = dma_substep_t::finish_sync;
                 return;
             }
         }

@@ -210,7 +210,7 @@ namespace
                 return true;
 
             if (target_scanline == previous_timing.raster.scanline
-                && target_dot >= previous_timing.raster.dot)
+                && target_dot > previous_timing.raster.dot)
                 return true;
 
             if (target_scanline < current_timing.raster.scanline)
@@ -226,7 +226,7 @@ namespace
             || target_scanline > current_timing.raster.scanline)
             return false;
 
-        if (target_scanline == previous_timing.raster.scanline && target_dot < previous_timing.raster.dot)
+        if (target_scanline == previous_timing.raster.scanline && target_dot <= previous_timing.raster.dot)
             return false;
 
         if (target_scanline == current_timing.raster.scanline && target_dot > current_timing.raster.dot)
@@ -1252,12 +1252,10 @@ namespace clover::core
 
     void ppu_t::begin_object_scanline(uint16_t scanline) noexcept
     {
-        // Clover initializes the scanline pipeline from the current raster line,
-        // whereas bsnes' OBJ fetch state is consumed by the following visible line.
-        // Translate that phase here so the bsnes-style temporary OBJ pipeline lines
-        // up with Clover's raster scheduler.
-        _object_layer_state.evaluation_scanline =
-            static_cast<uint16_t>((scanline + 1u) % _video_timing.scanlines_per_frame);
+        // OBJ evaluation/fetch performed on this scanline is consumed from the
+        // opposite buffer on the following scanline, matching the PPU's
+        // one-line OBJ pipeline.
+        _object_layer_state.evaluation_scanline = scanline;
         _object_layer_state.pipeline_x = 0u;
         _object_layer_state.evaluation_first_sprite = _object_layer_state.first_sprite;
         _object_layer_state.evaluation_count = 0;
@@ -1748,7 +1746,9 @@ namespace clover::core
         if (!_frame_capture_enabled)
             return;
 
-        constexpr size_t k_non_overscan_top_border{ 9u };
+        // In 224-line mode, PPU scanline 1 is placed at output row 8
+        // (vcounter + 7), leaving eight rows of top border.
+        constexpr size_t k_non_overscan_top_border{ 8u };
         const size_t row_index{
             static_cast<size_t>(scanline - 1u) + (_screen_state.overscan ? 0u : k_non_overscan_top_border)
         };
@@ -2444,7 +2444,7 @@ namespace clover::core
         if (scanline == 0u || scanline >= active_visible_scanlines())
             return;
 
-        constexpr size_t k_non_overscan_top_border{ 9u };
+        constexpr size_t k_non_overscan_top_border{ 8u };
         const size_t row_index{
             static_cast<size_t>(scanline - 1u) + (_screen_state.overscan ? 0u : k_non_overscan_top_border)
         };

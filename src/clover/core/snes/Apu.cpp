@@ -58,6 +58,8 @@ namespace clover::core
         };
         _ipl_rom_enabled = true;
         _halted = false;
+        _waiting = false;
+        _stopped = false;
         _last_opcode = 0;
         _io = {};
         _timer0 = {};
@@ -65,6 +67,8 @@ namespace clover::core
         _timer2 = {};
         _apu_to_cpu_ports = { 0x00u, 0x00u, 0x00u, 0x00u };
         _cpu_to_apu_ports = { 0x00u, 0x00u, 0x00u, 0x00u };
+        _instruction_context = {};
+        _smp_suspended_for_cpu = false;
         _instruction_trace_count = 0;
         _io_trace_count = 0;
 
@@ -82,9 +86,34 @@ namespace clover::core
         _master_clock += master_clocks;
         _smp_clock_credit += static_cast<int64_t>(master_clocks) * k_smp_clock_frequency_hz;
 
+        if (_smp_suspended_for_cpu)
+            return;
+
         while (!_halted && _smp_clock_credit >= k_master_clock_frequency_hz)
         {
-            execute_instruction();
+            if (!execute_instruction())
+                return;
+        }
+    }
+
+    void apu_t::synchronize_cpu_thread() noexcept
+    {
+        if (!_smp_suspended_for_cpu
+            || _smp_clock_credit <= k_scheduler_zero_credit
+            || _halted)
+            return;
+
+        _smp_suspended_for_cpu = false;
+        while (!_halted)
+        {
+            if (!execute_instruction())
+                return;
+
+            if (_smp_clock_credit < -k_force_cpu_sync_credit)
+            {
+                _smp_suspended_for_cpu = true;
+                return;
+            }
         }
     }
 
@@ -142,6 +171,8 @@ namespace clover::core
             .timers_enable = _io.timers_enable,
             .ipl_rom_enabled = _ipl_rom_enabled,
             .halted = _halted,
+            .waiting = _waiting,
+            .stopped = _stopped,
             .last_opcode = _last_opcode,
             .timer0 = {
                 .stage0 = _timer0.stage0,
@@ -205,22 +236,75 @@ namespace clover::core
         return _io_trace;
     }
 
-    void apu_t::execute_instruction() noexcept
+    bool apu_t::execute_instruction() noexcept
     {
+        const bool replaying{ _instruction_context.active };
+        if (!replaying)
+        {
+            _instruction_context = {
+                .active = true,
+                .abort_requested = false,
+                .start_registers = _registers,
+                .start_current_opcode_pc = _current_opcode_pc,
+                .start_last_opcode = _last_opcode,
+                .accesses = {},
+                .access_count = 0,
+                .replay_cursor = 0
+            };
+        }
+        else
+        {
+            _instruction_context.abort_requested = false;
+            _instruction_context.replay_cursor = 0;
+            _registers = _instruction_context.start_registers;
+            _current_opcode_pc = _instruction_context.start_current_opcode_pc;
+            _last_opcode = _instruction_context.start_last_opcode;
+        }
+
+        if (_waiting || _stopped)
+        {
+            (void)spc_read_u8(_registers.pc);
+            spc_idle();
+            if (_instruction_context.abort_requested)
+            {
+                _registers = _instruction_context.start_registers;
+                _current_opcode_pc = _instruction_context.start_current_opcode_pc;
+                _last_opcode = _instruction_context.start_last_opcode;
+                _smp_suspended_for_cpu = true;
+                return false;
+            }
+
+            _instruction_context = {};
+            return true;
+        }
+
         const uint16_t pc{ _registers.pc };
         _current_opcode_pc = pc;
         const uint8_t opcode{ spc_fetch_u8() };
         _last_opcode = opcode;
-        trace_instruction(pc, opcode);
+        if (!replaying)
+            trace_instruction(pc, opcode);
         if (execute_load_store_opcode(opcode)
             || execute_alu_opcode(opcode)
             || execute_branch_bit_opcode(opcode)
             || execute_control_opcode(opcode))
         {
-            return;
+            if (_instruction_context.abort_requested)
+            {
+                _registers = _instruction_context.start_registers;
+                _current_opcode_pc = _instruction_context.start_current_opcode_pc;
+                _last_opcode = _instruction_context.start_last_opcode;
+                _smp_suspended_for_cpu = true;
+                return false;
+            }
+
+            _instruction_context = {};
+            return true;
         }
 
         halt_on_unimplemented_opcode(opcode);
+        _instruction_context = {};
+        return true;
     }
 
     uint8_t apu_t::fetch_u8() noexcept
@@ -255,27 +339,85 @@ namespace clover::core
 
     void apu_t::spc_idle() noexcept
     {
+        if (_instruction_context.abort_requested)
+            return;
+
+        if (replay_access(access_kind_t::idle, 0) != nullptr)
+            return;
+
         wait_for_access(std::nullopt, false);
+        (void)append_access(access_kind_t::idle, 0, 0, false);
     }
 
     uint8_t apu_t::spc_read_u8(uint16_t address) noexcept
     {
+        if (_instruction_context.abort_requested)
+            return 0;
+
+        if (access_journal_entry_t* replay{
+                replay_access(access_kind_t::read, address)
+            })
+        {
+            if (!replay->awaiting_cpu_sync)
+                return replay->value;
+
+            const uint8_t value{ read_u8(address) };
+            wait_for_access(address, true);
+            replay->value = value;
+            replay->awaiting_cpu_sync = false;
+            return value;
+        }
+
         if (is_cpu_port_address(address))
         {
             wait_for_access(address, true);
+            if (_smp_clock_credit <= k_scheduler_zero_credit)
+            {
+                (void)append_access(access_kind_t::read, address, 0, true);
+                request_cpu_sync();
+                return 0;
+            }
+
             const uint8_t value{ read_u8(address) };
             wait_for_access(address, true);
+            (void)append_access(access_kind_t::read, address, value, false);
             return value;
         }
 
         wait_for_access(address, false);
-        return read_u8(address);
+        const uint8_t value{ read_u8(address) };
+        (void)append_access(access_kind_t::read, address, value, false);
+        return value;
     }
 
     void apu_t::spc_write_u8(uint16_t address, uint8_t value) noexcept
     {
+        if (_instruction_context.abort_requested)
+            return;
+
+        if (access_journal_entry_t* replay{
+                replay_access(access_kind_t::write, address)
+            })
+        {
+            if (replay->awaiting_cpu_sync)
+            {
+                write_u8(address, replay->value);
+                replay->awaiting_cpu_sync = false;
+            }
+            return;
+        }
+
         wait_for_access(address, false);
+        if (is_cpu_port_address(address)
+            && _smp_clock_credit <= k_scheduler_zero_credit)
+        {
+            (void)append_access(access_kind_t::write, address, value, true);
+            request_cpu_sync();
+            return;
+        }
+
         write_u8(address, value);
+        (void)append_access(access_kind_t::write, address, value, false);
     }
 
     uint8_t apu_t::spc_load_direct(uint8_t address) noexcept
@@ -1269,6 +1411,60 @@ namespace clover::core
         _cpu_io_window_bus->synchronize_apu_io_access(visible_clocks);
     }
 
+    apu_t::access_journal_entry_t* apu_t::replay_access(access_kind_t kind,
+                                                        uint16_t address) noexcept
+    {
+        if (_instruction_context.replay_cursor
+            >= _instruction_context.access_count)
+        {
+            return nullptr;
+        }
+
+        access_journal_entry_t& entry{
+            _instruction_context.accesses[_instruction_context.replay_cursor++]
+        };
+        if (entry.kind != kind || entry.address != address)
+        {
+            _halted = true;
+            _last_opcode = 0xffu;
+            return nullptr;
+        }
+
+        return &entry;
+    }
+
+    apu_t::access_journal_entry_t* apu_t::append_access(
+        access_kind_t kind,
+        uint16_t address,
+        uint8_t value,
+        bool awaiting_cpu_sync) noexcept
+    {
+        if (_instruction_context.access_count
+            >= _instruction_context.accesses.size())
+        {
+            _halted = true;
+            _last_opcode = 0xffu;
+            return nullptr;
+        }
+
+        access_journal_entry_t& entry{
+            _instruction_context.accesses[_instruction_context.access_count++]
+        };
+        entry = {
+            .kind = kind,
+            .address = address,
+            .value = value,
+            .awaiting_cpu_sync = awaiting_cpu_sync
+        };
+        ++_instruction_context.replay_cursor;
+        return &entry;
+    }
+
+    void apu_t::request_cpu_sync() noexcept
+    {
+        _instruction_context.abort_requested = true;
+    }
+
     void apu_t::halt_on_unimplemented_opcode(uint8_t opcode) noexcept
     {
         _last_opcode = opcode;
@@ -1333,7 +1529,8 @@ namespace clover::core
             .a = _registers.a,
             .x = _registers.x,
             .y = _registers.y,
-            .psw = _registers.psw
+            .psw = _registers.psw,
+            .smp_clock_credit = _smp_clock_credit
         };
 
         if (_io_trace_count < _io_trace.size())

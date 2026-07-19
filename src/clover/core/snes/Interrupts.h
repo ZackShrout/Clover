@@ -36,7 +36,7 @@ namespace clover::core
         void force_irq_transition() noexcept;
         void advance_to_observation_point() noexcept;
         void latch_from_lines() noexcept;
-        void observe_opcode_edge() noexcept;
+        void observe_opcode_edge(bool irq_disabled) noexcept;
         [[nodiscard]] interrupt_state_t sample() const noexcept;
         bool consume_nmi() noexcept;
         bool consume_irq() noexcept;

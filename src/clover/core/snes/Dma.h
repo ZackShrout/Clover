@@ -28,9 +28,10 @@ namespace clover::core
         idle,
         alignment,
         general_batch_setup,
+        hdma_batch_setup,
         general_setup,
         general_transfer,
-        general_finish_sync,
+        finish_sync,
         hdma_reload_line_counter,
         hdma_reload_indirect_low,
         hdma_reload_indirect_high,
@@ -66,7 +67,9 @@ namespace clover::core
         void request_hdma_setup() noexcept;
         void request_hdma_transfer() noexcept;
         [[nodiscard]] bool has_pending_work() const noexcept;
-        [[nodiscard]] dma_step_result_t step(bus_t& bus, uint8_t cpu_dma_phase) noexcept;
+        [[nodiscard]] dma_step_result_t step(bus_t& bus,
+                                             uint8_t cpu_dma_phase,
+                                             master_clock_delta_t cpu_bus_cycle_clocks = 6) noexcept;
         [[nodiscard]] uint8_t read_register(uint16_t address) const noexcept;
         void write_register(uint16_t address, uint8_t value) noexcept;
         [[nodiscard]] bool general_dma_pending() const noexcept;
@@ -80,6 +83,7 @@ namespace clover::core
         [[nodiscard]] static bool reverse_transfer(const dma_channel_t& channel) noexcept;
         [[nodiscard]] static bool indirect_hdma(const dma_channel_t& channel) noexcept;
         [[nodiscard]] static bool hdma_channel_active(const dma_channel_t& channel) noexcept;
+        [[nodiscard]] bool hdma_later_channel_active() const noexcept;
         [[nodiscard]] static uint8_t transfer_mode(const dma_channel_t& channel) noexcept;
         [[nodiscard]] static uint8_t transfer_length(const dma_channel_t& channel) noexcept;
         [[nodiscard]] static uint8_t target_address_offset(const dma_channel_t& channel,
@@ -115,8 +119,11 @@ namespace clover::core
         dma_substep_t _substep{ dma_substep_t::idle };
         bool _alignment_pending{ false };
         bool _general_dma_batch_started{ false };
+        master_clock_delta_t _cpu_bus_cycle_clocks{ 6 };
+        master_clock_delta_t _dma_counter{ 0 };
         uint32_t _general_dma_units_remaining{ 0 };
         uint8_t _general_dma_transfer_index{ 0 };
         uint8_t _hdma_transfer_index{ 0 };
+        bool _hdma_reload_pending{ false };
     };
 }

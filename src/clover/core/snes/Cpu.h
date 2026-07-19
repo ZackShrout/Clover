@@ -45,9 +45,17 @@ namespace clover::core
         bool in_vblank{ false };
         bool fast_rom_enabled{ false };
         bool controller_port_1_latch{ false };
+        uint8_t controller_port_1_shift_count{ 0 };
+        uint8_t controller_port_2_shift_count{ 0 };
         uint8_t nmi_hold_clocks{ 0 };
         uint8_t irq_hold_clocks{ 0 };
         uint8_t pio{ 0xffu };
+        uint8_t multiply_a{ 0xffu };
+        uint8_t multiply_b{ 0xffu };
+        uint16_t dividend{ 0xffffu };
+        uint8_t divisor{ 0xffu };
+        uint16_t quotient{ 0 };
+        uint16_t multiply_or_remainder{ 0 };
         uint16_t auto_joypad_busy_clocks{ 0 };
         uint16_t joy1{ 0 };
         uint16_t joy2{ 0 };
@@ -66,8 +74,7 @@ namespace clover::core
         void attach_ppu(ppu_t& ppu) noexcept;
         void power_on() noexcept;
         void reset() noexcept;
-        void load_reset_vector(bus_t& bus) noexcept;
-        [[nodiscard]] uint8_t dma_phase() const noexcept;
+        [[nodiscard]] uint8_t dma_phase(master_clock_delta_t elapsed_master_clocks = 0) const noexcept;
         [[nodiscard]] timing_snapshot_t timing(const video_timing_t& video_timing) const noexcept;
         [[nodiscard]] timing_snapshot_t delayed_timing(const video_timing_t& video_timing,
                                                        master_clock_delta_t delay) const noexcept;
@@ -103,9 +110,12 @@ namespace clover::core
         [[nodiscard]] master_clock_delta_t service_dma_edge(bus_t& bus,
                                                             dma_t& dma,
                                                             interrupt_controller_t& interrupts,
-                                                            ppu_step_result_t& aggregate) noexcept;
+                                                            ppu_step_result_t& aggregate,
+                                                            master_clock_delta_t bus_cycle_clocks,
+                                                            master_clock_delta_t instruction_elapsed_master_clocks) noexcept;
         void set_waiting(bool waiting) noexcept;
         void set_stopped(bool stopped) noexcept;
+        void alu_edge() noexcept;
 
         cpu_state_t _state{};
         cpu_io_t _io{};
@@ -121,6 +131,7 @@ namespace clover::core
         ppu_t* _ppu{ nullptr };
         bool _irq_condition_valid{ false };
         bool _dma_active{ false };
+        bool _reset_pending{ false };
         bool _waiting{ false };
         bool _wait_wake_idle_pending{ false };
         bool _stopped{ false };
@@ -130,6 +141,9 @@ namespace clover::core
         bool _dram_refresh_pending{ true };
         uint16_t _hdma_setup_dot{ hdma_setup_dot_v2(0) };
         bool _hdma_setup_pending{ true };
+        uint8_t _multiply_counter{ 0 };
+        uint8_t _divide_counter{ 0 };
+        uint32_t _math_shift{ 0 };
         uint64_t _placeholder_opcode_count{ 0u };
 
         friend struct cpu_step_executor_t;

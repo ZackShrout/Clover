@@ -113,7 +113,7 @@ namespace clover::core
         uint16_t evaluation_scanline{ 0 };
         uint8_t tile_count{ 0 };
         ppu_pixel_candidate_t samples[8]{};
-        tile_candidate_t tiles[8]{};
+        tile_candidate_t tiles[34]{};
     };
 
     struct ppu_object_render_state_t

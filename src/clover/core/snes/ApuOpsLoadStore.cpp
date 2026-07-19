@@ -102,6 +102,12 @@ namespace clover::core
 
         case 0xc6u: // MOV (X),A
             spc_consume_opcode_fetch();
+            // The indirect-X store performs a throwaway read from the next
+            // opcode address before reading and writing the direct-page byte.
+            // The IPL ROM uses this instruction in its 240-byte RAM-clear
+            // loop, so omitting the cycle advances the boot signature by 480
+            // SMP clocks.
+            (void)spc_read_u8(_registers.pc);
             (void)spc_load_direct(_registers.x);
             spc_store_direct(_registers.x, _registers.a);
             return true;

@@ -287,6 +287,38 @@ namespace clover::core
             xor_indirect_x_with_indirect_y();
             return true;
 
+        case 0x5au: // CMPW YA,dp
+        {
+            const uint8_t direct_address{ spc_fetch_u8() };
+            const uint16_t ya{
+                static_cast<uint16_t>(_registers.a | (static_cast<uint16_t>(_registers.y) << 8u))
+            };
+            const uint16_t value{
+                static_cast<uint16_t>(
+                    spc_load_direct(direct_address)
+                    | (static_cast<uint16_t>(
+                           spc_load_direct(static_cast<uint8_t>(direct_address + 1u)))
+                       << 8u))
+            };
+            const uint16_t result{ static_cast<uint16_t>(ya - value) };
+
+            if (ya >= value)
+                _registers.psw |= k_psw_carry;
+            else
+                _registers.psw &= static_cast<uint8_t>(~k_psw_carry);
+
+            if (result == 0)
+                _registers.psw |= k_psw_zero;
+            else
+                _registers.psw &= static_cast<uint8_t>(~k_psw_zero);
+
+            if ((result & 0x8000u) != 0)
+                _registers.psw |= k_psw_negative;
+            else
+                _registers.psw &= static_cast<uint8_t>(~k_psw_negative);
+            return true;
+        }
+
         case 0x64u: // CMP A,dp
         {
             spc_consume_opcode_fetch();
@@ -362,6 +394,7 @@ namespace clover::core
             const uint8_t immediate{ spc_fetch_u8() };
             const uint8_t direct_address{ spc_fetch_u8() };
             set_compare_flags(spc_load_direct(direct_address), immediate);
+            spc_idle();
             return true;
         }
 
@@ -724,6 +757,19 @@ namespace clover::core
             set_nz_flags(_registers.a);
             return true;
 
+        case 0xbeu: // DAS A
+            (void)spc_read_u8(_registers.pc);
+            spc_idle();
+            if ((_registers.psw & k_psw_carry) == 0 || _registers.a > 0x99u)
+            {
+                _registers.a = static_cast<uint8_t>(_registers.a - 0x60u);
+                _registers.psw &= static_cast<uint8_t>(~k_psw_carry);
+            }
+            if ((_registers.psw & k_psw_half_carry) == 0 || (_registers.a & 0x0fu) > 0x09u)
+                _registers.a = static_cast<uint8_t>(_registers.a - 0x06u);
+            set_nz_flags(_registers.a);
+            return true;
+
         case 0x4bu: // LSR dp
         {
             const uint8_t direct_address{ spc_fetch_u8() };
@@ -829,6 +875,19 @@ namespace clover::core
             spc_idle();
             spc_idle();
             multiply_ya();
+            return true;
+
+        case 0xdfu: // DAA A
+            (void)spc_read_u8(_registers.pc);
+            spc_idle();
+            if ((_registers.psw & k_psw_carry) != 0 || _registers.a > 0x99u)
+            {
+                _registers.a = static_cast<uint8_t>(_registers.a + 0x60u);
+                _registers.psw |= k_psw_carry;
+            }
+            if ((_registers.psw & k_psw_half_carry) != 0 || (_registers.a & 0x0fu) > 0x09u)
+                _registers.a = static_cast<uint8_t>(_registers.a + 0x06u);
+            set_nz_flags(_registers.a);
             return true;
 
         case 0xfcu: // INC Y

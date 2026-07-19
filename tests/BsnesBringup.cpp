@@ -3,6 +3,7 @@
 // Copyright (c) 2026 BunnySoft. All rights reserved.
 //
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -102,6 +103,10 @@ namespace
     using retro_serialize_size_t = size_t (*)();
     using retro_serialize_t = bool (*)(void*, size_t);
     using retro_unserialize_t = bool (*)(const void*, size_t);
+    using retro_get_memory_data_t = void* (*)(unsigned);
+    using retro_get_memory_size_t = size_t (*)(unsigned);
+
+    constexpr unsigned k_retro_memory_system_ram{ 2u };
 
     struct frame_capture_t
     {
@@ -326,9 +331,9 @@ namespace
 
         const size_t wram_base{ cursor.offset };
         cursor.patch_wram(wram_base, 0x0000u, 0x58u);
-        for (uint32_t address{ 0x0001u }; address <= 0x000au; ++address)
+        for (uint32_t address{ 0x0001u }; address <= 0x00007fu; ++address)
             cursor.patch_wram(wram_base, address, 0xeau);
-        cursor.patch_wram(wram_base, 0x1234u, 0xeau);
+        cursor.patch_wram(wram_base, 0x1234u, 0x40u);
         cursor.skip(k_wram_size);
 
         cursor.skip(4u);               // version
@@ -976,10 +981,17 @@ int main(int argc, char** argv)
     const auto retro_serialize_size{ reinterpret_cast<retro_serialize_size_t>(load_symbol(handle, "retro_serialize_size")) };
     const auto retro_serialize{ reinterpret_cast<retro_serialize_t>(load_symbol(handle, "retro_serialize")) };
     const auto retro_unserialize{ reinterpret_cast<retro_unserialize_t>(load_symbol(handle, "retro_unserialize")) };
+    const auto retro_get_memory_data{
+        reinterpret_cast<retro_get_memory_data_t>(load_symbol(handle, "retro_get_memory_data"))
+    };
+    const auto retro_get_memory_size{
+        reinterpret_cast<retro_get_memory_size_t>(load_symbol(handle, "retro_get_memory_size"))
+    };
     if (!retro_init || !retro_deinit || !retro_set_environment || !retro_set_video_refresh || !retro_set_audio_sample
         || !retro_set_audio_sample_batch || !retro_set_input_poll || !retro_set_input_state || !retro_get_system_av_info
         || !retro_load_game || !retro_run || !retro_unload_game || !retro_reset
-        || !retro_serialize_size || !retro_serialize || !retro_unserialize)
+        || !retro_serialize_size || !retro_serialize || !retro_unserialize
+        || !retro_get_memory_data || !retro_get_memory_size)
     {
         dlclose(handle);
         return 1;
@@ -1045,6 +1057,37 @@ int main(int argc, char** argv)
                         static_cast<unsigned long long>(frame_number),
                         static_cast<unsigned long long>(state.latest_frame.frame_index));
             ++dumped_frames;
+        }
+    }
+
+    if (const char* address_raw{ std::getenv("CLOVER_BSNES_WRAM_ADDR") };
+        address_raw != nullptr && *address_raw != '\0')
+    {
+        const size_t memory_size{ retro_get_memory_size(k_retro_memory_system_ram) };
+        const auto* memory{
+            static_cast<const uint8_t*>(retro_get_memory_data(k_retro_memory_system_ram))
+        };
+        const size_t address{
+            static_cast<size_t>(std::strtoull(address_raw, nullptr, 0))
+        };
+        size_t count{ 0x20u };
+        if (const char* count_raw{ std::getenv("CLOVER_BSNES_WRAM_COUNT") };
+            count_raw != nullptr && *count_raw != '\0')
+        {
+            count = static_cast<size_t>(std::strtoull(count_raw, nullptr, 0));
+        }
+
+        if (memory != nullptr && address < memory_size)
+        {
+            count = std::min(count, memory_size - address);
+            std::printf("bsnes WRAM %05zx:", address);
+            for (size_t index{ 0 }; index < count; ++index)
+            {
+                if ((index % 16u) == 0u)
+                    std::printf("\n  %05zx:", address + index);
+                std::printf(" %02x", memory[address + index]);
+            }
+            std::printf("\n");
         }
     }
 

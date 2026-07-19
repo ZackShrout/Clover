@@ -15,9 +15,9 @@ namespace
     {
         console.power_on();
         console.write_u8(0x000000u, 0x58u);
-        for (uint32_t address{ 0x000001u }; address <= 0x00000au; ++address)
+        for (uint32_t address{ 0x000001u }; address <= 0x00007fu; ++address)
             console.write_u8(address, 0xeau);
-        console.write_u8(0x001234u, 0xeau);
+        console.write_u8(0x001234u, 0x40u);
         console.write_u8(0x00fffeu, 0x34u);
         console.write_u8(0x00ffffu, 0x12u);
         console.write_u8(0x004207u, 0x10u);
@@ -50,13 +50,13 @@ namespace
 
 int main(int argc, char** argv)
 {
-    int max_steps{ 32 };
+    int max_steps{ 64 };
     int initial_poll_phase{ 0 };
     if (argc >= 2)
     {
         max_steps = std::atoi(argv[1]);
         if (max_steps <= 0)
-            max_steps = 32;
+            max_steps = 64;
     }
     if (argc >= 3)
     {
@@ -72,20 +72,46 @@ int main(int argc, char** argv)
     std::printf("clover seeded microcase: hirq_cli poll_phase=%d\n", initial_poll_phase);
     print_step(0, console);
 
-    bool entered_irq{ false };
+    int irq_entry_count{ 0 };
+    int first_irq_step{ -1 };
+    int first_rti_return_step{ -1 };
+    uint16_t first_rti_return_pc{ 0xffffu };
+    int reentry_after_rti_step{ -1 };
     for (int step_index{ 1 }; step_index <= max_steps; ++step_index)
     {
         static_cast<void>(console.step_hardware());
         print_step(static_cast<uint64_t>(step_index), console);
-        if (console.cpu_state().pc == 0x1234u)
+
+        const auto& cpu{ console.cpu_state() };
+        if (cpu.pc == 0x1234u)
         {
-            entered_irq = true;
-            break;
+            ++irq_entry_count;
+            if (first_irq_step < 0)
+            {
+                first_irq_step = step_index;
+            }
+            else if (first_rti_return_step >= 0 && reentry_after_rti_step < 0)
+            {
+                reentry_after_rti_step = step_index;
+            }
+        }
+        else if (irq_entry_count > 0
+                 && first_rti_return_step < 0
+                 && cpu.pb == 0x00u
+                 && cpu.pc != 0x1234u
+                 && cpu.pc <= 0x0080u)
+        {
+            first_rti_return_step = step_index;
+            first_rti_return_pc = cpu.pc;
         }
     }
 
-    std::printf("result: entered_irq=%u final_pc=%04x final_sp=%04x stacked_p=%02x\n",
-                entered_irq ? 1u : 0u,
+    std::printf("result: irq_entries=%d first_irq_step=%d first_rti_return_step=%d first_rti_return_pc=%04x reentry_after_rti_step=%d final_pc=%04x final_sp=%04x stacked_p=%02x\n",
+                irq_entry_count,
+                first_irq_step,
+                first_rti_return_step,
+                first_rti_return_pc,
+                reentry_after_rti_step,
                 console.cpu_state().pc,
                 console.cpu_state().sp,
                 console.read_u8(0x0001fdu));

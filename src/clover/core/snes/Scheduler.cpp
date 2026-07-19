@@ -12,6 +12,29 @@
 #include "clover/core/snes/Interrupts.h"
 #include "clover/core/snes/Ppu.h"
 
+namespace
+{
+    void accumulate_ppu_step_result(clover::core::ppu_step_result_t& aggregate,
+                                    const clover::core::ppu_step_result_t& step) noexcept
+    {
+        aggregate.timing = step.timing;
+        aggregate.visible_scanlines = step.visible_scanlines;
+        aggregate.interlace = step.interlace;
+        aggregate.frame_complete = aggregate.frame_complete || step.frame_complete;
+        aggregate.entered_scanline = aggregate.entered_scanline || step.entered_scanline;
+        aggregate.entered_frame_start =
+            aggregate.entered_frame_start || step.entered_frame_start;
+        aggregate.entered_hblank = aggregate.entered_hblank || step.entered_hblank;
+        aggregate.entered_vblank = aggregate.entered_vblank || step.entered_vblank;
+        aggregate.hdma_setup_triggered =
+            aggregate.hdma_setup_triggered || step.hdma_setup_triggered;
+        aggregate.hdma_transfer_triggered =
+            aggregate.hdma_transfer_triggered || step.hdma_transfer_triggered;
+        aggregate.nmi_requested = aggregate.nmi_requested || step.nmi_requested;
+        aggregate.irq_requested = aggregate.irq_requested || step.irq_requested;
+    }
+}
+
 namespace clover::core
 {
     void scheduler_t::reset() noexcept
@@ -45,8 +68,34 @@ namespace clover::core
         if (result.slot_owner == hardware_slot_owner_t::dma)
         {
             result.elapsed_master_clocks = cpu.apply_system_timing(result.elapsed_master_clocks, ppu.video_timing());
-            result.ppu = ppu.step(result.elapsed_master_clocks);
-            apu.step(result.elapsed_master_clocks);
+            const timing_snapshot_t starting_timing{ ppu.timing() };
+            const master_clock_delta_t clocks_to_scanline{
+                static_cast<master_clock_delta_t>(
+                    ppu.current_scanline_clocks() - starting_timing.raster.dot
+                )
+            };
+            if (clocks_to_scanline <= result.elapsed_master_clocks)
+            {
+                accumulate_ppu_step_result(result.ppu, ppu.step(clocks_to_scanline));
+                apu.step(clocks_to_scanline);
+                apu.synchronize_cpu_thread();
+
+                const master_clock_delta_t remaining{
+                    static_cast<master_clock_delta_t>(
+                        result.elapsed_master_clocks - clocks_to_scanline
+                    )
+                };
+                if (remaining != 0)
+                {
+                    accumulate_ppu_step_result(result.ppu, ppu.step(remaining));
+                    apu.step(remaining);
+                }
+            }
+            else
+            {
+                result.ppu = ppu.step(result.elapsed_master_clocks);
+                apu.step(result.elapsed_master_clocks);
+            }
             cpu.on_ppu_step(result.elapsed_master_clocks,
                             ppu.video_timing(),
                             result.ppu,

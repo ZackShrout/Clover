@@ -48,6 +48,7 @@ namespace clover::core
             uint8_t x{ 0 };
             uint8_t y{ 0 };
             uint8_t psw{ 0 };
+            int64_t smp_clock_credit{ 0 };
         };
 
         struct timer_state_t
@@ -73,6 +74,8 @@ namespace clover::core
         bool timers_enable{ true };
         bool ipl_rom_enabled{ true };
         bool halted{ false };
+        bool waiting{ false };
+        bool stopped{ false };
         uint8_t last_opcode{ 0 };
         timer_state_t timer0{};
         timer_state_t timer1{};
@@ -87,6 +90,7 @@ namespace clover::core
         void power_on() noexcept;
         void reset() noexcept;
         void step(master_clock_delta_t master_clocks) noexcept;
+        void synchronize_cpu_thread() noexcept;
         void begin_cpu_io_window(bus_t& bus, master_clock_delta_t target_clocks) noexcept;
         void end_cpu_io_window() noexcept;
         [[nodiscard]] master_clock_count_t master_clock() const noexcept;
@@ -154,8 +158,12 @@ namespace clover::core
         // same frequency ratio instead of multiplying each wait unit by 21.
         static constexpr int64_t k_master_clock_frequency_hz{ 21477270 };
         static constexpr int64_t k_smp_clock_frequency_hz{ 32040 * 64 };
+        static constexpr int64_t k_scheduler_zero_credit{ 0 };
+        static constexpr int64_t k_force_cpu_sync_credit{
+            768ll * 24ll * 24'000'000ll
+        };
 
-        void execute_instruction() noexcept;
+        [[nodiscard]] bool execute_instruction() noexcept;
         [[nodiscard]] bool execute_load_store_opcode(uint8_t opcode) noexcept;
         [[nodiscard]] bool execute_alu_opcode(uint8_t opcode) noexcept;
         [[nodiscard]] bool execute_branch_bit_opcode(uint8_t opcode) noexcept;
@@ -268,6 +276,38 @@ namespace clover::core
         void wait_for_access(std::optional<uint16_t> address, bool half) noexcept;
         void step_spc_cycles(master_clock_delta_t spc_cycles) noexcept;
         void synchronize_cpu_io_visibility() noexcept;
+        enum class access_kind_t : uint8_t
+        {
+            idle,
+            read,
+            write
+        };
+        struct access_journal_entry_t
+        {
+            access_kind_t kind{ access_kind_t::idle };
+            uint16_t address{ 0 };
+            uint8_t value{ 0 };
+            bool awaiting_cpu_sync{ false };
+        };
+        struct instruction_context_t
+        {
+            bool active{ false };
+            bool abort_requested{ false };
+            spc700_registers_t start_registers{};
+            uint16_t start_current_opcode_pc{ 0 };
+            uint8_t start_last_opcode{ 0 };
+            static constexpr uint8_t k_access_capacity{ 16 };
+            std::array<access_journal_entry_t, k_access_capacity> accesses{};
+            uint8_t access_count{ 0 };
+            uint8_t replay_cursor{ 0 };
+        };
+        [[nodiscard]] access_journal_entry_t* replay_access(access_kind_t kind,
+                                                            uint16_t address) noexcept;
+        [[nodiscard]] access_journal_entry_t* append_access(access_kind_t kind,
+                                                            uint16_t address,
+                                                            uint8_t value,
+                                                            bool awaiting_cpu_sync) noexcept;
+        void request_cpu_sync() noexcept;
         void halt_on_unimplemented_opcode(uint8_t opcode) noexcept;
         void trace_instruction(uint16_t pc, uint8_t opcode) noexcept;
         void trace_io_access(uint16_t address, uint8_t value, bool is_write) noexcept;
@@ -277,6 +317,8 @@ namespace clover::core
         spc700_registers_t _registers{};
         bool _ipl_rom_enabled{ true };
         bool _halted{ false };
+        bool _waiting{ false };
+        bool _stopped{ false };
         uint16_t _current_opcode_pc{ 0 };
         uint8_t _last_opcode{ 0 };
         io_state_t _io{};
@@ -286,6 +328,8 @@ namespace clover::core
         timer_t<16> _timer2{};
         std::array<uint8_t, 4> _apu_to_cpu_ports{};
         std::array<uint8_t, 4> _cpu_to_apu_ports{};
+        instruction_context_t _instruction_context{};
+        bool _smp_suspended_for_cpu{ false };
         bus_t* _cpu_io_window_bus{ nullptr };
         master_clock_delta_t _cpu_io_window_target_clocks{ 0 };
         int64_t _cpu_io_window_consumed_master_numerator{ 0 };

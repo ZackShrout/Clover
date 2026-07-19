@@ -28,11 +28,131 @@ namespace
 
         if (const char* checkpoint = []() -> const char*
             {
+                static clover::core::console_t math_console{};
+                math_console.power_on();
+
+                // Exercise the iterative division unit through real CPU bus
+                // cycles, including native-width reads of the result ports.
+                constexpr std::array<uint8_t, 35> program{
+                    0x18u,                     // CLC
+                    0xfbu,                     // XCE (enter native mode)
+                    0xa9u, 0x03u,             // LDA #$03
+                    0x8du, 0x04u, 0x42u,      // STA $4204
+                    0x9cu, 0x05u, 0x42u,      // STZ $4205
+                    0xa9u, 0x04u,             // LDA #$04
+                    0x8du, 0x06u, 0x42u,      // STA $4206
+                    0xeau, 0xeau, 0xeau, 0xeau, 0xeau, 0xeau,
+                    0xc2u, 0x20u,             // REP #$20
+                    0xadu, 0x14u, 0x42u,      // LDA $4214
+                    0x8du, 0x00u, 0x02u,      // STA $0200
+                    0xeau, 0xeau, 0xeau, 0xeau, 0xeau, 0xeau
+                };
+                for (uint16_t address{ 0 }; address < 0x0100u; ++address)
+                    math_console.write_u8(address, 0xeau);
+                math_console.write_u8(0x00fffcu, 0x00u);
+                math_console.write_u8(0x00fffdu, 0x00u);
+
+                static_cast<void>(math_console.step_hardware());
+                while (math_console.timing().raster.scanline == 0u
+                    && math_console.timing().raster.dot < 700u)
+                {
+                    static_cast<void>(math_console.step_hardware());
+                }
+
+                const uint16_t program_start{ math_console.cpu_state().pc };
+                for (size_t index{ 0 }; index < program.size(); ++index)
+                {
+                    math_console.write_u8(
+                        static_cast<uint16_t>(program_start + index),
+                        program[index]
+                    );
+                }
+                const uint16_t sampled_result_pc{
+                    static_cast<uint16_t>(program_start + 0x001du)
+                };
+
+                for (int step_index{ 0 };
+                     step_index < 32 && math_console.cpu_state().pc != sampled_result_pc;
+                     ++step_index)
+                {
+                    static_cast<void>(math_console.step_hardware());
+                }
+
+                if (math_console.cpu_state().pc != sampled_result_pc
+                    || math_console.read_u8(0x000200u) != 0x00u
+                    || math_console.read_u8(0x000201u) != 0x00u)
+                {
+                    return "cpu_divide_program_result";
+                }
+
+                for (int step_index{ 0 }; step_index < 8; ++step_index)
+                    static_cast<void>(math_console.step_hardware());
+
+                if (math_console.read_u8(0x004214u) != 0x00u
+                    || math_console.read_u8(0x004215u) != 0x00u
+                    || math_console.read_u8(0x004216u) != 0x03u
+                    || math_console.read_u8(0x004217u) != 0x00u)
+                {
+                    return "cpu_divide_complete";
+                }
+
+                math_console.write_u8(0x004202u, 0x07u);
+                math_console.write_u8(0x004203u, 0x09u);
+                for (int step_index{ 0 }; step_index < 4; ++step_index)
+                    static_cast<void>(math_console.step_hardware());
+
+                if (math_console.read_u8(0x004216u) != 0x3fu
+                    || math_console.read_u8(0x004217u) != 0x00u)
+                {
+                    return "cpu_multiply_complete";
+                }
+
+                return nullptr;
+            }();
+            checkpoint != nullptr)
+        {
+            return fail(checkpoint);
+        }
+
+        if (const char* checkpoint = []() -> const char*
+            {
+                static clover::core::console_t raster_edge_console{};
+                raster_edge_console.power_on();
+                while (raster_edge_console.frame_index() == 0u)
+                    static_cast<void>(raster_edge_console.step_hardware());
+
+                const uint64_t active_frame{ raster_edge_console.frame_index() };
+                uint16_t hdma_setup_edges{ 0 };
+                uint16_t hdma_transfer_edges{ 0 };
+                while (raster_edge_console.frame_index() == active_frame)
+                {
+                    const clover::core::hardware_step_result_t step{
+                        raster_edge_console.step_hardware()
+                    };
+                    hdma_setup_edges += step.ppu.hdma_setup_triggered ? 1u : 0u;
+                    hdma_transfer_edges += step.ppu.hdma_transfer_triggered ? 1u : 0u;
+                }
+
+                if (hdma_setup_edges != 1u)
+                    return "hdma_setup_edge_once";
+
+                if (hdma_transfer_edges != raster_edge_console.video_timing().visible_scanlines)
+                    return "hdma_transfer_edge_once_per_scanline";
+
+                return nullptr;
+            }();
+            checkpoint != nullptr)
+        {
+            return fail(checkpoint);
+        }
+
+        if (const char* checkpoint = []() -> const char*
+            {
                 static clover::core::console_t hirq_entry_console{};
                 hirq_entry_console.power_on();
                 hirq_entry_console.write_u8(0x000000u, 0x58u);
-                hirq_entry_console.write_u8(0x000001u, 0xeau);
-                hirq_entry_console.write_u8(0x000002u, 0xeau);
+                hirq_entry_console.write_u8(0x000001u, 0x80u);
+                hirq_entry_console.write_u8(0x000002u, 0xfeu);
                 hirq_entry_console.write_u8(0x000003u, 0xeau);
                 hirq_entry_console.write_u8(0x000004u, 0xeau);
                 hirq_entry_console.write_u8(0x000005u, 0xeau);
@@ -44,10 +164,10 @@ namespace
                 hirq_entry_console.write_u8(0x001234u, 0xeau);
                 hirq_entry_console.write_u8(0x00fffeu, 0x34u);
                 hirq_entry_console.write_u8(0x00ffffu, 0x12u);
-                hirq_entry_console.write_u8(0x004207u, 0x10u);
+                hirq_entry_console.write_u8(0x004207u, 0x40u);
                 hirq_entry_console.write_u8(0x004208u, 0x00u);
                 hirq_entry_console.write_u8(0x004200u, 0x10u);
-                hirq_entry_console.set_cpu_interrupt_poll_phase_for_testing(2u);
+                hirq_entry_console.set_cpu_interrupt_poll_phase_for_testing(0u);
 
                 static_cast<void>(hirq_entry_console.step_hardware());
                 if (hirq_entry_console.cpu_state().p != 0x30u)
@@ -65,7 +185,7 @@ namespace
                 if (!entered_hardware_irq)
                     return "hirq_entry";
 
-                if (hirq_entry_console.read_u8(0x0001fdu) != 0x20u)
+                if (hirq_entry_console.read_u8(0x0001fau) != 0x20u)
                     return "hirq_stacked_status";
 
                 return nullptr;
@@ -545,7 +665,7 @@ namespace
         }
 
         static_cast<void>(cpu_control_console.step_hardware());
-        const uint8_t pushed_status{ cpu_control_console.read_u8(0x0001ffu) };
+        const uint8_t pushed_status{ cpu_control_console.read_u8(0x0001fcu) };
         if (pushed_status != cpu_control_console.cpu_state().p)
             return fail("cpu_php");
 
@@ -578,6 +698,44 @@ namespace
 
     [[nodiscard]] int run_apu_port_checks()
     {
+        static clover::core::console_t apu_timing_console{};
+        apu_timing_console.power_on();
+        constexpr std::array<uint8_t, 27> apu_timing_program{
+            0xadu, 0x40u, 0x21u, // LDA $2140
+            0xc9u, 0xaau,        // CMP #$aa
+            0xd0u, 0xf9u,        // BNE $0000
+            0xadu, 0x41u, 0x21u, // LDA $2141
+            0xc9u, 0xbbu,        // CMP #$bb
+            0xd0u, 0xf2u,        // BNE $0000
+            0xa9u, 0xccu,        // LDA #$cc
+            0x8du, 0x40u, 0x21u, // STA $2140
+            0xadu, 0x40u, 0x21u, // LDA $2140
+            0xc9u, 0xccu,        // CMP #$cc
+            0xd0u, 0xf9u,        // BNE $0013
+            0xeau                 // NOP
+        };
+        for (uint32_t index{ 0 }; index < apu_timing_program.size(); ++index)
+            apu_timing_console.write_u8(index, apu_timing_program[index]);
+
+        for (int step_index{ 0 };
+             step_index < 100'000 && apu_timing_console.cpu_state().pc != 0x001bu;
+             ++step_index)
+        {
+            static_cast<void>(apu_timing_console.step_hardware());
+        }
+
+        const clover::core::timing_snapshot_t apu_timing{
+            apu_timing_console.timing()
+        };
+        if (apu_timing_console.cpu_state().pc != 0x001bu
+            || apu_timing_console.read_u8(0x002140u) != 0xccu
+            || apu_timing.master_clock != 51'252u
+            || apu_timing.raster.scanline != 37u
+            || apu_timing.raster.dot != 784u)
+        {
+            return fail("apu_resumable_port_handshake_timing");
+        }
+
         static clover::core::console_t apu_console{};
         apu_console.power_on();
 
@@ -690,6 +848,45 @@ namespace
 
         return 0;
     }
+
+    [[nodiscard]] int run_controller_port_checks()
+    {
+        static clover::core::console_t controller_console{};
+        controller_console.power_on();
+
+        // JOYSER reads preserve the CPU MDR bits that are not driven by the
+        // controller port.  An unpressed gamepad emits twelve zero button
+        // bits, four zero signature bits, then one forever after the sixteenth
+        // serial clock.
+        controller_console.write_u8(0x000000u, 0x40u);
+        for (uint8_t bit{ 0 }; bit < 16u; ++bit)
+        {
+            if (controller_console.read_u8(0x004016u) != 0x40u)
+                return fail("joyser0_unpressed_bits");
+        }
+        if (controller_console.read_u8(0x004016u) != 0x41u)
+            return fail("joyser0_post_shift_one");
+
+        controller_console.write_u8(0x000000u, 0x40u);
+        for (uint8_t bit{ 0 }; bit < 16u; ++bit)
+        {
+            if (controller_console.read_u8(0x004017u) != 0x5cu)
+                return fail("joyser1_unpressed_bits");
+        }
+        if (controller_console.read_u8(0x004017u) != 0x5du)
+            return fail("joyser1_post_shift_one");
+
+        controller_console.write_u8(0x004016u, 0x01u);
+        controller_console.write_u8(0x004016u, 0x00u);
+        controller_console.write_u8(0x000000u, 0x40u);
+        if (controller_console.read_u8(0x004016u) != 0x40u
+            || controller_console.read_u8(0x004017u) != 0x5cu)
+        {
+            return fail("joyser_shared_latch_reset");
+        }
+
+        return 0;
+    }
 } // anonymous namespace
 
 int main()
@@ -741,7 +938,7 @@ int main()
             if (console.read_u8(0x00420cu) != 0x01u)
                 return fail("hdmaen_readback");
 
-            if ((console.read_u8(0x004212u) & 0x40u) == 0)
+            if ((console.read_u8(0x004212u) & 0x40u) != 0)
                 return fail("hvbjoy_startup");
 
             if (console.read_u8(0x004300u) != 0x40u
@@ -809,6 +1006,12 @@ int main()
             if (const int result = []() -> int
                 {
                     std::array<std::byte, 0x10000> hirom_image{};
+                    hirom_image[0x2100] = std::byte{ 0x21 };
+                    hirom_image[0x2140] = std::byte{ 0x40 };
+                    hirom_image[0x2180] = std::byte{ 0x80 };
+                    hirom_image[0x4016] = std::byte{ 0x16 };
+                    hirom_image[0x4200] = std::byte{ 0x20 };
+                    hirom_image[0x4300] = std::byte{ 0x30 };
                     hirom_image[0x8000] = std::byte{ 0x61 };
                     hirom_image[0xc000] = std::byte{ 0x27 };
                     hirom_image[0xffd5u] = std::byte{ 0x01 };
@@ -831,6 +1034,12 @@ int main()
                     if (hirom_console.read_u8(0x008000u) != 0x61u
                         || hirom_console.read_u8(0x40c000u) != 0x27u
                         || hirom_console.read_u8(0xc0c000u) != 0x27u
+                        || hirom_console.read_u8(0xc02100u) != 0x21u
+                        || hirom_console.read_u8(0xc02140u) != 0x40u
+                        || hirom_console.read_u8(0xc02180u) != 0x80u
+                        || hirom_console.read_u8(0xc04016u) != 0x16u
+                        || hirom_console.read_u8(0xc04200u) != 0x20u
+                        || hirom_console.read_u8(0xc04300u) != 0x30u
                         || hirom_console.read_u8(0x00fffcu) != 0x78u
                         || hirom_console.read_u8(0x00fffdu) != 0x56u)
                     {
@@ -846,10 +1055,10 @@ int main()
 
             const clover::core::timing_snapshot_t initial_timing{ console.timing() };
             const clover::core::timing_snapshot_t initial_cpu_timing{ console.cpu_timing() };
-            if (initial_timing.raster.scanline != 0 || initial_timing.raster.dot != 0)
+            if (initial_timing.raster.scanline != 0 || initial_timing.raster.dot != 186)
                 return fail("initial_timing");
 
-            if (initial_cpu_timing.raster.scanline != 0 || initial_cpu_timing.raster.dot != 0)
+            if (initial_cpu_timing.raster.scanline != 0 || initial_cpu_timing.raster.dot != 186)
                 return fail("initial_cpu_timing");
 
             const clover::core::hardware_step_result_t first_step{ console.step_hardware() };
@@ -900,6 +1109,13 @@ int main()
             {
                 return fail("general_dma_result");
             }
+
+            // HDMA was configured after the hardware reset sequence had
+            // already crossed this frame's setup point. Synchronize to the
+            // next frame so the channel is initialized by the real setup
+            // trigger before checking its first scanline transfer.
+            while (console.frame_index() == 0)
+                static_cast<void>(console.step_hardware());
 
             bool saw_hblank{ false };
             bool saw_hdma_trigger{ false };
@@ -955,7 +1171,8 @@ int main()
             bool saw_rdnmi{ false };
             bool saw_rdnmi_clear{ false };
             bool saw_hvbjoy_vblank{ false };
-            while (console.frame_index() == 0)
+            const uint64_t active_frame{ console.frame_index() };
+            while (console.frame_index() == active_frame)
             {
                 const clover::core::hardware_step_result_t step{ console.step_hardware() };
                 saw_vblank = saw_vblank || step.ppu.entered_vblank;
@@ -981,7 +1198,7 @@ int main()
             if (!saw_hvbjoy_vblank)
                 return fail("hvbjoy_vblank");
 
-            if (console.frame_index() != 1)
+            if (console.frame_index() != active_frame + 1u)
                 return fail("frame_index");
 
             const clover::core::timing_snapshot_t after_frame{ console.timing() };
@@ -1078,16 +1295,14 @@ int main()
             hdma_setup_console.power_on();
             hdma_setup_console.write_u8(0x00420cu, 0x01u);
             bool saw_hdma_setup_trigger{ false };
-            for (int step_index{ 0 }; step_index < 256 && !saw_hdma_setup_trigger; ++step_index)
+            for (int step_index{ 0 }; step_index < 100000 && !saw_hdma_setup_trigger; ++step_index)
             {
-                const clover::core::timing_snapshot_t previous_timing{ hdma_setup_console.timing() };
                 const clover::core::hardware_step_result_t step{ hdma_setup_console.step_hardware() };
                 if (!step.ppu.hdma_setup_triggered)
                     continue;
 
-                saw_hdma_setup_trigger = previous_timing.raster.scanline == 0u
+                saw_hdma_setup_trigger = hdma_setup_console.frame_index() > 0u
                     && step.ppu.timing.raster.scanline == 0u
-                    && previous_timing.raster.dot < clover::core::hdma_setup_dot_v2(0)
                     && step.ppu.timing.raster.dot >= clover::core::hdma_setup_dot_v2(0);
             }
 
@@ -1161,6 +1376,9 @@ int main()
         return result;
 
     if (const int result{ run_apu_port_checks() }; result != 0)
+        return result;
+
+    if (const int result{ run_controller_port_checks() }; result != 0)
         return result;
 
     if (const int result = []() -> int
@@ -1304,10 +1522,10 @@ int main()
     cpu_wai_console.write_u8(0x001234u, 0xeau);
     cpu_wai_console.write_u8(0x00fffeu, 0x34u);
     cpu_wai_console.write_u8(0x00ffffu, 0x12u);
-    cpu_wai_console.write_u8(0x004207u, 0x10u);
+    cpu_wai_console.write_u8(0x004207u, 0x40u);
     cpu_wai_console.write_u8(0x004208u, 0x00u);
     cpu_wai_console.write_u8(0x004200u, 0x10u);
-    cpu_wai_console.set_cpu_interrupt_poll_phase_for_testing(2u);
+    cpu_wai_console.set_cpu_interrupt_poll_phase_for_testing(0u);
 
     static_cast<void>(cpu_wai_console.step_hardware());
     static_cast<void>(cpu_wai_console.step_hardware());
@@ -2021,12 +2239,12 @@ int main()
     }
 
     static_cast<void>(cpu_bank_console.step_hardware());
-    if (cpu_bank_console.read_u8(0x0001ffu) != 0x01u)
+    if (cpu_bank_console.read_u8(0x0001fcu) != 0x01u)
         return fail("cpu_phk");
 
     static_cast<void>(cpu_bank_console.step_hardware());
     if (cpu_bank_console.cpu_state().db != 0x01u
-        || cpu_bank_console.cpu_state().sp != 0x01ffu)
+        || cpu_bank_console.cpu_state().sp != 0x01fcu)
     {
         return fail("cpu_plb");
     }
@@ -2054,19 +2272,11 @@ int main()
 
     static_cast<void>(cpu_interrupt_console.step_hardware());
     if (cpu_interrupt_console.cpu_state().pc != 0x1000u
-        || cpu_interrupt_console.cpu_state().sp != 0x01fcu
-        || cpu_interrupt_console.read_u8(0x0001ffu) != 0x00u
-        || cpu_interrupt_console.read_u8(0x0001feu) != 0x02u
+        || cpu_interrupt_console.cpu_state().sp != 0x01f9u
+        || cpu_interrupt_console.read_u8(0x0001fcu) != 0x00u
+        || cpu_interrupt_console.read_u8(0x0001fbu) != 0x02u
         || (cpu_interrupt_console.cpu_state().p & 0x04u) == 0)
     {
-        std::fprintf(stderr,
-                     "cpu_brk_emulation_entry debug: PC=%04x SP=%04x [1ff]=%02x [1fe]=%02x [1fd]=%02x P=%02x\n",
-                     cpu_interrupt_console.cpu_state().pc,
-                     cpu_interrupt_console.cpu_state().sp,
-                     cpu_interrupt_console.read_u8(0x0001ffu),
-                     cpu_interrupt_console.read_u8(0x0001feu),
-                     cpu_interrupt_console.read_u8(0x0001fdu),
-                     cpu_interrupt_console.cpu_state().p);
         return fail("cpu_brk_emulation_entry");
     }
 
@@ -2076,16 +2286,16 @@ int main()
 
     static_cast<void>(cpu_interrupt_console.step_hardware());
     if (cpu_interrupt_console.cpu_state().pc != 0x0002u
-        || cpu_interrupt_console.cpu_state().sp != 0x01ffu)
+        || cpu_interrupt_console.cpu_state().sp != 0x01fcu)
     {
         return fail("cpu_rti_emulation_return");
     }
 
     static_cast<void>(cpu_interrupt_console.step_hardware());
     if (cpu_interrupt_console.cpu_state().pc != 0x1100u
-        || cpu_interrupt_console.cpu_state().sp != 0x01fcu
-        || cpu_interrupt_console.read_u8(0x0001ffu) != 0x00u
-        || cpu_interrupt_console.read_u8(0x0001feu) != 0x04u)
+        || cpu_interrupt_console.cpu_state().sp != 0x01f9u
+        || cpu_interrupt_console.read_u8(0x0001fcu) != 0x00u
+        || cpu_interrupt_console.read_u8(0x0001fbu) != 0x04u)
     {
         return fail("cpu_cop_emulation_entry");
     }
@@ -2096,7 +2306,7 @@ int main()
 
     static_cast<void>(cpu_interrupt_console.step_hardware());
     if (cpu_interrupt_console.cpu_state().pc != 0x0004u
-        || cpu_interrupt_console.cpu_state().sp != 0x01ffu)
+        || cpu_interrupt_console.cpu_state().sp != 0x01fcu)
     {
         return fail("cpu_cop_rti_emulation_return");
     }
@@ -2131,10 +2341,10 @@ int main()
 
     static_cast<void>(cpu_native_interrupt_console.step_hardware());
     if (cpu_native_interrupt_console.cpu_state().pc != 0x1200u
-        || cpu_native_interrupt_console.cpu_state().sp != 0x01fbu
-        || cpu_native_interrupt_console.read_u8(0x0001ffu) != 0x00u
-        || cpu_native_interrupt_console.read_u8(0x0001feu) != 0x00u
-        || cpu_native_interrupt_console.read_u8(0x0001fdu) != 0x04u)
+        || cpu_native_interrupt_console.cpu_state().sp != 0x01f8u
+        || cpu_native_interrupt_console.read_u8(0x0001fcu) != 0x00u
+        || cpu_native_interrupt_console.read_u8(0x0001fbu) != 0x00u
+        || cpu_native_interrupt_console.read_u8(0x0001fau) != 0x04u)
     {
         return fail("cpu_brk_native_entry");
     }
@@ -2146,17 +2356,17 @@ int main()
     static_cast<void>(cpu_native_interrupt_console.step_hardware());
     if (cpu_native_interrupt_console.cpu_state().pc != 0x0004u
         || cpu_native_interrupt_console.cpu_state().pb != 0x00u
-        || cpu_native_interrupt_console.cpu_state().sp != 0x01ffu)
+        || cpu_native_interrupt_console.cpu_state().sp != 0x01fcu)
     {
         return fail("cpu_rti_native_return");
     }
 
     static_cast<void>(cpu_native_interrupt_console.step_hardware());
     if (cpu_native_interrupt_console.cpu_state().pc != 0x1210u
-        || cpu_native_interrupt_console.cpu_state().sp != 0x01fbu
-        || cpu_native_interrupt_console.read_u8(0x0001ffu) != 0x00u
-        || cpu_native_interrupt_console.read_u8(0x0001feu) != 0x00u
-        || cpu_native_interrupt_console.read_u8(0x0001fdu) != 0x06u)
+        || cpu_native_interrupt_console.cpu_state().sp != 0x01f8u
+        || cpu_native_interrupt_console.read_u8(0x0001fcu) != 0x00u
+        || cpu_native_interrupt_console.read_u8(0x0001fbu) != 0x00u
+        || cpu_native_interrupt_console.read_u8(0x0001fau) != 0x06u)
     {
         return fail("cpu_cop_native_entry");
     }
@@ -2168,7 +2378,7 @@ int main()
     static_cast<void>(cpu_native_interrupt_console.step_hardware());
     if (cpu_native_interrupt_console.cpu_state().pc != 0x0006u
         || cpu_native_interrupt_console.cpu_state().pb != 0x00u
-        || cpu_native_interrupt_console.cpu_state().sp != 0x01ffu)
+        || cpu_native_interrupt_console.cpu_state().sp != 0x01fcu)
     {
         return fail("cpu_cop_rti_native_return");
     }
@@ -2196,9 +2406,9 @@ int main()
     }
 
     if (cpu_hardware_irq_console.cpu_state().pc != 0x1300u
-        || cpu_hardware_irq_console.cpu_state().sp != 0x01fcu
-        || cpu_hardware_irq_console.read_u8(0x0001ffu) != 0x00u
-        || cpu_hardware_irq_console.read_u8(0x0001feu) == 0x00u)
+        || cpu_hardware_irq_console.cpu_state().sp != 0x01f9u
+        || cpu_hardware_irq_console.read_u8(0x0001fcu) != 0x00u
+        || cpu_hardware_irq_console.read_u8(0x0001fbu) == 0x00u)
     {
         return fail("cpu_hardware_irq_emulation_entry");
     }
@@ -2294,6 +2504,33 @@ int main()
     {
         return fail("cpu_bit_direct_x_stz_direct_x");
     }
+
+    static clover::core::console_t cpu_accumulator_width_console{};
+    cpu_accumulator_width_console.power_on();
+    cpu_accumulator_width_console.write_u8(0x000000u, 0x18u); // CLC
+    cpu_accumulator_width_console.write_u8(0x000001u, 0xfbu); // XCE
+    cpu_accumulator_width_console.write_u8(0x000002u, 0xc2u); // REP #$20
+    cpu_accumulator_width_console.write_u8(0x000003u, 0x20u);
+    cpu_accumulator_width_console.write_u8(0x000004u, 0xa9u); // LDA #$e140
+    cpu_accumulator_width_console.write_u8(0x000005u, 0x40u);
+    cpu_accumulator_width_console.write_u8(0x000006u, 0xe1u);
+    cpu_accumulator_width_console.write_u8(0x000007u, 0xe2u); // SEP #$20
+    cpu_accumulator_width_console.write_u8(0x000008u, 0x20u);
+    cpu_accumulator_width_console.write_u8(0x000009u, 0x4au); // LSR A
+    cpu_accumulator_width_console.write_u8(0x00000au, 0x38u); // SEC
+    cpu_accumulator_width_console.write_u8(0x00000bu, 0x6au); // ROR A
+
+    for (int step_index{ 0 }; step_index < 6; ++step_index)
+        static_cast<void>(cpu_accumulator_width_console.step_hardware());
+
+    if (cpu_accumulator_width_console.cpu_state().a != 0xe120u)
+        return fail("cpu_lsr_accumulator_8bit_preserves_b");
+
+    for (int step_index{ 0 }; step_index < 2; ++step_index)
+        static_cast<void>(cpu_accumulator_width_console.step_hardware());
+
+    if (cpu_accumulator_width_console.cpu_state().a != 0xe190u)
+        return fail("cpu_ror_accumulator_8bit_preserves_b");
 
     static clover::core::console_t cpu_modify_native_console{};
     cpu_modify_native_console.power_on();
@@ -2712,9 +2949,15 @@ int main()
     ppu_entropy_none_console.set_startup_entropy_mode(clover::core::startup_entropy_mode_t::none);
     ppu_entropy_none_console.power_on();
     bool entropy_none_wram_dirty{ false };
-    for (uint8_t byte : ppu_entropy_none_console.wram_span(0u, clover::core::bus_t::k_wram_size))
+    const auto entropy_none_wram{
+        ppu_entropy_none_console.wram_span(0u, clover::core::bus_t::k_wram_size)
+    };
+    for (size_t address{ 0 }; address < entropy_none_wram.size(); ++address)
     {
-        if (byte != 0u)
+        const uint8_t expected{
+            address == 0x01fdu ? static_cast<uint8_t>(0x34u) : static_cast<uint8_t>(0x00u)
+        };
+        if (entropy_none_wram[address] != expected)
         {
             entropy_none_wram_dirty = true;
             break;
@@ -2966,7 +3209,7 @@ int main()
     ppu_framebuffer_console.run_frame();
 
     const uint32_t* const ppu_pixels{ ppu_framebuffer_console.framebuffer().data() };
-    constexpr size_t k_first_visible_row{ 9u };
+    constexpr size_t k_first_visible_row{ 8u };
     const size_t first_visible_pixel{ clover::core::framebuffer_t::k_width * k_first_visible_row };
     if (ppu_pixels[first_visible_pixel] != 0xffff0000u
         || ppu_pixels[first_visible_pixel + 7u] != 0xffff0000u

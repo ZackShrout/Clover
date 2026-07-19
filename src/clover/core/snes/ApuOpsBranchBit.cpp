@@ -95,6 +95,81 @@ namespace clover::core
             branch_relative_if((_registers.psw & k_psw_carry) == 0);
             return true;
 
+        case 0x0au: // OR1 C,abs.bit
+        case 0x2au: // OR1 C,/abs.bit
+        case 0x4au: // AND1 C,abs.bit
+        case 0x6au: // AND1 C,/abs.bit
+        case 0x8au: // EOR1 C,abs.bit
+        case 0xaau: // MOV1 C,abs.bit
+        case 0xcau: // MOV1 abs.bit,C
+        case 0xeau: // NOT1 abs.bit
+        {
+            const uint16_t encoded_address{ spc_fetch_u16() };
+            const uint16_t address{ static_cast<uint16_t>(encoded_address & 0x1fffu) };
+            const uint8_t bit_index{ static_cast<uint8_t>(encoded_address >> 13u) };
+            const uint8_t bit_mask{ static_cast<uint8_t>(1u << bit_index) };
+            uint8_t value{ spc_read_u8(address) };
+            const bool bit_set{ (value & static_cast<uint8_t>(1u << bit_index)) != 0 };
+            const bool carry_set{ (_registers.psw & k_psw_carry) != 0 };
+
+            switch (opcode >> 5u)
+            {
+            case 0u:
+                spc_idle();
+                if (carry_set || bit_set)
+                    _registers.psw |= k_psw_carry;
+                else
+                    _registers.psw &= static_cast<uint8_t>(~k_psw_carry);
+                break;
+            case 1u:
+                spc_idle();
+                if (carry_set || !bit_set)
+                    _registers.psw |= k_psw_carry;
+                else
+                    _registers.psw &= static_cast<uint8_t>(~k_psw_carry);
+                break;
+            case 2u:
+                if (carry_set && bit_set)
+                    _registers.psw |= k_psw_carry;
+                else
+                    _registers.psw &= static_cast<uint8_t>(~k_psw_carry);
+                break;
+            case 3u:
+                if (carry_set && !bit_set)
+                    _registers.psw |= k_psw_carry;
+                else
+                    _registers.psw &= static_cast<uint8_t>(~k_psw_carry);
+                break;
+            case 4u:
+                spc_idle();
+                if (carry_set != bit_set)
+                    _registers.psw |= k_psw_carry;
+                else
+                    _registers.psw &= static_cast<uint8_t>(~k_psw_carry);
+                break;
+            case 5u:
+                if (bit_set)
+                    _registers.psw |= k_psw_carry;
+                else
+                    _registers.psw &= static_cast<uint8_t>(~k_psw_carry);
+                break;
+            case 6u:
+                spc_idle();
+                value = carry_set
+                    ? static_cast<uint8_t>(value | bit_mask)
+                    : static_cast<uint8_t>(value & static_cast<uint8_t>(~bit_mask));
+                spc_write_u8(address, value);
+                break;
+            case 7u:
+                value ^= bit_mask;
+                spc_write_u8(address, value);
+                break;
+            default:
+                break;
+            }
+            return true;
+        }
+
         case 0xb0u: // BCS rel
             spc_consume_opcode_fetch();
             branch_relative_if((_registers.psw & k_psw_carry) != 0);

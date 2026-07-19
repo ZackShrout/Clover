@@ -477,7 +477,8 @@ namespace
         constexpr const char* k_probe_header_format =
             "PPU probe: frame=%llu scanline=%u dot=%u bg_mode=%u obj_first=%u "
             "obj_eval_first=%u obj_tiles=%u obj_render_tiles=%u "
-            "obj_fetched_tiles=%u obj_eval=%u render_scan=%u fetched_scan=%u\n";
+            "obj_fetched_tiles=%u obj_eval=%u render_scan=%u fetched_scan=%u "
+            "mosaic=%u enables=%u%u%u%u voffset=%u\n";
         std::printf(k_probe_header_format,
                     static_cast<unsigned long long>(active_frame),
                     static_cast<unsigned>(timing.raster.scanline),
@@ -490,7 +491,13 @@ namespace
                     static_cast<unsigned>(ppu_state.objects.fetched_tile_count),
                     static_cast<unsigned>(ppu_state.objects.evaluation_count),
                     static_cast<unsigned>(ppu_state.objects.rendered_scanline),
-                    static_cast<unsigned>(ppu_state.objects.fetched_scanline));
+                    static_cast<unsigned>(ppu_state.objects.fetched_scanline),
+                    static_cast<unsigned>(ppu_state.mosaic_size),
+                    ppu_state.mosaic_enabled[0] ? 1u : 0u,
+                    ppu_state.mosaic_enabled[1] ? 1u : 0u,
+                    ppu_state.mosaic_enabled[2] ? 1u : 0u,
+                    ppu_state.mosaic_enabled[3] ? 1u : 0u,
+                    static_cast<unsigned>(ppu_state.mosaic_voffset));
         std::printf("  math: blend=%u halve=%u direct=%u subtract=%u backdrop_math=%u fixed=%u,%u,%u\n",
                     compositor_state.blend_mode ? 1u : 0u,
                     compositor_state.color_halve ? 1u : 0u,
@@ -529,7 +536,8 @@ namespace
         for (size_t background_index{ 0 }; background_index < 4u; ++background_index)
         {
             const auto& background{ ppu_state.backgrounds[background_index] };
-            std::printf("  bg%zu: active=%u mode=%u eval_scan=%u tiles=%u hoff=%u voff=%u above=%u below=%u\n",
+            std::printf("  bg%zu: active=%u mode=%u eval_scan=%u tiles=%u hoff=%u voff=%u "
+                        "above=%u below=%u win_above=%u win_below=%u win_mask=%u\n",
                         background_index + 1u,
                         background.active ? 1u : 0u,
                         static_cast<unsigned>(background.mode),
@@ -538,7 +546,40 @@ namespace
                         static_cast<unsigned>(background.hoffset),
                         static_cast<unsigned>(background.voffset),
                         background.above_enabled ? 1u : 0u,
-                        background.below_enabled ? 1u : 0u);
+                        background.below_enabled ? 1u : 0u,
+                        background.window_above_enabled ? 1u : 0u,
+                        background.window_below_enabled ? 1u : 0u,
+                        static_cast<unsigned>(background.window_mask));
+            for (size_t tile_index{ 0 }; tile_index < background.tile_count
+                && tile_index < std::size(background.tiles);
+                ++tile_index)
+            {
+                const auto& tile{ background.tiles[tile_index] };
+                const uint16_t tile_right{ static_cast<uint16_t>(tile.screen_x + 7u) };
+                if (tile_right < filter.x_min || tile.screen_x > filter.x_max)
+                    continue;
+                std::printf("    tile[%zu] screen_x=%u src=%u,%u map=%04x entry=%04x chr=%u "
+                            "vram=%04x fine=%u,%u pal=%u pri=%u hflip=%u vflip=%u "
+                            "row=%04x,%04x,%04x,%04x\n",
+                            tile_index,
+                            static_cast<unsigned>(tile.screen_x),
+                            static_cast<unsigned>(tile.source_x),
+                            static_cast<unsigned>(tile.source_y),
+                            static_cast<unsigned>(tile.tilemap_address),
+                            static_cast<unsigned>(tile.tilemap_entry),
+                            static_cast<unsigned>(tile.character),
+                            static_cast<unsigned>(tile.vram_address),
+                            static_cast<unsigned>(tile.fine_x),
+                            static_cast<unsigned>(tile.fine_y),
+                            static_cast<unsigned>(tile.palette_group),
+                            static_cast<unsigned>(tile.priority),
+                            tile.hmirror ? 1u : 0u,
+                            tile.vmirror ? 1u : 0u,
+                            static_cast<unsigned>(tile.row_data[0]),
+                            static_cast<unsigned>(tile.row_data[1]),
+                            static_cast<unsigned>(tile.row_data[2]),
+                            static_cast<unsigned>(tile.row_data[3]));
+            }
         }
         const size_t sample_begin{
             std::min<size_t>(filter.x_min, std::size(compositor_state.output_color) - 1u)
@@ -1472,7 +1513,7 @@ namespace
         for (uint16_t index{ 0 }; index < trace_count; ++index)
         {
             const auto& entry{ trace[index] };
-            std::printf("  clk=%llu %c addr=%04x value=%02x PC=%04x OP=%02x A=%02x X=%02x Y=%02x PSW=%02x\n",
+            std::printf("  clk=%llu %c addr=%04x value=%02x PC=%04x OP=%02x A=%02x X=%02x Y=%02x PSW=%02x credit=%lld\n",
                         static_cast<unsigned long long>(entry.master_clock),
                         entry.is_write ? 'W' : 'R',
                         entry.address,
@@ -1482,7 +1523,8 @@ namespace
                         entry.a,
                         entry.x,
                         entry.y,
-                        entry.psw);
+                        entry.psw,
+                        static_cast<long long>(entry.smp_clock_credit));
         }
     }
 
@@ -1972,6 +2014,11 @@ int main(int argc, char** argv)
             const uint8_t dp_03{ console.read_u8(0x000003u) };
             const uint8_t dp_04{ console.read_u8(0x000004u) };
             const uint8_t dp_05{ console.read_u8(0x000005u) };
+            const uint8_t dp_12{ console.read_u8(0x000012u) };
+            const uint16_t effective_dp_00_address{ static_cast<uint16_t>(current_cpu.d + 0x0000u) };
+            const uint16_t effective_dp_0c_address{ static_cast<uint16_t>(current_cpu.d + 0x000cu) };
+            const uint8_t effective_dp_00{ console.read_u8(effective_dp_00_address) };
+            const uint8_t effective_dp_0c{ console.read_u8(effective_dp_0c_address) };
             const uint8_t dp_f3{ console.read_u8(0x0000f3u) };
             const uint8_t dp_f4{ console.read_u8(0x0000f4u) };
             const uint8_t dp_f5{ console.read_u8(0x0000f5u) };
@@ -1981,8 +2028,9 @@ int main(int argc, char** argv)
             std::fprintf(generic_trace_file,
                          "CPUHOT step=%llu frame=%llu scanline=%u dot=%u PB:%02x PC:%04x OP:%02x "
                          "A:%04x X:%04x Y:%04x SP:%04x D:%04x DB:%02x P:%02x E:%u "
-                         "wmadd=%05x irq=%u nmi=%u dma=%u hdma=%u gdma=%u in_hblank=%u in_vblank=%u "
-                         "dp00-05=%02x,%02x,%02x,%02x,%02x,%02x "
+                         "wmadd=%05x irq=%u irq_pending=%u irq_transition=%u irq_lock=%u "
+                         "nmi=%u nmi_pending=%u dma=%u hdma=%u gdma=%u in_hblank=%u in_vblank=%u "
+                         "dp00-05=%02x,%02x,%02x,%02x,%02x,%02x dp12=%02x effdp00[%04x]=%02x effdp0c[%04x]=%02x "
                          "src=%02x:%02x%02x dst=%02x:%02x%02x f9-fc=%02x,%02x,%02x,%02x\n",
                          static_cast<unsigned long long>(summary.steps),
                          static_cast<unsigned long long>(active_frame),
@@ -2001,7 +2049,11 @@ int main(int argc, char** argv)
                          current_cpu.emulation_mode ? 1u : 0u,
                          console.cpu_wram_address(),
                          timing_snapshot.interrupts.irq_line ? 1u : 0u,
+                         timing_snapshot.interrupts.irq_pending ? 1u : 0u,
+                         timing_snapshot.interrupts.irq_transition ? 1u : 0u,
+                         timing_snapshot.interrupts.irq_lock ? 1u : 0u,
                          timing_snapshot.interrupts.nmi_line ? 1u : 0u,
+                         timing_snapshot.interrupts.nmi_pending ? 1u : 0u,
                          static_cast<unsigned>(timing_snapshot.dma_activity),
                          timing_snapshot.hdma_pending ? 1u : 0u,
                          timing_snapshot.general_dma_pending ? 1u : 0u,
@@ -2013,6 +2065,11 @@ int main(int argc, char** argv)
                          dp_03,
                          dp_04,
                          dp_05,
+                         dp_12,
+                         effective_dp_00_address,
+                         effective_dp_00,
+                         effective_dp_0c_address,
+                         effective_dp_0c,
                          dp_f5,
                          dp_f4,
                          dp_f3,

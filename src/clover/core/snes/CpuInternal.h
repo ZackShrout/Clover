@@ -209,30 +209,40 @@ namespace clover::core
         {
             const master_clock_delta_t access_clocks{ cpu_access_clocks(address, _fast_rom_enabled) };
             _master_clocks = static_cast<master_clock_delta_t>(
-                _master_clocks + _cpu.service_dma_edge(_bus, _dma, _interrupts, _ppu_step_result)
+                _master_clocks + _cpu.service_dma_edge(
+                    _bus, _dma, _interrupts, _ppu_step_result, access_clocks, _master_clocks
+                )
             );
             _master_clocks = static_cast<master_clock_delta_t>(
                 _master_clocks + _cpu.advance_execution(access_clocks, _dma, _interrupts, _ppu_step_result)
             );
             _master_clocks = static_cast<master_clock_delta_t>(
-                _master_clocks + _cpu.service_dma_edge(_bus, _dma, _interrupts, _ppu_step_result)
+                _master_clocks + _cpu.service_dma_edge(
+                    _bus, _dma, _interrupts, _ppu_step_result, access_clocks, _master_clocks
+                )
             );
             const uint8_t value{ _bus.read_u8(address) };
             _bus.trace_cpu_apu_port_access(address, value, false, _master_clocks);
+            _cpu.alu_edge();
             return value;
         }
 
         void write_u8(uint32_t address, uint8_t value) noexcept
         {
+            _cpu.alu_edge();
             const master_clock_delta_t access_clocks{ cpu_access_clocks(address, _fast_rom_enabled) };
             _master_clocks = static_cast<master_clock_delta_t>(
-                _master_clocks + _cpu.service_dma_edge(_bus, _dma, _interrupts, _ppu_step_result)
+                _master_clocks + _cpu.service_dma_edge(
+                    _bus, _dma, _interrupts, _ppu_step_result, access_clocks, _master_clocks
+                )
             );
             _master_clocks = static_cast<master_clock_delta_t>(
                 _master_clocks + _cpu.advance_execution(access_clocks, _dma, _interrupts, _ppu_step_result)
             );
             _master_clocks = static_cast<master_clock_delta_t>(
-                _master_clocks + _cpu.service_dma_edge(_bus, _dma, _interrupts, _ppu_step_result)
+                _master_clocks + _cpu.service_dma_edge(
+                    _bus, _dma, _interrupts, _ppu_step_result, access_clocks, _master_clocks
+                )
             );
             _bus.trace_cpu_apu_port_access(address, value, true, _master_clocks);
             _bus.write_u8(address, value);
@@ -887,11 +897,19 @@ namespace clover::core
         void idle() noexcept
         {
             _master_clocks = static_cast<master_clock_delta_t>(
-                _master_clocks + _cpu.service_dma_edge(_bus, _dma, _interrupts, _ppu_step_result)
+                _master_clocks + _cpu.service_dma_edge(
+                    _bus,
+                    _dma,
+                    _interrupts,
+                    _ppu_step_result,
+                    k_cpu_bus_cycle_clocks,
+                    _master_clocks
+                )
             );
             _master_clocks = static_cast<master_clock_delta_t>(
                 _master_clocks + _cpu.advance_execution(k_cpu_bus_cycle_clocks, _dma, _interrupts, _ppu_step_result)
             );
+            _cpu.alu_edge();
         }
 
         void idle_irq(cpu_state_t& state) noexcept
@@ -906,9 +924,9 @@ namespace clover::core
             idle();
         }
 
-        void observe_opcode_edge() noexcept
+        void observe_opcode_edge(const cpu_state_t& state) noexcept
         {
-            _interrupts.observe_opcode_edge();
+            _interrupts.observe_opcode_edge((state.p & k_status_irq_disable) != 0);
             _observed_opcode_edge = true;
         }
 
@@ -919,7 +937,7 @@ namespace clover::core
 
         void retire_instruction() noexcept
         {
-            observe_opcode_edge();
+            observe_opcode_edge(_cpu.state());
             _retired_instruction = true;
         }
 
@@ -931,7 +949,7 @@ namespace clover::core
 
         void retire_irq_sensitive_internal_operation(cpu_state_t& state) noexcept
         {
-            observe_opcode_edge();
+            observe_opcode_edge(state);
             idle_irq(state);
             _retired_instruction = true;
         }
@@ -1159,7 +1177,9 @@ namespace clover::core
         else
             state.p &= static_cast<uint8_t>(~k_status_carry);
 
-        const uint16_t result{ static_cast<uint16_t>((value >> 1u) & mask_for_width(is_8bit)) };
+        const uint16_t result{
+            static_cast<uint16_t>((value & mask_for_width(is_8bit)) >> 1u)
+        };
         set_zero_negative_flags(state, result, is_8bit);
         return result;
     }
@@ -1195,7 +1215,7 @@ namespace clover::core
             state.p &= static_cast<uint8_t>(~k_status_carry);
 
         const uint16_t result{
-            static_cast<uint16_t>(((value >> 1u) | carry_in) & mask_for_width(is_8bit))
+            static_cast<uint16_t>(((value & mask_for_width(is_8bit)) >> 1u) | carry_in)
         };
         set_zero_negative_flags(state, result, is_8bit);
         return result;

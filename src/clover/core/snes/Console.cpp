@@ -21,13 +21,13 @@ namespace clover::core
         _cartridge.reset();
         _bus.power_on();
         _cpu.power_on();
-        _cpu.load_reset_vector(_bus);
         _dma.reset();
         _interrupts.reset();
         _ppu.power_on();
         _apu.power_on();
-        _ppu.present(_framebuffer);
         _powered_on = true;
+        static_cast<void>(_scheduler.step_hardware(_cpu, _bus, _ppu, _apu, _dma, _interrupts));
+        _ppu.present(_framebuffer);
     }
 
     void console_t::reset() noexcept
@@ -35,11 +35,11 @@ namespace clover::core
         _scheduler.reset();
         _bus.reset();
         _cpu.reset();
-        _cpu.load_reset_vector(_bus);
         _dma.reset();
         _interrupts.reset();
         _ppu.reset();
         _apu.reset();
+        static_cast<void>(_scheduler.step_hardware(_cpu, _bus, _ppu, _apu, _dma, _interrupts));
         _ppu.present(_framebuffer);
     }
 

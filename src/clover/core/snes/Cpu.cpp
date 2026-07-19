@@ -99,7 +99,7 @@ namespace
                 return true;
 
             if (target_scanline == previous_timing.raster.scanline
-                && target_dot >= previous_timing.raster.dot)
+                && target_dot > previous_timing.raster.dot)
                 return true;
 
             if (target_scanline < current_timing.raster.scanline)
@@ -115,7 +115,7 @@ namespace
             || target_scanline > current_timing.raster.scanline)
             return false;
 
-        if (target_scanline == previous_timing.raster.scanline && target_dot < previous_timing.raster.dot)
+        if (target_scanline == previous_timing.raster.scanline && target_dot <= previous_timing.raster.dot)
             return false;
 
         if (target_scanline == current_timing.raster.scanline && target_dot > current_timing.raster.dot)
@@ -283,10 +283,14 @@ namespace clover::core
         _last_irq_gate_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 6, _interlace);
         _irq_condition_valid = false;
         _dma_active = false;
+        _reset_pending = true;
         _dram_refresh_dot = dram_refresh_dot_v2(dma_phase());
         _dram_refresh_pending = true;
         _hdma_setup_dot = hdma_setup_dot_v2(dma_phase());
         _hdma_setup_pending = true;
+        _multiply_counter = 0;
+        _divide_counter = 0;
+        _math_shift = 0;
         _placeholder_opcode_count = 0u;
     }
 
@@ -317,24 +321,20 @@ namespace clover::core
         _last_irq_gate_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 6, _interlace);
         _irq_condition_valid = false;
         _dma_active = false;
+        _reset_pending = true;
         _dram_refresh_dot = dram_refresh_dot_v2(dma_phase());
         _dram_refresh_pending = true;
         _hdma_setup_dot = hdma_setup_dot_v2(dma_phase());
         _hdma_setup_pending = true;
+        _multiply_counter = 0;
+        _divide_counter = 0;
+        _math_shift = 0;
         _placeholder_opcode_count = 0u;
     }
 
-    void cpu_t::load_reset_vector(bus_t& bus) noexcept
+    uint8_t cpu_t::dma_phase(master_clock_delta_t elapsed_master_clocks) const noexcept
     {
-        const uint8_t vector_low{ bus.read_u8(0x00fffcu) };
-        const uint8_t vector_high{ bus.read_u8(0x00fffdu) };
-        _state.pb = 0;
-        _state.pc = static_cast<uint16_t>(vector_low | (vector_high << 8u));
-    }
-
-    uint8_t cpu_t::dma_phase() const noexcept
-    {
-        return static_cast<uint8_t>(_master_clock & 7u);
+        return static_cast<uint8_t>((_master_clock + elapsed_master_clocks) & 7u);
     }
 
     timing_snapshot_t cpu_t::timing(const video_timing_t& video_timing) const noexcept
@@ -411,9 +411,47 @@ namespace clover::core
         case 0x2183u:
             return static_cast<uint8_t>((_io.wram_address >> 16u) & 0x0001u);
         case 0x4016u:
-            return static_cast<uint8_t>(_io.controller_port_1_latch ? 0x01u : 0x00u);
+        {
+            const uint8_t open_bus{ _bus != nullptr ? _bus->open_bus() : static_cast<uint8_t>(0u) };
+            uint8_t serial_data{ 0 };
+            if (_io.controller_port_1_latch)
+            {
+                serial_data = static_cast<uint8_t>((_io.joy1 >> 15u) & 0x01u);
+            }
+            else if (_io.controller_port_1_shift_count >= 16u)
+            {
+                serial_data = 0x01u;
+            }
+            else
+            {
+                serial_data = static_cast<uint8_t>(
+                    (_io.joy1 >> (15u - _io.controller_port_1_shift_count)) & 0x01u
+                );
+                ++_io.controller_port_1_shift_count;
+            }
+            return static_cast<uint8_t>((open_bus & 0xfcu) | serial_data);
+        }
         case 0x4017u:
-            return 0x1cu;
+        {
+            const uint8_t open_bus{ _bus != nullptr ? _bus->open_bus() : static_cast<uint8_t>(0u) };
+            uint8_t serial_data{ 0 };
+            if (_io.controller_port_1_latch)
+            {
+                serial_data = static_cast<uint8_t>((_io.joy2 >> 15u) & 0x01u);
+            }
+            else if (_io.controller_port_2_shift_count >= 16u)
+            {
+                serial_data = 0x01u;
+            }
+            else
+            {
+                serial_data = static_cast<uint8_t>(
+                    (_io.joy2 >> (15u - _io.controller_port_2_shift_count)) & 0x01u
+                );
+                ++_io.controller_port_2_shift_count;
+            }
+            return static_cast<uint8_t>((open_bus & 0xe0u) | 0x1cu | serial_data);
+        }
         case 0x4200u:
         {
             uint8_t value{ 0 };
@@ -465,6 +503,14 @@ namespace clover::core
         }
         case 0x4213u:
             return _io.pio;
+        case 0x4214u:
+            return static_cast<uint8_t>(_io.quotient & 0x00ffu);
+        case 0x4215u:
+            return static_cast<uint8_t>(_io.quotient >> 8u);
+        case 0x4216u:
+            return static_cast<uint8_t>(_io.multiply_or_remainder & 0x00ffu);
+        case 0x4217u:
+            return static_cast<uint8_t>(_io.multiply_or_remainder >> 8u);
         case 0x4218u:
             return static_cast<uint8_t>(_io.joy1 & 0x00ffu);
         case 0x4219u:
@@ -508,8 +554,16 @@ namespace clover::core
             _io.wram_address = (_io.wram_address & 0x00ffffu) | ((static_cast<uint32_t>(value) & 0x01u) << 16u);
             return;
         case 0x4016u:
-            _io.controller_port_1_latch = (value & 0x01u) != 0;
+        {
+            const bool latch{ (value & 0x01u) != 0 };
+            if (_io.controller_port_1_latch != latch)
+            {
+                _io.controller_port_1_latch = latch;
+                _io.controller_port_1_shift_count = 0;
+                _io.controller_port_2_shift_count = 0;
+            }
             return;
+        }
         case 0x4200u:
             _io.auto_joypad_poll = (value & 0x01u) != 0;
             if (!_io.auto_joypad_poll)
@@ -566,6 +620,36 @@ namespace clover::core
                 _ppu->latch_counters_external();
             _io.pio = value;
             return;
+        case 0x4202u:
+            _io.multiply_a = value;
+            return;
+        case 0x4203u:
+            _io.multiply_or_remainder = 0;
+            if (_multiply_counter != 0 || _divide_counter != 0)
+                return;
+
+            _io.multiply_b = value;
+            _io.quotient = static_cast<uint16_t>(
+                (static_cast<uint16_t>(_io.multiply_b) << 8u) | _io.multiply_a
+            );
+            _multiply_counter = 8;
+            _math_shift = _io.multiply_b;
+            return;
+        case 0x4204u:
+            _io.dividend = static_cast<uint16_t>((_io.dividend & 0xff00u) | value);
+            return;
+        case 0x4205u:
+            _io.dividend = static_cast<uint16_t>((_io.dividend & 0x00ffu) | (value << 8u));
+            return;
+        case 0x4206u:
+            _io.multiply_or_remainder = _io.dividend;
+            if (_multiply_counter != 0 || _divide_counter != 0)
+                return;
+
+            _io.divisor = value;
+            _divide_counter = 16;
+            _math_shift = static_cast<uint32_t>(_io.divisor) << 16u;
+            return;
         case 0x420du:
             _io.fast_rom_enabled = (value & 0x01u) != 0;
             return;
@@ -581,11 +665,68 @@ namespace clover::core
             : hardware_slot_owner_t::cpu;
     }
 
+    void cpu_t::alu_edge() noexcept
+    {
+        if (_multiply_counter != 0)
+        {
+            --_multiply_counter;
+            if ((_io.quotient & 0x0001u) != 0)
+                _io.multiply_or_remainder = static_cast<uint16_t>(
+                    _io.multiply_or_remainder + static_cast<uint16_t>(_math_shift)
+                );
+            _io.quotient = static_cast<uint16_t>(_io.quotient >> 1u);
+            _math_shift <<= 1u;
+        }
+
+        if (_divide_counter != 0)
+        {
+            --_divide_counter;
+            _io.quotient = static_cast<uint16_t>(_io.quotient << 1u);
+            _math_shift >>= 1u;
+            if (_io.multiply_or_remainder >= _math_shift)
+            {
+                _io.multiply_or_remainder = static_cast<uint16_t>(
+                    _io.multiply_or_remainder - static_cast<uint16_t>(_math_shift)
+                );
+                _io.quotient |= 0x0001u;
+            }
+        }
+    }
+
     cpu_step_result_t cpu_t::step(bus_t& bus,
                                   dma_t& dma,
                                   interrupt_controller_t& interrupts) noexcept
     {
         cpu_step_executor_t executor{ bus, *this, dma, interrupts, _io.fast_rom_enabled };
+
+        if (_reset_pending)
+        {
+            _reset_pending = false;
+
+            // The S-CPU remains internally occupied for 132 master clocks
+            // before entering the ordinary interrupt bus sequence through the
+            // reset vector. In emulation mode that sequence performs three
+            // stack writes and therefore leaves S at $01fc.
+            for (uint8_t cycle{ 0 }; cycle < 22u; ++cycle)
+                executor.idle();
+
+            static_cast<void>(executor.read_u8(program_address(_state)));
+            executor.idle();
+            executor.push_u16(_state, _state.pc);
+            executor.push_u8(_state, _state.p);
+            _state.p |= k_status_irq_disable;
+            _state.p &= static_cast<uint8_t>(~k_status_decimal);
+
+            const uint8_t vector_low{ executor.read_u8(0x00fffcu) };
+            const uint8_t vector_high{ executor.read_u8(0x00fffdu) };
+            _state.pb = 0;
+            _state.pc = static_cast<uint16_t>(vector_low | (vector_high << 8u));
+            executor.retire_instruction();
+
+            const cpu_step_result_t result{ executor.finish() };
+            _master_clock += result.master_clocks;
+            return result;
+        }
 
         if (_stopped)
         {
@@ -704,10 +845,42 @@ namespace clover::core
         const master_clock_delta_t adjusted_elapsed{
             apply_system_timing(elapsed_master_clocks, _ppu->video_timing())
         };
-        const ppu_step_result_t ppu_step{ _ppu->step(adjusted_elapsed) };
+        const timing_snapshot_t starting_timing{ _ppu->timing() };
+        const master_clock_delta_t clocks_to_scanline{
+            static_cast<master_clock_delta_t>(
+                _ppu->current_scanline_clocks() - starting_timing.raster.dot
+            )
+        };
+
+        ppu_step_result_t ppu_step{};
+        if (_bus != nullptr
+            && clocks_to_scanline <= adjusted_elapsed)
+        {
+            const ppu_step_result_t boundary_step{ _ppu->step(clocks_to_scanline) };
+            accumulate_ppu_step_result(ppu_step, boundary_step);
+            _bus->step_apu(clocks_to_scanline);
+            _bus->synchronize_apu_cpu_thread();
+
+            const master_clock_delta_t remaining{
+                static_cast<master_clock_delta_t>(
+                    adjusted_elapsed - clocks_to_scanline
+                )
+            };
+            if (remaining != 0)
+            {
+                const ppu_step_result_t remaining_step{ _ppu->step(remaining) };
+                accumulate_ppu_step_result(ppu_step, remaining_step);
+                _bus->step_apu(remaining);
+            }
+        }
+        else
+        {
+            ppu_step = _ppu->step(adjusted_elapsed);
+            if (_bus != nullptr)
+                _bus->step_apu(adjusted_elapsed);
+        }
+
         accumulate_ppu_step_result(aggregate, ppu_step);
-        if (_bus != nullptr)
-            _bus->step_apu(adjusted_elapsed);
         on_ppu_step(adjusted_elapsed,
                     _ppu->video_timing(),
                     ppu_step,
@@ -719,7 +892,9 @@ namespace clover::core
     master_clock_delta_t cpu_t::service_dma_edge(bus_t& bus,
                                                  dma_t& dma,
                                                  interrupt_controller_t& interrupts,
-                                                 ppu_step_result_t& aggregate) noexcept
+                                                 ppu_step_result_t& aggregate,
+                                                 master_clock_delta_t bus_cycle_clocks,
+                                                 master_clock_delta_t instruction_elapsed_master_clocks) noexcept
     {
         master_clock_delta_t elapsed_master_clocks{ 0 };
         if (!_dma_active)
@@ -731,7 +906,15 @@ namespace clover::core
 
         while (_dma_active)
         {
-            const dma_step_result_t dma_step{ dma.step(bus, dma_phase()) };
+            const dma_step_result_t dma_step{
+                dma.step(
+                    bus,
+                    dma_phase(static_cast<master_clock_delta_t>(
+                        instruction_elapsed_master_clocks + elapsed_master_clocks
+                    )),
+                    bus_cycle_clocks
+                )
+            };
             if (dma_step.master_clocks != 0)
             {
                 elapsed_master_clocks = static_cast<master_clock_delta_t>(
@@ -765,6 +948,9 @@ namespace clover::core
         {
             return elapsed_master_clocks;
         }
+
+        for (uint8_t refresh_cycle{ 0 }; refresh_cycle < 5u; ++refresh_cycle)
+            alu_edge();
 
         return static_cast<master_clock_delta_t>(
             elapsed_master_clocks + k_cpu_dram_refresh_stall_clocks
@@ -806,7 +992,11 @@ namespace clover::core
         if (_io.auto_joypad_busy_clocks != 0)
         {
             if (elapsed_master_clocks >= _io.auto_joypad_busy_clocks)
+            {
                 _io.auto_joypad_busy_clocks = 0;
+                _io.controller_port_1_shift_count = 16u;
+                _io.controller_port_2_shift_count = 16u;
+            }
             else
                 _io.auto_joypad_busy_clocks = static_cast<uint16_t>(_io.auto_joypad_busy_clocks - elapsed_master_clocks);
         }
@@ -847,7 +1037,11 @@ namespace clover::core
         }
 
         if (entered_vblank && _io.auto_joypad_poll)
+        {
             _io.auto_joypad_busy_clocks = k_auto_joypad_busy_clocks;
+            _io.controller_port_1_shift_count = 0;
+            _io.controller_port_2_shift_count = 0;
+        }
 
         if (_dram_refresh_pending
             && crossed_raster_point(_last_timing,

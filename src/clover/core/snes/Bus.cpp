@@ -408,13 +408,25 @@ namespace clover::core
 
         ppu_step_result_t aggregate{};
         master_clock_delta_t elapsed_so_far{ 0 };
+        std::array<pending_ppu_write_t, 16> remaining_writes{};
+        uint8_t remaining_write_count{ 0 };
 
         for (uint8_t index{ 0 }; index < _pending_ppu_write_count; ++index)
         {
             const pending_ppu_write_t write{ _pending_ppu_writes[index] };
-            const master_clock_delta_t target_clocks{
-                write.apply_after_clocks <= elapsed_master_clocks ? write.apply_after_clocks : elapsed_master_clocks
-            };
+            if (write.apply_after_clocks > elapsed_master_clocks)
+            {
+                remaining_writes[remaining_write_count++] = {
+                    .address = write.address,
+                    .value = write.value,
+                    .apply_after_clocks = static_cast<master_clock_delta_t>(
+                        write.apply_after_clocks - elapsed_master_clocks
+                    )
+                };
+                continue;
+            }
+
+            const master_clock_delta_t target_clocks{ write.apply_after_clocks };
             if (target_clocks > elapsed_so_far)
             {
                 accumulate_ppu_step_result(aggregate, _ppu->step(target_clocks - elapsed_so_far));
@@ -427,7 +439,8 @@ namespace clover::core
         if (elapsed_master_clocks > elapsed_so_far)
             accumulate_ppu_step_result(aggregate, _ppu->step(elapsed_master_clocks - elapsed_so_far));
 
-        _pending_ppu_write_count = 0;
+        _pending_ppu_writes = remaining_writes;
+        _pending_ppu_write_count = remaining_write_count;
         return aggregate;
     }
 

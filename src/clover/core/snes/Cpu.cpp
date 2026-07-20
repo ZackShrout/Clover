@@ -664,9 +664,12 @@ namespace clover::core
 
     hardware_slot_owner_t cpu_t::next_slot_owner(const dma_t& dma) const noexcept
     {
-        return _dma_active && dma.has_pending_work()
-            ? hardware_slot_owner_t::dma
-            : hardware_slot_owner_t::cpu;
+        static_cast<void>(dma);
+        // DMA is entered from the next CPU bus-cycle edge. Keeping ownership
+        // with the CPU preserves that cycle's width for DMA finish
+        // synchronization; dispatching DMA directly from the outer scheduler
+        // loses the pending bus-cycle context.
+        return hardware_slot_owner_t::cpu;
     }
 
     void cpu_t::alu_edge() noexcept
@@ -861,7 +864,9 @@ namespace clover::core
         if (_bus != nullptr
             && clocks_to_scanline <= adjusted_elapsed)
         {
-            const ppu_step_result_t boundary_step{ _ppu->step(clocks_to_scanline) };
+            const ppu_step_result_t boundary_step{
+                _bus->step_ppu_with_cpu_writes(clocks_to_scanline)
+            };
             accumulate_ppu_step_result(ppu_step, boundary_step);
             _bus->step_apu(clocks_to_scanline);
             _bus->synchronize_apu_cpu_thread();
@@ -873,7 +878,9 @@ namespace clover::core
             };
             if (remaining != 0)
             {
-                const ppu_step_result_t remaining_step{ _ppu->step(remaining) };
+                const ppu_step_result_t remaining_step{
+                    _bus->step_ppu_with_cpu_writes(remaining)
+                };
                 accumulate_ppu_step_result(ppu_step, remaining_step);
                 _bus->step_apu(remaining);
                 _bus->synchronize_apu_cpu_thread();
@@ -881,7 +888,9 @@ namespace clover::core
         }
         else
         {
-            ppu_step = _ppu->step(adjusted_elapsed);
+            ppu_step = _bus != nullptr
+                ? _bus->step_ppu_with_cpu_writes(adjusted_elapsed)
+                : _ppu->step(adjusted_elapsed);
             if (_bus != nullptr)
             {
                 _bus->step_apu(adjusted_elapsed);

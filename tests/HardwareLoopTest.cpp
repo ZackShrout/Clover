@@ -342,19 +342,14 @@ namespace
         };
 
         if (cpu_dma_enable_load.slot_owner != clover::core::hardware_slot_owner_t::cpu
-            || cpu_dma_enable_store.slot_owner != clover::core::hardware_slot_owner_t::cpu)
+            || cpu_dma_enable_store.slot_owner != clover::core::hardware_slot_owner_t::cpu
+            || cpu_dma_enable_dma.slot_owner != clover::core::hardware_slot_owner_t::cpu)
         {
             return fail("cpu_dma_enable_cpu_slots");
         }
 
-        if (!cpu_dma_enable_console.general_dma_pending()
-            && cpu_dma_enable_dma.slot_owner == clover::core::hardware_slot_owner_t::cpu)
-        {
-            // The current validated path may absorb the enabled MDMA batch
-            // inside the next returned CPU-owned hardware step rather than
-            // exposing a later standalone DMA-owned outer slot.
-            static_cast<void>(cpu_dma_enable_dma);
-        }
+        if (cpu_dma_enable_console.general_dma_pending())
+            return fail("cpu_dma_enable_completed_on_cpu_edge");
 
         static clover::core::console_t cpu_hdma_enable_console{};
         cpu_hdma_enable_console.power_on();
@@ -1076,22 +1071,12 @@ int main()
             if (first_snapshot.cpu_timing.master_clock != first_snapshot.ppu_timing.master_clock)
                 return fail("first_snapshot");
 
-            bool saw_general_dma_slot{ first_step.slot_owner == clover::core::hardware_slot_owner_t::dma };
-            uint32_t general_dma_slots{ saw_general_dma_slot ? 1u : 0u };
             while (console.general_dma_pending())
             {
                 const clover::core::hardware_step_result_t step{ console.step_hardware() };
-                saw_general_dma_slot = saw_general_dma_slot
-                    || step.slot_owner == clover::core::hardware_slot_owner_t::dma;
-                general_dma_slots += step.slot_owner == clover::core::hardware_slot_owner_t::dma ? 1u : 0u;
+                if (step.slot_owner != clover::core::hardware_slot_owner_t::cpu)
+                    return fail("cpu_owns_general_dma_bus_edge");
             }
-            // The standardized bsnes frame sweeps validate the current MDMA behavior,
-            // and Clover may retire this startup transfer within the first CPU-owned
-            // hardware step rather than exposing a later DMA-owned outer scheduler slot.
-            // Keep the transfer-result checks below authoritative and treat the visible
-            // slot shape here as diagnostic only.
-            static_cast<void>(saw_general_dma_slot);
-            static_cast<void>(general_dma_slots);
 
             console.write_u8(0x002115u, 0x00u);
             console.write_u8(0x002116u, 0x00u);
@@ -1134,14 +1119,17 @@ int main()
             if (!saw_hblank || !saw_hdma_trigger)
                 return fail("hblank_hdma_trigger");
 
-            if (console.read_u8(0x004308u) != 0x04u || console.read_u8(0x004309u) != 0x20u)
-                return fail("hdma_table_address");
+            if (saw_dma_slot)
+                return fail("cpu_owns_hdma_bus_edge");
 
-            // With Clover's validated frame path, this one-line HDMA completes
-            // inside the same returned hardware step that crosses the trigger
-            // point, so there is no later externally visible pending state or
-            // separate DMA-owned scheduler slot to wait on here.
-            static_cast<void>(saw_dma_slot);
+            // Terminating indirect HDMA still reads the low byte of the next
+            // indirect address before the completed channel can stop. The
+            // high byte is skipped when there is no later active channel.
+            if (console.read_u8(0x004308u) != 0x05u || console.read_u8(0x004309u) != 0x20u)
+                return fail("hdma_terminal_indirect_low_read");
+
+            // The one-line HDMA completes on a CPU-owned bus edge, retaining
+            // that edge's width for the final DMA synchronization cycle.
             // The IRQ-visible $4211 pulse in this mixed MDMA/HDMA/HIRQ setup is
             // not stable as an outer-scheduler assertion. Dedicated bsnes-backed
             // HIRQ microcases cover the authoritative CPU interrupt timing.

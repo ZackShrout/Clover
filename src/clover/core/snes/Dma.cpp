@@ -464,7 +464,9 @@ namespace clover::core
         if (!valid)
             return;
 
-        bus.write_u8(0x00002100u | address, value);
+        // A DMA transfer reads its source halfway through the eight-clock
+        // unit and exposes the B-bus write at the end of that unit.
+        bus.write_cpu_u8(0x00002100u | address, value, 8);
     }
 
     void dma_t::transfer_byte(bus_t& bus,
@@ -598,7 +600,11 @@ namespace clover::core
 
     master_clock_delta_t dma_t::run_hdma_transfer(bus_t& bus, dma_channel_t& channel) noexcept
     {
-        if (!hdma_channel_active(channel))
+        const bool completing_indirect_reload{
+            _substep == dma_substep_t::hdma_reload_indirect_low
+                || _substep == dma_substep_t::hdma_reload_indirect_high
+        };
+        if (!hdma_channel_active(channel) && !completing_indirect_reload)
         {
             channel.hdma_active = false;
             finish_active_channel();

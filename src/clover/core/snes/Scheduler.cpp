@@ -77,7 +77,10 @@ namespace clover::core
             };
             if (clocks_to_scanline <= result.elapsed_master_clocks)
             {
-                accumulate_ppu_step_result(result.ppu, ppu.step(clocks_to_scanline));
+                accumulate_ppu_step_result(
+                    result.ppu,
+                    bus.step_ppu_with_cpu_writes(clocks_to_scanline)
+                );
                 apu.step(clocks_to_scanline);
                 apu.synchronize_cpu_thread();
 
@@ -88,13 +91,16 @@ namespace clover::core
                 };
                 if (remaining != 0)
                 {
-                    accumulate_ppu_step_result(result.ppu, ppu.step(remaining));
+                    accumulate_ppu_step_result(
+                        result.ppu,
+                        bus.step_ppu_with_cpu_writes(remaining)
+                    );
                     apu.step(remaining);
                 }
             }
             else
             {
-                result.ppu = ppu.step(result.elapsed_master_clocks);
+                result.ppu = bus.step_ppu_with_cpu_writes(result.elapsed_master_clocks);
                 apu.step(result.elapsed_master_clocks);
             }
             cpu.on_ppu_step(result.elapsed_master_clocks,

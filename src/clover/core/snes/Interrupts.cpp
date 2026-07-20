@@ -5,11 +5,15 @@
 
 #include "clover/core/snes/Interrupts.h"
 
+#include <limits>
+
 namespace clover::core
 {
     void interrupt_controller_t::reset() noexcept
     {
         _state = {};
+        _nmi_transition_clock = 0;
+        _irq_transition_clock = 0;
     }
 
     void interrupt_controller_t::assert_nmi_line() noexcept
@@ -28,6 +32,7 @@ namespace clover::core
     void interrupt_controller_t::force_nmi_transition() noexcept
     {
         _state.nmi_transition = true;
+        _nmi_transition_clock = 0;
     }
 
     void interrupt_controller_t::assert_irq_line() noexcept
@@ -61,14 +66,17 @@ namespace clover::core
     void interrupt_controller_t::force_irq_transition() noexcept
     {
         _state.irq_transition = true;
+        _irq_transition_clock = 0;
     }
 
-    void interrupt_controller_t::advance_to_observation_point() noexcept
+    void interrupt_controller_t::advance_to_observation_point(
+        master_clock_count_t observation_clock) noexcept
     {
         if (_state.nmi_hold)
         {
             _state.nmi_hold = false;
             _state.nmi_transition = true;
+            _nmi_transition_clock = observation_clock;
         }
 
         if (_state.irq_hold)
@@ -77,6 +85,8 @@ namespace clover::core
         }
         else if (_state.irq_line)
         {
+            if (!_state.irq_transition)
+                _irq_transition_clock = observation_clock;
             _state.irq_transition = true;
         }
     }
@@ -89,13 +99,26 @@ namespace clover::core
 
     void interrupt_controller_t::observe_opcode_edge(bool irq_disabled) noexcept
     {
+        observe_opcode_edge(
+            std::numeric_limits<master_clock_count_t>::max(),
+            irq_disabled
+        );
+    }
+
+    void interrupt_controller_t::observe_opcode_edge(
+        master_clock_count_t observation_clock,
+        bool irq_disabled) noexcept
+    {
         if (_state.irq_lock)
             return;
 
-        _state.nmi_pending = _state.nmi_pending || _state.nmi_transition;
-        _state.nmi_transition = false;
+        if (_state.nmi_transition && _nmi_transition_clock <= observation_clock)
+        {
+            _state.nmi_pending = true;
+            _state.nmi_transition = false;
+        }
 
-        if (_state.irq_transition)
+        if (_state.irq_transition && _irq_transition_clock <= observation_clock)
         {
             if (!irq_disabled)
                 _state.irq_pending = true;

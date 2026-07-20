@@ -89,6 +89,7 @@ namespace clover::core
                                              interrupt_controller_t& interrupts) noexcept;
         [[nodiscard]] master_clock_delta_t apply_system_timing(master_clock_delta_t elapsed_master_clocks,
                                                                const video_timing_t& video_timing) noexcept;
+        void account_external_cpu_clocks(master_clock_delta_t elapsed_master_clocks) noexcept;
         void on_dma_step(const dma_t& dma, interrupt_controller_t& interrupts) noexcept;
         void on_ppu_step(master_clock_delta_t elapsed_master_clocks,
                          const video_timing_t& video_timing,
@@ -111,8 +112,7 @@ namespace clover::core
                                                             dma_t& dma,
                                                             interrupt_controller_t& interrupts,
                                                             ppu_step_result_t& aggregate,
-                                                            master_clock_delta_t bus_cycle_clocks,
-                                                            master_clock_delta_t instruction_elapsed_master_clocks) noexcept;
+                                                            master_clock_delta_t bus_cycle_clocks) noexcept;
         void set_waiting(bool waiting) noexcept;
         void set_stopped(bool stopped) noexcept;
         void alu_edge() noexcept;
@@ -120,16 +120,19 @@ namespace clover::core
         cpu_state_t _state{};
         cpu_io_t _io{};
         master_clock_count_t _master_clock{ 0 };
+        // Free-running S-CPU divider source. Unlike instruction retirement
+        // time, this includes scheduler-owned DMA and refresh stalls.
+        master_clock_count_t _dma_counter{ 0 };
         raster_counter_t _counter{};
-        master_clock_delta_t _interrupt_poll_phase{ 0 };
+        master_clock_delta_t _interrupt_poll_phase{ 2 };
         timing_snapshot_t _last_timing{};
-        timing_snapshot_t _last_nmi_timing{};
         timing_snapshot_t _last_irq_timing{};
         timing_snapshot_t _last_irq_gate_timing{};
         bus_t* _bus{ nullptr };
         interrupt_controller_t* _interrupts{ nullptr };
         ppu_t* _ppu{ nullptr };
         bool _irq_condition_valid{ false };
+        bool _nmi_poll_valid{ false };
         bool _dma_active{ false };
         bool _reset_pending{ false };
         bool _waiting{ false };

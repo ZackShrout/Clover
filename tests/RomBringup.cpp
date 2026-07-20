@@ -1422,7 +1422,7 @@ namespace
 
     void print_apu_state(const clover::core::apu_state_t& apu)
     {
-        std::printf("APU: PC=%04x A=%02x X=%02x Y=%02x SP=%02x PSW=%02x IPL=%u halted=%u last=%02x waits=%u/%u timers=%u/%u trace=%u io_trace=%u\n",
+        std::printf("APU: PC=%04x A=%02x X=%02x Y=%02x SP=%02x PSW=%02x IPL=%u halted=%u last=%02x waits=%u/%u timers=%u/%u trace=%u io_trace=%u credit=%lld\n",
                     apu.pc,
                     apu.a,
                     apu.x,
@@ -1437,7 +1437,8 @@ namespace
                     apu.timers_enable ? 1u : 0u,
                     apu.timers_disable ? 1u : 0u,
                     apu.instruction_trace_count,
-                    apu.io_trace_count);
+                    apu.io_trace_count,
+                    static_cast<long long>(apu.smp_clock_credit));
         std::printf("APU timers: T0 s0=%u s1=%u s2=%u s3=%u line=%u en=%u tgt=%u | T1 s0=%u s1=%u s2=%u s3=%u line=%u en=%u tgt=%u | T2 s0=%u s1=%u s2=%u s3=%u line=%u en=%u tgt=%u\n",
                     apu.timer0.stage0,
                     apu.timer0.stage1,

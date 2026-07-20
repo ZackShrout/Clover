@@ -174,6 +174,7 @@ namespace clover::core
             .waiting = _waiting,
             .stopped = _stopped,
             .last_opcode = _last_opcode,
+            .smp_clock_credit = _smp_clock_credit,
             .timer0 = {
                 .stage0 = _timer0.stage0,
                 .stage1 = _timer0.stage1,
@@ -408,7 +409,11 @@ namespace clover::core
         }
 
         wait_for_access(address, false);
-        if (is_cpu_port_address(address)
+        const bool synchronizes_cpu{
+            is_cpu_port_address(address)
+            || (address == 0x00f1u && (value & 0x30u) != 0)
+        };
+        if (synchronizes_cpu
             && _smp_clock_credit <= k_scheduler_zero_credit)
         {
             (void)append_access(access_kind_t::write, address, value, true);

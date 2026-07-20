@@ -68,6 +68,7 @@ namespace clover::core
         if (result.slot_owner == hardware_slot_owner_t::dma)
         {
             result.elapsed_master_clocks = cpu.apply_system_timing(result.elapsed_master_clocks, ppu.video_timing());
+            cpu.account_external_cpu_clocks(result.elapsed_master_clocks);
             const timing_snapshot_t starting_timing{ ppu.timing() };
             const master_clock_delta_t clocks_to_scanline{
                 static_cast<master_clock_delta_t>(

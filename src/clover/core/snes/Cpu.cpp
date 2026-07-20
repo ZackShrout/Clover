@@ -270,15 +270,18 @@ namespace clover::core
         _io.htime = 0x01ffu;
         _io.vtime = 0x01ffu;
         _master_clock = 0;
+        _dma_counter = 0;
         _counter.reset();
-        _interrupt_poll_phase = 0;
+        // bsnes polls after the first two-master-clock S-CPU tick and every
+        // four clocks thereafter (hcounter & 2).
+        _interrupt_poll_phase = 2;
         _visible_scanlines = k_ntsc_video_timing.visible_scanlines;
         _waiting = false;
         _wait_wake_idle_pending = false;
         _stopped = false;
         _interlace = false;
         _last_timing = _counter.snapshot(k_ntsc_video_timing, _visible_scanlines);
-        _last_nmi_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 2, _interlace);
+        _nmi_poll_valid = false;
         _last_irq_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 10, _interlace);
         _last_irq_gate_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 6, _interlace);
         _irq_condition_valid = false;
@@ -308,15 +311,16 @@ namespace clover::core
         _io.htime = 0x01ffu;
         _io.vtime = 0x01ffu;
         _master_clock = 0;
+        _dma_counter = 0;
         _counter.reset();
-        _interrupt_poll_phase = 0;
+        _interrupt_poll_phase = 2;
         _visible_scanlines = k_ntsc_video_timing.visible_scanlines;
         _waiting = false;
         _wait_wake_idle_pending = false;
         _stopped = false;
         _interlace = false;
         _last_timing = _counter.snapshot(k_ntsc_video_timing, _visible_scanlines);
-        _last_nmi_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 2, _interlace);
+        _nmi_poll_valid = false;
         _last_irq_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 10, _interlace);
         _last_irq_gate_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 6, _interlace);
         _irq_condition_valid = false;
@@ -334,7 +338,7 @@ namespace clover::core
 
     uint8_t cpu_t::dma_phase(master_clock_delta_t elapsed_master_clocks) const noexcept
     {
-        return static_cast<uint8_t>((_master_clock + elapsed_master_clocks) & 7u);
+        return static_cast<uint8_t>((_dma_counter + elapsed_master_clocks) & 7u);
     }
 
     timing_snapshot_t cpu_t::timing(const video_timing_t& video_timing) const noexcept
@@ -568,7 +572,7 @@ namespace clover::core
             _io.auto_joypad_poll = (value & 0x01u) != 0;
             if (!_io.auto_joypad_poll)
                 _io.auto_joypad_busy_clocks = 0;
-            if ((value & 0x80u) != 0 && !_io.nmi_enabled && _last_nmi_timing.in_vblank)
+            if ((value & 0x80u) != 0 && !_io.nmi_enabled && _nmi_poll_valid)
             {
                 _io.nmi_flag = true;
                 _io.nmi_hold_clocks = 4;
@@ -845,6 +849,7 @@ namespace clover::core
         const master_clock_delta_t adjusted_elapsed{
             apply_system_timing(elapsed_master_clocks, _ppu->video_timing())
         };
+        _dma_counter += adjusted_elapsed;
         const timing_snapshot_t starting_timing{ _ppu->timing() };
         const master_clock_delta_t clocks_to_scanline{
             static_cast<master_clock_delta_t>(
@@ -871,13 +876,17 @@ namespace clover::core
                 const ppu_step_result_t remaining_step{ _ppu->step(remaining) };
                 accumulate_ppu_step_result(ppu_step, remaining_step);
                 _bus->step_apu(remaining);
+                _bus->synchronize_apu_cpu_thread();
             }
         }
         else
         {
             ppu_step = _ppu->step(adjusted_elapsed);
             if (_bus != nullptr)
+            {
                 _bus->step_apu(adjusted_elapsed);
+                _bus->synchronize_apu_cpu_thread();
+            }
         }
 
         accumulate_ppu_step_result(aggregate, ppu_step);
@@ -893,8 +902,7 @@ namespace clover::core
                                                  dma_t& dma,
                                                  interrupt_controller_t& interrupts,
                                                  ppu_step_result_t& aggregate,
-                                                 master_clock_delta_t bus_cycle_clocks,
-                                                 master_clock_delta_t instruction_elapsed_master_clocks) noexcept
+                                                 master_clock_delta_t bus_cycle_clocks) noexcept
     {
         master_clock_delta_t elapsed_master_clocks{ 0 };
         if (!_dma_active)
@@ -906,12 +914,11 @@ namespace clover::core
 
         while (_dma_active)
         {
+            const uint8_t current_dma_phase{ dma_phase() };
             const dma_step_result_t dma_step{
                 dma.step(
                     bus,
-                    dma_phase(static_cast<master_clock_delta_t>(
-                        instruction_elapsed_master_clocks + elapsed_master_clocks
-                    )),
+                    current_dma_phase,
                     bus_cycle_clocks
                 )
             };
@@ -928,6 +935,11 @@ namespace clover::core
                 break;
         }
         return elapsed_master_clocks;
+    }
+
+    void cpu_t::account_external_cpu_clocks(master_clock_delta_t elapsed_master_clocks) noexcept
+    {
+        _dma_counter += elapsed_master_clocks;
     }
 
     master_clock_delta_t cpu_t::apply_system_timing(master_clock_delta_t elapsed_master_clocks,
@@ -976,9 +988,6 @@ namespace clover::core
         _visible_scanlines = ppu_step.visible_scanlines;
         _interlace = ppu_step.interlace;
         const timing_snapshot_t current_timing{ _counter.snapshot(video_timing, _visible_scanlines) };
-        const timing_snapshot_t nmi_timing{
-            _counter.snapshot_delayed(video_timing, _visible_scanlines, 2, _interlace)
-        };
         const timing_snapshot_t irq_timing{
             _counter.snapshot_delayed(video_timing, _visible_scanlines, 10, _interlace)
         };
@@ -1007,10 +1016,6 @@ namespace clover::core
         const bool entered_vblank{
             !_last_timing.in_vblank && current_timing.in_vblank
         };
-        const bool exited_vblank_on_nmi_timing{
-            _last_nmi_timing.in_vblank && !nmi_timing.in_vblank
-        };
-
         if (ppu_step.entered_scanline)
         {
             const uint16_t dma_phase_at_scanline_start{ scanline_start_dma_phase(current_timing) };
@@ -1023,17 +1028,6 @@ namespace clover::core
             const uint16_t dma_phase_at_frame_start{ scanline_start_dma_phase(current_timing) };
             _hdma_setup_dot = hdma_setup_dot_v2(dma_phase_at_frame_start);
             _hdma_setup_pending = true;
-        }
-
-        if (exited_vblank_on_nmi_timing)
-            interrupts.clear_nmi_line();
-
-        if (!_last_nmi_timing.in_vblank && nmi_timing.in_vblank)
-        {
-            _io.nmi_flag = true;
-            _io.nmi_hold_clocks = 4;
-            if (_io.nmi_enabled)
-                interrupts.assert_nmi_line();
         }
 
         if (entered_vblank && _io.auto_joypad_poll)
@@ -1085,8 +1079,27 @@ namespace clover::core
                 interrupt_counter.snapshot_delayed(video_timing, _visible_scanlines, 6, _interlace)
             };
 
-            interrupts.advance_to_observation_point();
+            interrupts.advance_to_observation_point(interrupt_counter.master_clock);
             interrupts.latch_from_lines();
+
+            const bool nmi_valid_now{
+                interrupt_counter.snapshot_delayed(
+                    video_timing, _visible_scanlines, 2, _interlace
+                ).in_vblank
+            };
+            if (nmi_valid_now != _nmi_poll_valid)
+            {
+                _nmi_poll_valid = nmi_valid_now;
+                if (_nmi_poll_valid)
+                {
+                    _io.nmi_flag = true;
+                    _io.nmi_hold_clocks = 4;
+                    if (_io.nmi_enabled)
+                        interrupts.assert_nmi_line();
+                }
+                else
+                    interrupts.clear_nmi_line();
+            }
 
             const bool current_irq_condition{
                 irq_condition_now(_io, poll_irq_timing, poll_irq_gate_timing)
@@ -1105,7 +1118,6 @@ namespace clover::core
         _interrupt_poll_phase = interrupt_phase;
 
         _last_timing = current_timing;
-        _last_nmi_timing = nmi_timing;
         _last_irq_timing = irq_timing;
         _last_irq_gate_timing = irq_gate_timing;
     }

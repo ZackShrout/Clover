@@ -77,6 +77,7 @@ namespace clover::core
         bool waiting{ false };
         bool stopped{ false };
         uint8_t last_opcode{ 0 };
+        int64_t smp_clock_credit{ 0 };
         timer_state_t timer0{};
         timer_state_t timer1{};
         timer_state_t timer2{};
@@ -156,7 +157,7 @@ namespace clover::core
         // wait-state values {2,4,10,20} are already expressed in that divided
         // SMP clock domain, so we convert master clocks to SMP clocks using the
         // same frequency ratio instead of multiplying each wait unit by 21.
-        static constexpr int64_t k_master_clock_frequency_hz{ 21477270 };
+        static constexpr int64_t k_master_clock_frequency_hz{ 21477272 };
         static constexpr int64_t k_smp_clock_frequency_hz{ 32040 * 64 };
         static constexpr int64_t k_scheduler_zero_credit{ 0 };
         static constexpr int64_t k_force_cpu_sync_credit{

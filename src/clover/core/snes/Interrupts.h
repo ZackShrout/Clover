@@ -34,9 +34,11 @@ namespace clover::core
         void clear_irq_status_line() noexcept;
         void cancel_irq_delivery() noexcept;
         void force_irq_transition() noexcept;
-        void advance_to_observation_point() noexcept;
+        void advance_to_observation_point(master_clock_count_t observation_clock) noexcept;
         void latch_from_lines() noexcept;
         void observe_opcode_edge(bool irq_disabled) noexcept;
+        void observe_opcode_edge(master_clock_count_t observation_clock,
+                                 bool irq_disabled) noexcept;
         [[nodiscard]] interrupt_state_t sample() const noexcept;
         bool consume_nmi() noexcept;
         bool consume_irq() noexcept;
@@ -46,5 +48,10 @@ namespace clover::core
 
     private:
         interrupt_state_t _state{};
+        // The 65816 samples transitions on its last-cycle edge. Preserve the
+        // poll clock so a transition raised during that final cycle waits for
+        // the following instruction.
+        master_clock_count_t _nmi_transition_clock{ 0 };
+        master_clock_count_t _irq_transition_clock{ 0 };
     };
 }

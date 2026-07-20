@@ -35,21 +35,21 @@ namespace clover::core
         }
 
         case 0xaeu: // POP A
-            spc_consume_opcode_fetch();
+            (void)spc_read_u8(_registers.pc);
             spc_idle();
             _registers.a = spc_pull_stack();
             set_nz_flags(_registers.a);
             return true;
 
         case 0xafu: // MOV (X)+,A
-            spc_consume_opcode_fetch();
+            (void)spc_read_u8(_registers.pc);
             spc_idle();
             spc_store_direct(_registers.x, _registers.a);
             ++_registers.x;
             return true;
 
         case 0xbfu: // MOV A,(X)+
-            spc_consume_opcode_fetch();
+            (void)spc_read_u8(_registers.pc);
             _registers.a = spc_load_direct(_registers.x++);
             spc_idle();
             set_nz_flags(_registers.a);
@@ -268,7 +268,7 @@ namespace clover::core
         }
 
         case 0xe6u: // MOV A,(X)
-            spc_consume_opcode_fetch();
+            (void)spc_read_u8(_registers.pc);
             _registers.a = spc_load_direct(_registers.x);
             set_nz_flags(_registers.a);
             return true;

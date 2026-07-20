@@ -16,7 +16,7 @@ namespace clover::core
             return true;
 
         case 0x0du: // PUSH P
-            spc_consume_opcode_fetch();
+            (void)spc_read_u8(_registers.pc);
             spc_push_stack(_registers.psw);
             spc_idle();
             return true;
@@ -54,7 +54,7 @@ namespace clover::core
         case 0xf1u:
         {
             const uint8_t vector{ static_cast<uint8_t>(opcode >> 4u) };
-            spc_consume_opcode_fetch();
+            (void)spc_read_u8(_registers.pc);
             spc_idle();
             spc_push_stack(static_cast<uint8_t>(_registers.pc >> 8u));
             spc_push_stack(static_cast<uint8_t>(_registers.pc & 0x00ffu));
@@ -86,7 +86,7 @@ namespace clover::core
             return true;
 
         case 0x2du: // PUSH A
-            spc_consume_opcode_fetch();
+            (void)spc_read_u8(_registers.pc);
             spc_push_stack(_registers.a);
             spc_idle();
             return true;
@@ -134,7 +134,7 @@ namespace clover::core
         }
 
         case 0x4du: // PUSH X
-            spc_consume_opcode_fetch();
+            (void)spc_read_u8(_registers.pc);
             spc_push_stack(_registers.x);
             spc_idle();
             return true;
@@ -168,13 +168,14 @@ namespace clover::core
             return true;
 
         case 0x6du: // PUSH Y
-            spc_consume_opcode_fetch();
+            (void)spc_read_u8(_registers.pc);
             spc_push_stack(_registers.y);
             spc_idle();
             return true;
 
         case 0x6fu: // RTS
         {
+            (void)spc_read_u8(_registers.pc);
             spc_idle();
             const uint16_t address{
                 static_cast<uint16_t>(spc_pull_stack() | (static_cast<uint16_t>(spc_pull_stack()) << 8u))
@@ -202,6 +203,7 @@ namespace clover::core
         }
 
         case 0x8eu: // POP P
+            (void)spc_read_u8(_registers.pc);
             spc_idle();
             _registers.psw = spc_pull_stack();
             return true;
@@ -221,6 +223,7 @@ namespace clover::core
             return true;
 
         case 0xceu: // POP X
+            (void)spc_read_u8(_registers.pc);
             spc_idle();
             _registers.x = spc_pull_stack();
             set_nz_flags(_registers.x);
@@ -254,8 +257,8 @@ namespace clover::core
             return true;
 
         case 0xedu: // CMC
-            spc_consume_opcode_fetch();
             (void)spc_read_u8(_registers.pc);
+            spc_idle();
             _registers.psw ^= k_psw_carry;
             return true;
 

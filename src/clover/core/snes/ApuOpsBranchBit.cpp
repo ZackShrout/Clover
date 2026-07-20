@@ -28,7 +28,7 @@ namespace clover::core
         case 0xe3u:
         case 0xf3u:
         {
-            const uint8_t bit_index{ static_cast<uint8_t>(opcode >> 4u) };
+            const uint8_t bit_index{ static_cast<uint8_t>(opcode >> 5u) };
             spc_consume_opcode_fetch();
             const uint8_t direct_address{ spc_fetch_u8() };
             branch_relative_if_direct_bit(direct_address,
@@ -193,7 +193,7 @@ namespace clover::core
         case 0xf2u:
         {
             spc_consume_opcode_fetch();
-            const uint8_t bit_index{ static_cast<uint8_t>(opcode >> 4u) };
+            const uint8_t bit_index{ static_cast<uint8_t>(opcode >> 5u) };
             const uint8_t direct_address{ spc_fetch_u8() };
             const uint8_t bit_mask{ static_cast<uint8_t>(1u << (bit_index & 0x07u)) };
             uint8_t value{ spc_load_direct(direct_address) };

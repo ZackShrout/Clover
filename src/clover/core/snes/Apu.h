@@ -6,6 +6,7 @@
 #pragma once
 
 #include "clover/core/snes/Timing.h"
+#include "clover/core/snes/dsp/SPC_DSP.h"
 
 #include <array>
 #include <cstdint>
@@ -274,6 +275,7 @@ namespace clover::core
         void step_timer(timer_t<Frequency>& timer, master_clock_delta_t spc_cycles) noexcept;
         void step_access_cycles(master_clock_delta_t cycle_clocks,
                                 master_clock_delta_t timer_clocks) noexcept;
+        void step_dsp(master_clock_delta_t smp_clocks) noexcept;
         void wait_for_access(std::optional<uint16_t> address, bool half) noexcept;
         void step_spc_cycles(master_clock_delta_t spc_cycles) noexcept;
         void synchronize_cpu_io_visibility() noexcept;
@@ -323,7 +325,9 @@ namespace clover::core
         uint16_t _current_opcode_pc{ 0 };
         uint8_t _last_opcode{ 0 };
         io_state_t _io{};
-        std::array<uint8_t, 128> _dsp_registers{};
+        SPC_DSP _dsp{};
+        master_clock_delta_t _dsp_clock_remainder{ 0 };
+        bool _dsp_initialized{ false };
         timer_t<128> _timer0{};
         timer_t<128> _timer1{};
         timer_t<16> _timer2{};

@@ -383,6 +383,7 @@ namespace clover::core
                                       const ppu_pixel_candidate_t& below_candidate) noexcept;
         [[nodiscard]] ppu_pixel_candidate_t resolve_background_pixel_candidate(uint8_t background_index,
                                                                                uint16_t x) const noexcept;
+        void evaluate_mode7_scanline(uint8_t background_index, uint16_t scanline) noexcept;
         void populate_background_offset_cache(uint16_t scanline) noexcept;
         void evaluate_background_tiles(uint8_t background_index) noexcept;
         void fetch_background_tile_rows(uint8_t background_index) noexcept;

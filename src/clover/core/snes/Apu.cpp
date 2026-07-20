@@ -13,8 +13,6 @@
 namespace
 {
     constexpr uint8_t k_ram_disabled_read_value{ 0x5au };
-    constexpr uint8_t k_dsp_flg_register{ 0x6cu };
-    constexpr uint8_t k_dsp_soft_reset_flg{ 0xe0u };
     constexpr uint16_t k_trace_pc_min{ 0xffdau };
     constexpr uint16_t k_trace_pc_max{ 0xffe8u };
     constexpr uint16_t k_trace_pc2_min{ 0x0800u };
@@ -71,14 +69,18 @@ namespace clover::core
         _smp_suspended_for_cpu = false;
         _instruction_trace_count = 0;
         _io_trace_count = 0;
+        _dsp_clock_remainder = 0;
 
         if (!warm_reset)
         {
-            _dsp_registers.fill(0);
             _ram.fill(0);
+            _dsp.init(_ram.data(), _ram.data());
+            _dsp_initialized = true;
         }
-
-        _dsp_registers[k_dsp_flg_register] = k_dsp_soft_reset_flg;
+        else if (_dsp_initialized)
+        {
+            _dsp.soft_reset();
+        }
     }
 
     void apu_t::step(master_clock_delta_t master_clocks) noexcept
@@ -214,7 +216,7 @@ namespace clover::core
 
     uint8_t apu_t::peek_dsp_register(uint8_t address) const noexcept
     {
-        return _dsp_registers[address & 0x7fu];
+        return static_cast<uint8_t>(_dsp.read(address & 0x7fu));
     }
 
     uint16_t apu_t::instruction_trace_count() const noexcept
@@ -1118,6 +1120,7 @@ namespace clover::core
 
         const uint8_t updated{ set_bits ? static_cast<uint8_t>(data | _registers.a)
                                         : static_cast<uint8_t>(data & static_cast<uint8_t>(~_registers.a)) };
+        (void)spc_read_u8(address);
         spc_write_u8(address, updated);
     }
 
@@ -1158,7 +1161,7 @@ namespace clover::core
             break;
 
         case 0x00f3u:
-            value = _dsp_registers[_io.dsp_address & 0x7fu];
+            value = static_cast<uint8_t>(_dsp.read(_io.dsp_address & 0x7fu));
             break;
 
         case 0x00f4u:
@@ -1256,7 +1259,7 @@ namespace clover::core
 
         case 0x00f3u:
             if ((_io.dsp_address & 0x80u) == 0)
-                _dsp_registers[_io.dsp_address & 0x7fu] = value;
+                _dsp.write(_io.dsp_address & 0x7fu, value);
             return;
 
         case 0x00f4u:
@@ -1352,6 +1355,7 @@ namespace clover::core
     void apu_t::step_access_cycles(master_clock_delta_t cycle_clocks,
                                    master_clock_delta_t timer_clocks) noexcept
     {
+        step_dsp(cycle_clocks);
         step_timer(_timer0, timer_clocks);
         step_timer(_timer1, timer_clocks);
         step_timer(_timer2, timer_clocks);
@@ -1361,6 +1365,15 @@ namespace clover::core
         };
         _cpu_io_window_consumed_master_numerator += master_clocks;
         _smp_clock_credit -= master_clocks;
+    }
+
+    void apu_t::step_dsp(master_clock_delta_t smp_clocks) noexcept
+    {
+        const master_clock_delta_t total_clocks{ _dsp_clock_remainder + smp_clocks };
+        const master_clock_delta_t dsp_clocks{ total_clocks / 2u };
+        _dsp_clock_remainder = total_clocks & 1u;
+        if (dsp_clocks != 0)
+            _dsp.run(static_cast<int>(dsp_clocks));
     }
 
     void apu_t::wait_for_access(std::optional<uint16_t> address, bool half) noexcept
@@ -1389,6 +1402,7 @@ namespace clover::core
 
     void apu_t::step_spc_cycles(master_clock_delta_t spc_cycles) noexcept
     {
+        step_dsp(spc_cycles);
         step_timer(_timer0, spc_cycles);
         step_timer(_timer1, spc_cycles);
         step_timer(_timer2, spc_cycles);

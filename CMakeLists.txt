@@ -13,6 +13,7 @@ set(CLOVER_CORE_SOURCES
     src/clover/core/snes/ApuOpsBranchBit.cpp
     src/clover/core/snes/ApuOpsControl.cpp
     src/clover/core/snes/ApuOpsLoadStore.cpp
+    src/clover/core/snes/dsp/SPC_DSP.cpp
     src/clover/core/snes/Bus.cpp
     src/clover/core/snes/Cartridge.cpp
     src/clover/core/snes/Console.cpp

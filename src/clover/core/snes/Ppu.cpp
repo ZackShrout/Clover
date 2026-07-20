@@ -1007,8 +1007,14 @@ namespace clover::core
 
         for (uint8_t background_index{ 0 }; background_index < 4u; ++background_index)
         {
+            if (_bg_state.active[background_index]
+                && _bg_state.render_mode[background_index] == ppu_background_render_state_t::mode_t::mode7)
+            {
+                evaluate_mode7_scanline(background_index, scanline);
+                continue;
+            }
+
             if (!_bg_state.active[background_index]
-                || _bg_state.render_mode[background_index] == ppu_background_render_state_t::mode_t::mode7
                 || _bg_state.render_mode[background_index] == ppu_background_render_state_t::mode_t::inactive)
             {
                 continue;
@@ -1017,6 +1023,114 @@ namespace clover::core
             evaluate_background_tiles(background_index);
             fetch_background_tile_rows(background_index);
             synthesize_background_layer_candidate(background_index);
+        }
+    }
+
+    void ppu_t::evaluate_mode7_scanline(uint8_t background_index, uint16_t scanline) noexcept
+    {
+        auto& background{ _background_layer_state[background_index] };
+
+        const auto sign_extend_13 = [](uint16_t value) noexcept -> int32_t
+        {
+            const uint16_t masked{ static_cast<uint16_t>(value & 0x1fffu) };
+            return (masked & 0x1000u) != 0u
+                ? static_cast<int32_t>(masked) - 0x2000
+                : static_cast<int32_t>(masked);
+        };
+        const auto clip_offset = [](int32_t value) noexcept -> int32_t
+        {
+            return (value & 0x2000) != 0
+                ? value | ~1023
+                : value & 1023;
+        };
+
+        const int32_t a{ static_cast<int16_t>(_screen_state.mode7_a) };
+        const int32_t b{ static_cast<int16_t>(_screen_state.mode7_b) };
+        const int32_t c{ static_cast<int16_t>(_screen_state.mode7_c) };
+        const int32_t d{ static_cast<int16_t>(_screen_state.mode7_d) };
+        const int32_t hcenter{ sign_extend_13(_screen_state.mode7_x) };
+        const int32_t vcenter{ sign_extend_13(_screen_state.mode7_y) };
+        const int32_t hoffset{ sign_extend_13(_scroll_latches.mode7_hoffset) };
+        const int32_t voffset{ sign_extend_13(_scroll_latches.mode7_voffset) };
+
+        int32_t y{ static_cast<int32_t>(scanline) };
+        // Both Mode 7 backgrounds use the BG1 mosaic enable for vertical
+        // sampling on the S-PPU.
+        if (_mosaic_state.enabled[0])
+            y -= mosaic_voffset();
+        if (_screen_state.mode7_vflip)
+            y = 255 - y;
+
+        const int32_t origin_x{
+            (a * clip_offset(hoffset - hcenter) & ~63)
+            + (b * clip_offset(voffset - vcenter) & ~63)
+            + (b * y & ~63)
+            + (hcenter << 8)
+        };
+        const int32_t origin_y{
+            (c * clip_offset(hoffset - hcenter) & ~63)
+            + (d * clip_offset(voffset - vcenter) & ~63)
+            + (d * y & ~63)
+            + (vcenter << 8)
+        };
+
+        for (uint16_t screen_x{ 0 }; screen_x < framebuffer_t::k_width; ++screen_x)
+        {
+            uint16_t sampled_x{ screen_x };
+            if (_mosaic_state.enabled[background_index])
+                sampled_x = static_cast<uint16_t>(screen_x - (screen_x % _mosaic_state.size));
+
+            int32_t x{ static_cast<int32_t>(sampled_x) };
+            if (_screen_state.mode7_hflip)
+                x = 255 - x;
+
+            const int32_t pixel_x{ (origin_x + a * x) >> 8 };
+            const int32_t pixel_y{ (origin_y + c * x) >> 8 };
+            const bool out_of_bounds{ ((pixel_x | pixel_y) & ~1023) != 0 };
+
+            const uint16_t tile_address{
+                static_cast<uint16_t>(
+                    ((static_cast<uint32_t>(pixel_y) >> 3u) & 0x7fu) << 7u
+                    | ((static_cast<uint32_t>(pixel_x) >> 3u) & 0x7fu))
+            };
+            const uint16_t palette_address{
+                static_cast<uint16_t>(
+                    (static_cast<uint32_t>(pixel_y) & 0x07u) << 3u
+                    | (static_cast<uint32_t>(pixel_x) & 0x07u))
+            };
+
+            const uint8_t tile{
+                static_cast<uint8_t>(
+                    _screen_state.mode7_repeat == 3u && out_of_bounds
+                        ? 0u
+                        : _vram[tile_address] & 0x00ffu)
+            };
+            uint8_t palette{
+                static_cast<uint8_t>(
+                    _screen_state.mode7_repeat == 2u && out_of_bounds
+                        ? 0u
+                        : _vram[
+                            static_cast<uint16_t>((static_cast<uint16_t>(tile) << 6u) | palette_address)
+                        ] >> 8u)
+            };
+
+            uint8_t priority_index{ 0u };
+            if (background_index == 1u)
+            {
+                priority_index = static_cast<uint8_t>(palette >> 7u);
+                palette &= 0x7fu;
+            }
+
+            if (palette == 0u)
+                continue;
+
+            background.samples[screen_x] = {
+                .priority = _bg_state.priority[background_index][priority_index],
+                .palette = palette,
+                .palette_group = 0u,
+                .color_math_enabled = _color_math_state.bg_color_enable[background_index],
+                .source = background_pixel_source(background_index)
+            };
         }
     }
 
@@ -1463,13 +1577,15 @@ namespace clover::core
             return {};
 
         if (!_bg_state.active[background_index]
-            || _bg_state.render_mode[background_index] == ppu_background_render_state_t::mode_t::inactive
-            || _bg_state.render_mode[background_index] == ppu_background_render_state_t::mode_t::mode7)
+            || _bg_state.render_mode[background_index] == ppu_background_render_state_t::mode_t::inactive)
         {
             return {};
         }
 
         auto& background{ const_cast<ppu_background_layer_state_t&>(_background_layer_state[background_index]) };
+        if (_bg_state.render_mode[background_index] == ppu_background_render_state_t::mode_t::mode7)
+            return background.samples[static_cast<size_t>(x)];
+
         if (background.tile_count == 0u)
             return {};
 

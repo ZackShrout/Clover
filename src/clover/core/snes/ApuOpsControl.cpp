@@ -226,7 +226,6 @@ namespace clover::core
             (void)spc_read_u8(_registers.pc);
             spc_idle();
             _registers.x = spc_pull_stack();
-            set_nz_flags(_registers.x);
             return true;
 
         case 0xdcu: // DEC Y
@@ -253,7 +252,6 @@ namespace clover::core
             (void)spc_read_u8(_registers.pc);
             spc_idle();
             _registers.y = spc_pull_stack();
-            set_nz_flags(_registers.y);
             return true;
 
         case 0xedu: // CMC

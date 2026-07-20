@@ -38,7 +38,6 @@ namespace clover::core
             (void)spc_read_u8(_registers.pc);
             spc_idle();
             _registers.a = spc_pull_stack();
-            set_nz_flags(_registers.a);
             return true;
 
         case 0xafu: // MOV (X)+,A

@@ -475,7 +475,14 @@ namespace clover::core
             return static_cast<uint8_t>(_io.vtime >> 8u);
         case 0x4210u:
         {
-            const uint8_t value{ static_cast<uint8_t>(0x02u | (_io.nmi_flag ? 0x80u : 0x00u)) };
+            const uint8_t open_bus{ _bus != nullptr ? _bus->open_bus() : static_cast<uint8_t>(0u) };
+            const uint8_t value{
+                static_cast<uint8_t>(
+                    (open_bus & 0x70u)
+                    | 0x02u
+                    | (_io.nmi_flag ? 0x80u : 0x00u)
+                )
+            };
             if (timed_nmi_hold == 0)
             {
                 _io.nmi_flag = false;
@@ -487,7 +494,10 @@ namespace clover::core
         }
         case 0x4211u:
         {
-            const uint8_t value{ static_cast<uint8_t>(_io.irq_flag ? 0x80u : 0x00u) };
+            const uint8_t open_bus{ _bus != nullptr ? _bus->open_bus() : static_cast<uint8_t>(0u) };
+            const uint8_t value{
+                static_cast<uint8_t>((open_bus & 0x7fu) | (_io.irq_flag ? 0x80u : 0x00u))
+            };
             if (timed_irq_hold == 0)
             {
                 _io.irq_flag = false;
@@ -499,7 +509,8 @@ namespace clover::core
         }
         case 0x4212u:
         {
-            uint8_t value{ 0 };
+            const uint8_t open_bus{ _bus != nullptr ? _bus->open_bus() : static_cast<uint8_t>(0u) };
+            uint8_t value{ static_cast<uint8_t>(open_bus & 0x3eu) };
             value |= static_cast<uint8_t>(timed_auto_joypad_busy != 0 ? 0x01u : 0x00u);
             value |= static_cast<uint8_t>(cpu_in_hblank(timed_snapshot) ? 0x40u : 0x00u);
             value |= static_cast<uint8_t>(timed_snapshot.in_vblank ? 0x80u : 0x00u);
@@ -572,10 +583,8 @@ namespace clover::core
             _io.auto_joypad_poll = (value & 0x01u) != 0;
             if (!_io.auto_joypad_poll)
                 _io.auto_joypad_busy_clocks = 0;
-            if ((value & 0x80u) != 0 && !_io.nmi_enabled && _nmi_poll_valid)
+            if ((value & 0x80u) != 0 && !_io.nmi_enabled && _io.nmi_flag)
             {
-                _io.nmi_flag = true;
-                _io.nmi_hold_clocks = 4;
                 if (_interrupts != nullptr)
                     _interrupts->force_nmi_transition();
             }
@@ -1107,7 +1116,11 @@ namespace clover::core
                         interrupts.assert_nmi_line();
                 }
                 else
+                {
+                    _io.nmi_flag = false;
+                    _io.nmi_hold_clocks = 0;
                     interrupts.clear_nmi_line();
+                }
             }
 
             const bool current_irq_condition{

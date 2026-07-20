@@ -227,6 +227,37 @@ namespace
         if ((nmi_console.read_u8(0x004210u) & 0x80u) == 0)
             return fail("nmi_immediate_enable");
 
+        static clover::core::console_t nmi_fall_console{};
+        nmi_fall_console.power_on();
+        while (!nmi_fall_console.capture_timing_snapshot().cpu_timing_nmi_delay.in_vblank)
+            static_cast<void>(nmi_fall_console.step_hardware());
+        while (nmi_fall_console.capture_timing_snapshot().cpu_timing_nmi_delay.in_vblank)
+            static_cast<void>(nmi_fall_console.step_hardware());
+
+        if ((nmi_fall_console.read_u8(0x004210u) & 0x80u) != 0)
+            return fail("rdnmi_clears_at_vblank_fall");
+
+        static clover::core::console_t nmi_enable_after_rdnmi_console{};
+        nmi_enable_after_rdnmi_console.power_on();
+        while (!nmi_enable_after_rdnmi_console.capture_timing_snapshot().cpu_timing_nmi_delay.in_vblank)
+            static_cast<void>(nmi_enable_after_rdnmi_console.step_hardware());
+        static_cast<void>(nmi_enable_after_rdnmi_console.step_hardware());
+        if ((nmi_enable_after_rdnmi_console.read_u8(0x004210u) & 0x80u) == 0)
+            return fail("rdnmi_before_late_enable");
+        if ((nmi_enable_after_rdnmi_console.read_u8(0x004210u) & 0x80u) != 0)
+            return fail("rdnmi_clears_before_late_enable");
+
+        nmi_enable_after_rdnmi_console.write_u8(0x004200u, 0x80u);
+        const clover::core::interrupt_state_t late_enable_interrupts{
+            nmi_enable_after_rdnmi_console.capture_timing_snapshot().interrupts
+        };
+        if (late_enable_interrupts.nmi_line
+            || late_enable_interrupts.nmi_transition
+            || late_enable_interrupts.nmi_pending)
+        {
+            return fail("cleared_rdnmi_does_not_retrigger_on_enable");
+        }
+
         if (const char* checkpoint = []() -> const char*
             {
                 static clover::core::console_t cpu_nmi_enable_console{};
@@ -3097,6 +3128,15 @@ int main()
     static_cast<void>(cpu_power_on_console.read_u8(0x7e1234u));
     if (cpu_power_on_console.open_bus() != 0x5au)
         return fail("cpu_open_bus_seed");
+
+    if (cpu_power_on_console.read_u8(0x004210u) != 0x52u)
+        return fail("rdnmi_open_bus_bits");
+
+    if (cpu_power_on_console.read_u8(0x004211u) != 0x5au)
+        return fail("timeup_open_bus_bits");
+
+    if ((cpu_power_on_console.read_u8(0x004212u) & 0x3eu) != 0x1au)
+        return fail("hvbjoy_open_bus_bits");
 
     if (cpu_power_on_console.read_u8(0x004213u) != 0xffu)
         return fail("cpu_open_bus_internal_mmio_value");

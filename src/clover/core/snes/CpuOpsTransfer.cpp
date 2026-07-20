@@ -18,7 +18,7 @@ namespace clover::core
         [[nodiscard]] uint16_t apply_accumulator_result(cpu_state_t& state, uint16_t value) noexcept
         {
             const uint16_t result{ accumulator_is_8bit(state)
-                ? static_cast<uint16_t>(value & 0x00ffu)
+                ? static_cast<uint16_t>((state.a & 0xff00u) | (value & 0x00ffu))
                 : value };
             set_zero_negative_flags(state, result, accumulator_is_8bit(state));
             return result;

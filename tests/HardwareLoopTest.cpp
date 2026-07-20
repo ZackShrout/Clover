@@ -1419,6 +1419,28 @@ int main()
         return fail("cpu_xba");
     }
 
+    static clover::core::console_t cpu_8bit_transfer_console{};
+    cpu_8bit_transfer_console.power_on();
+    cpu_8bit_transfer_console.write_u8(0x000000u, 0x18u);
+    cpu_8bit_transfer_console.write_u8(0x000001u, 0xfbu);
+    cpu_8bit_transfer_console.write_u8(0x000002u, 0xc2u);
+    cpu_8bit_transfer_console.write_u8(0x000003u, 0x20u);
+    cpu_8bit_transfer_console.write_u8(0x000004u, 0xa9u);
+    cpu_8bit_transfer_console.write_u8(0x000005u, 0x34u);
+    cpu_8bit_transfer_console.write_u8(0x000006u, 0x12u);
+    cpu_8bit_transfer_console.write_u8(0x000007u, 0xe2u);
+    cpu_8bit_transfer_console.write_u8(0x000008u, 0x20u);
+    cpu_8bit_transfer_console.write_u8(0x000009u, 0xa0u);
+    cpu_8bit_transfer_console.write_u8(0x00000au, 0x56u);
+    cpu_8bit_transfer_console.write_u8(0x00000bu, 0x98u);
+    cpu_8bit_transfer_console.write_u8(0x00000cu, 0xebu);
+
+    for (int step_index{ 0 }; step_index < 8; ++step_index)
+        static_cast<void>(cpu_8bit_transfer_console.step_hardware());
+
+    if (cpu_8bit_transfer_console.cpu_state().a != 0x5612u)
+        return fail("cpu_8bit_transfer_preserves_b");
+
     static clover::core::console_t cpu_stp_console{};
     cpu_stp_console.power_on();
     cpu_stp_console.write_u8(0x000000u, 0xdbu);

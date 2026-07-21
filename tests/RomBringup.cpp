@@ -2100,6 +2100,7 @@ int main(int argc, char** argv)
     const bool capture_transfer_pointer_changes{ parse_bool_env("CLOVER_CAPTURE_TRANSFER_POINTERS") };
     const bool capture_helper_trace{ parse_bool_env("CLOVER_CAPTURE_HELPER_TRACE") };
     const bool capture_ff3_call_trace{ parse_bool_env("CLOVER_CAPTURE_FF3_CALL_TRACE") };
+    const bool dump_frames_only{ parse_bool_env("CLOVER_DUMP_FRAMES_ONLY") };
     std::FILE* generic_trace_file{ nullptr };
     if (generic_trace_filter.enabled)
     {
@@ -2560,53 +2561,55 @@ int main(int argc, char** argv)
                 return 1;
             }
 
-            std::array<uint8_t, 64 * 1024> apu_ram{};
-            for (uint32_t address{ 0 }; address < apu_ram.size(); ++address)
-                apu_ram[address] = console.apu_peek_ram(static_cast<uint16_t>(address));
-            const std::filesystem::path apu_ram_path{
-                dump_directory / (frame_basename + ".vblank.apuram.bin")
-            };
-            if (!write_binary_blob(apu_ram_path, apu_ram))
-            {
-                std::fprintf(stderr, "Failed to write vblank APU RAM dump: %s\n", apu_ram_path.string().c_str());
-                return 1;
-            }
-
-            std::array<uint8_t, 128> dsp_registers{};
-            for (uint16_t address{ 0 }; address < dsp_registers.size(); ++address)
-                dsp_registers[address] = console.apu_peek_dsp_register(static_cast<uint8_t>(address));
-            const std::filesystem::path dsp_register_path{
-                dump_directory / (frame_basename + ".vblank.dspregs.bin")
-            };
-            if (!write_binary_blob(dsp_register_path, dsp_registers))
-            {
-                std::fprintf(stderr, "Failed to write vblank DSP register dump: %s\n", dsp_register_path.string().c_str());
-                return 1;
-            }
-
-            const std::array<uint8_t, SPC_DSP::state_size> dsp_state{ console.apu_dsp_state() };
-            const std::filesystem::path dsp_state_path{
-                dump_directory / (frame_basename + ".vblank.dspstate.bin")
-            };
-            if (!write_binary_blob(dsp_state_path, dsp_state))
-            {
-                std::fprintf(stderr, "Failed to write vblank DSP state: %s\n", dsp_state_path.string().c_str());
-                return 1;
-            }
-
-            const std::filesystem::path apu_state_path{
-                dump_directory / (frame_basename + ".vblank.apustate.txt")
-            };
-            if (!write_apu_state_text(apu_state_path, console.apu_state()))
-            {
-                std::fprintf(stderr, "Failed to write vblank APU state: %s\n", apu_state_path.string().c_str());
-                return 1;
-            }
-
             ++dumped_frames;
+            if (!dump_frames_only)
+            {
+                std::array<uint8_t, 64 * 1024> apu_ram{};
+                for (uint32_t address{ 0 }; address < apu_ram.size(); ++address)
+                    apu_ram[address] = console.apu_peek_ram(static_cast<uint16_t>(address));
+                const std::filesystem::path apu_ram_path{
+                    dump_directory / (frame_basename + ".vblank.apuram.bin")
+                };
+                if (!write_binary_blob(apu_ram_path, apu_ram))
+                {
+                    std::fprintf(stderr, "Failed to write vblank APU RAM dump: %s\n", apu_ram_path.string().c_str());
+                    return 1;
+                }
+
+                std::array<uint8_t, 128> dsp_registers{};
+                for (uint16_t address{ 0 }; address < dsp_registers.size(); ++address)
+                    dsp_registers[address] = console.apu_peek_dsp_register(static_cast<uint8_t>(address));
+                const std::filesystem::path dsp_register_path{
+                    dump_directory / (frame_basename + ".vblank.dspregs.bin")
+                };
+                if (!write_binary_blob(dsp_register_path, dsp_registers))
+                {
+                    std::fprintf(stderr, "Failed to write vblank DSP register dump: %s\n", dsp_register_path.string().c_str());
+                    return 1;
+                }
+
+                const std::array<uint8_t, SPC_DSP::state_size> dsp_state{ console.apu_dsp_state() };
+                const std::filesystem::path dsp_state_path{
+                    dump_directory / (frame_basename + ".vblank.dspstate.bin")
+                };
+                if (!write_binary_blob(dsp_state_path, dsp_state))
+                {
+                    std::fprintf(stderr, "Failed to write vblank DSP state: %s\n", dsp_state_path.string().c_str());
+                    return 1;
+                }
+
+                const std::filesystem::path apu_state_path{
+                    dump_directory / (frame_basename + ".vblank.apustate.txt")
+                };
+                if (!write_apu_state_text(apu_state_path, console.apu_state()))
+                {
+                    std::fprintf(stderr, "Failed to write vblank APU state: %s\n", apu_state_path.string().c_str());
+                    return 1;
+                }
+            }
         }
 
-        if (step.ppu.entered_frame_start && should_dump_frame)
+        if (!dump_frames_only && step.ppu.entered_frame_start && should_dump_frame)
         {
             const std::string frame_basename{ "frame_" + std::to_string(active_frame) };
             std::array<uint8_t, 64 * 1024> apu_ram{};

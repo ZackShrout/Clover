@@ -137,5 +137,7 @@ observation point before changing the core.
   mode; do not generalize a checkpoint into universal support.
 - Keep generated captures, commercial ROMs, build trees, and local diagnostic
   archives out of source control.
+- Keep deterministic controller movies and their ROM hashes in `validation/`
+  when they define a durable regression path; never commit the ROM itself.
 - Keep commits focused enough that the hardware change and its evidence can be
   reviewed together.

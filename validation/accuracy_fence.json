@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "defaults": {
+    "step_limit": 2000000000,
+    "compare_profile": "exact"
+  },
+  "scenarios": [
+    {
+      "id": "smw-power-on-1000",
+      "suite": "baseline",
+      "rom": "roms/local/Super Mario World (USA).sfc",
+      "sha256": "0838e531fe22c077528febe14cb3ff7c492f1f5fa8de354192bdff7137c27f5b",
+      "start_frame": 1,
+      "end_frame": 1000
+    },
+    {
+      "id": "zelda-power-on-1000",
+      "suite": "baseline",
+      "rom": "roms/local/Legend of Zelda, The - A Link to the Past (USA).sfc",
+      "sha256": "66871d66be19ad2c34c927d6b14cd8eb6fc3181965b6e517cb361f7316009cfb",
+      "start_frame": 1,
+      "end_frame": 1000
+    },
+    {
+      "id": "ff3-power-on-1000",
+      "suite": "baseline",
+      "rom": "roms/local/Final Fantasy 3 (USA).smc",
+      "sha256": "7796786bc6dd2af20872de9d6a115f6d8c89fc249f5ebbd55ec6b0eae9fdcaab",
+      "start_frame": 1,
+      "end_frame": 1000
+    },
+    {
+      "id": "chrono-trigger-power-on-1000",
+      "suite": "baseline",
+      "rom": "roms/local/Chrono Trigger (USA).sfc",
+      "sha256": "06d1c2b06b716052c5596aaa0c2e5632a027fee1a9a28439e509f813c30829a9",
+      "start_frame": 1,
+      "end_frame": 1000
+    },
+    {
+      "id": "zelda-player-select",
+      "suite": "investigation",
+      "rom": "roms/local/Legend of Zelda, The - A Link to the Past (USA).sfc",
+      "sha256": "66871d66be19ad2c34c927d6b14cd8eb6fc3181965b6e517cb361f7316009cfb",
+      "input_script": "validation/input/zelda-player-select.joypad1.script",
+      "bsnes_input_frame_offset": 1,
+      "start_frame": 2300,
+      "end_frame": 2600
+    },
+    {
+      "id": "ff3-mode7-transition",
+      "suite": "interactive",
+      "rom": "roms/local/Final Fantasy 3 (USA).smc",
+      "sha256": "7796786bc6dd2af20872de9d6a115f6d8c89fc249f5ebbd55ec6b0eae9fdcaab",
+      "input_script": "validation/input/ff3-rendering.joypad1.script",
+      "bsnes_input_frame_offset": 1,
+      "start_frame": 8300,
+      "end_frame": 8425
+    },
+    {
+      "id": "ff3-combat-interface",
+      "suite": "interactive",
+      "rom": "roms/local/Final Fantasy 3 (USA).smc",
+      "sha256": "7796786bc6dd2af20872de9d6a115f6d8c89fc249f5ebbd55ec6b0eae9fdcaab",
+      "input_script": "validation/input/ff3-rendering.joypad1.script",
+      "bsnes_input_frame_offset": 1,
+      "start_frame": 10870,
+      "end_frame": 10920
+    }
+  ]
+}

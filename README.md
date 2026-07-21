@@ -103,17 +103,45 @@ CLOVER_JOYPAD1_SCRIPT_FILE=/path/to/capture/joypad1.script \
 `clover_bsnes_bringup` accepts the same environment variable, allowing the
 same input sequence to be compared against bsnes.
 
-## Core Validation
+## Accuracy Fence
 
-Run the low-noise regression loop with:
+The primary regression ratchet is manifest-driven. Its default `full` suite
+runs CTest, captures every frame through frame 1000 for the four milestone ROMs
+under Clover and bsnes, replays the validated Final Fantasy III Mode 7 and
+combat paths, enforces the bringup guardrails, and compares all requested
+frames exactly:
 
 ```bash
-python3 scripts/run_core_validation.py
+python3 scripts/run_accuracy_fence.py
 ```
 
-The current script runs the hardware loop test plus local and bsnes checkpoint
-comparisons for its configured ROM set. It is a regression suite, not proof of
-universal compatibility or an exhaustive all-frame sweep.
+Use `--build-dir cmake-build-sdl-release` when the tools are in the CLion/SDL
+release tree. The runner auto-detects common build directories, verifies local
+ROM SHA-256 identities, uses deterministic startup, stores temporary frames
+under `/private/tmp`, and removes them after a complete pass. A failure keeps
+the frames and logs for investigation.
+
+The suites can also be run separately:
+
+```bash
+python3 scripts/run_accuracy_fence.py --suite baseline
+python3 scripts/run_accuracy_fence.py --suite interactive
+```
+
+Scenario definitions live in `validation/accuracy_fence.json`; captured
+controller movies live in `validation/input/`. List or select scenarios with
+`--list` and repeatable `--scenario <id>` options. Use `--keep-artifacts` or a
+new `--output-dir` when passing output should be retained intentionally.
+
+`scripts/run_core_validation.py` remains available as the older, faster
+three-ROM checkpoint loop. It is useful during iteration but is not the full
+accuracy fence.
+
+The checked-in Zelda player-selection movie is classified as an
+`investigation` scenario. It reproduces the path, but frame-indexed input does
+not yet maintain one exact shared trajectory after the title transition. Run
+it explicitly with `--suite investigation`; its mismatch is preserved as a
+failure, not accepted or masked by the fence.
 
 For a targeted exact comparison:
 

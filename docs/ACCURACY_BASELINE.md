@@ -71,9 +71,11 @@ through frame 1000 exactly against bsnes for all four ROMs. Commercial ROM
 images and generated sweep directories are deliberately not stored in the
 repository; they must be reproduced from local ROM copies.
 
-This 1000-frame result supersedes the old three-ROM, 300-frame baseline. The
-default `run_core_validation.py` configuration is still a smaller regression
-checkpoint loop and should not be confused with the full milestone sweep.
+This 1000-frame result supersedes the old three-ROM, 300-frame baseline. It is
+encoded in `validation/accuracy_fence.json` and reproduced by
+`scripts/run_accuracy_fence.py`. The older `run_core_validation.py` command is
+still a smaller regression checkpoint loop and should not be confused with the
+full milestone sweep.
 
 ## Interactive Validation Record
 
@@ -110,10 +112,38 @@ must be measured separately.
 
 ## Reproducing Comparisons
 
-Use `scripts/run_reference_sweep.py` for selected exact frame checkpoints and
-the headless bringup binaries plus `clover_frame_range_compare` for continuous
-captured ranges. Use SDL version-3 captures when controller input or audio is
-needed to reach the fault.
+Run the complete passing fence—four-ROM baseline plus validated FF3 interactive
+windows—with:
+
+```bash
+python3 scripts/run_accuracy_fence.py
+```
+
+Run only the four-ROM baseline or passing Final Fantasy III input movies with:
+
+```bash
+python3 scripts/run_accuracy_fence.py --suite baseline
+python3 scripts/run_accuracy_fence.py --suite interactive
+```
+
+The runner uses frame-only Clover dumps so routine sweeps do not write the
+larger APU/VRAM/OAM/CGRAM investigation payload for every frame. It removes
+passing temporary artifacts and preserves failures. Use
+`scripts/run_reference_sweep.py` for smaller ad hoc checkpoints and SDL
+version-3 captures when a new input or audio path must first be recorded.
+
+Interactive scenarios may declare a bsnes input-frame offset. The SDL movie
+records input as applied before Clover's `run_frame()`, while the bsnes libretro
+callback associates the same newly visible input response with the preceding
+presented-frame boundary. The checked-in offset aligns those harness
+observation points; it does not permit a video-frame comparison offset, which
+remains fixed at zero.
+
+The Zelda player-selection movie remains in the manifest under the
+`investigation` suite. Its first title transition can be aligned at the input
+boundary, but the later frame-indexed trajectory still diverges. The fence
+therefore reproduces and fails that scenario explicitly instead of treating a
+visual offset or partial outcome as an accuracy pass.
 
 The closed low-level reference investigations are preserved as historical
 context in [`archive/REFERENCE_RECONCILIATION.md`](archive/REFERENCE_RECONCILIATION.md).

@@ -53,6 +53,7 @@ Owns the system-neutral contract used by presentation targets:
 - display metadata
 - read-only video-frame and audio-frame views
 - persistent-memory views, restore, dirty-state query, and flush acknowledgement
+- optional typed capabilities such as named presentation-plane control
 - the factory that currently constructs the SNES implementation
 
 `snes_emulator_core_t` adapts `core::console_t` to this interface. The seam is
@@ -63,15 +64,20 @@ implemented today.
 
 Owns host integration. The SDL implementation creates the window, renderer,
 texture, audio stream, keyboard/gamepad mapping, capture files, event loop, and
-wall-clock frame pacing. It sends semantic input into `emulator_core_t` and
-pulls completed video/audio views after each `run_frame()`.
+wall-clock frame pacing, pause/frame advance, and speed selection. The platform
+layer also owns the SQLite ROM library,
+canonical media hashing, managed ROM copies, application-data paths, and save
+files. It sends semantic input into `emulator_core_t` and pulls completed
+video/audio views after each `run_frame()`.
 
 No SDL type crosses into `core/` or the frontend contract.
 
 Battery-backed SRAM bytes and dirty state are emulated cartridge state. Save
-filenames, filesystem access, temporary-file replacement, and flush cadence are
-platform policy. This lets a headless tool or future host persist the same core
-memory without teaching the SNES cartridge about files.
+identity, filenames, filesystem access, migration, temporary-file replacement,
+and flush cadence are platform policy. Canonical SHA-256 identities decouple a
+game's save from its source filename or location. This lets a headless tool or
+future host persist the same core memory without teaching the SNES cartridge
+about files.
 
 ## Core Runtime
 
@@ -158,9 +164,16 @@ than scattered conditionals.
 ## Presentation and Pacing
 
 `emulator_core_t::run_frame()` advances emulated hardware only. The current SDL
-shell paces completed frames at the SNES core's reported 60.098812 Hz, applies
-the 8:7 pixel aspect ratio, and manages audio queue latency. Headless callers
-can run without sleeping.
+shell normally paces completed frames at the SNES core's reported 60.098812 Hz,
+applies the 8:7 pixel aspect ratio, and manages audio queue latency. Pause,
+single-frame advancement, and alternate speeds change only when the host calls
+`run_frame()`; headless callers can run without sleeping.
+
+System-specific presentation controls are exposed through optional typed
+frontend capabilities. The SNES plane implementation recomposites BG1–BG4 and
+OBJ visibility in a separate presentation framebuffer. It does not write PPU
+registers or alter the canonical all-layers output, so diagnostic convenience
+does not become emulated hardware state.
 
 This separation is important: a host slowdown must not become an emulated
 timing change, and a future renderer or offline tool must be able to consume

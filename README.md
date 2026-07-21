@@ -58,31 +58,50 @@ cmake --build --preset sdl-release
 ```
 
 The ROM argument is optional. With no argument, Clover displays its frontend
-test pattern; choose **File → Load ROM…** when ready. The pattern immediately
-clears when media loads, before the game produces its first visible frame.
+test pattern; choose **File → Import ROM to Library…** when ready. The pattern
+immediately clears when media loads, before the game produces its first visible frame.
 Supplying a ROM path remains useful for command-line and deterministic test
-runs.
+runs and does not add that ROM to the library.
 
 The app also accepts `--frames <count>` to stop after a fixed number of frames.
 Controls and capture details are documented in
 [`docs/FRONTEND.md`](docs/FRONTEND.md).
 
-### Save RAM and app menu
+### ROM library, Save RAM, and app menu
 
-Battery-backed cartridge RAM is stored beside the ROM with an `.srm`
-extension. For example, `Final Fantasy 3 (USA).smc` uses
-`Final Fantasy 3 (USA).srm`. A matching save is restored before power-on;
-changed save RAM is written atomically during play and again when resetting,
-loading another ROM, or quitting.
+Imported ROMs and battery saves live under Clover's SDL-resolved application
+data directory rather than beside source ROMs. SNES media is identified by the
+SHA-256 of its canonical cartridge bytes, ignoring an optional 512-byte copier
+header. Importing the same cartridge from multiple locations therefore creates
+one library entry and one save identity.
+
+The SQLite-backed library stores immutable canonical ROM copies under
+`library/roms/snes/<sha256>.sfc`. Battery RAM is stored separately under
+`saves/snes/<sha256>/battery.srm`. If no central save exists, a matching sibling
+`.srm` from the selected source ROM is copied into central storage once. Changed
+save RAM is written during play and again when resetting, switching ROMs, or
+quitting.
 
 The SDL menu bar provides:
 
-- **File → Load ROM…** (`Cmd+O` on macOS, `Ctrl+O` elsewhere)
+- **File → Import ROM to Library…** copies, deduplicates, indexes, and opens a ROM
+- **File → Open ROM Library…** (`Cmd+O` or `Ctrl+O`) opens an imported game
+- **File → Open ROM Temporarily…** opens without importing
+- **File → Quit** (`Cmd+Q` or `Ctrl+Q`) exits after flushing dirty save RAM
+- **Emulation → Pause** (`Space`) stops host-driven frame advancement
+- **Emulation → Frame Advance** (`.`) pauses and advances exactly one frame
 - **Emulation → Reset** (`Cmd+R` or `Ctrl+R`)
+- **Emulation → Speed** selects 0.5×, 1×, 2×, 4×, or unlimited host pacing
+- **Video** exposes the active core's optional presentation planes; SNES provides
+  BG1–BG4 and Objects
 
 Reset models the console reset button and preserves cartridge save RAM. Reset
-and ROM switching are disabled during deterministic capture because the
-capture format does not encode those actions.
+and ROM switching, pause/frame advance, speed changes, and video-plane overrides
+are disabled during deterministic capture because the capture format does not
+encode those actions. Non-1× speed modes currently mute presentation audio so
+the host never plays native-rate samples at the wrong wall-clock rate. Faster
+modes batch hardware frames between window presentations, keeping display
+refresh from silently pinning emulation to 1×.
 
 ## Interactive Investigation Captures
 

@@ -337,6 +337,7 @@ namespace clover::core
         [[nodiscard]] const std::array<uint16_t, 256>& cgram() const noexcept;
         void present(framebuffer_t& framebuffer,
                      const ppu_presentation_options_t& options = {}) const noexcept;
+        void set_presentation_layer_mask(uint8_t visible_layer_mask) noexcept;
         void set_frame_capture_enabled(bool enabled) noexcept;
         void set_entropy_mode(ppu_entropy_mode_t mode) noexcept;
         [[nodiscard]] ppu_entropy_mode_t entropy_mode() const noexcept;
@@ -382,6 +383,7 @@ namespace clover::core
         void resolve_pixel_color_math(uint16_t x,
                                       const ppu_pixel_candidate_t& above_candidate,
                                       const ppu_pixel_candidate_t& below_candidate) noexcept;
+        [[nodiscard]] uint16_t presentation_pixel_color(uint16_t x) const noexcept;
         [[nodiscard]] ppu_pixel_candidate_t resolve_background_pixel_candidate(uint8_t background_index,
                                                                                uint16_t x) const noexcept;
         void evaluate_mode7_scanline(uint8_t background_index, uint16_t scanline) noexcept;
@@ -660,6 +662,9 @@ namespace clover::core
 
         framebuffer_t _composed_frame{};
         framebuffer_t _presented_frame{};
+        framebuffer_t _presentation_composed_frame{};
+        framebuffer_t _presentation_presented_frame{};
+        uint8_t _presentation_layer_mask{ ppu_presentation_options_t::k_all_layers_visible };
         std::array<uint8_t, 0x40> _registers{};
         std::array<uint16_t, 32 * 1024> _vram{};
         std::array<uint8_t, 544> _oam{};

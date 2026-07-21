@@ -5,6 +5,7 @@
 
 #include "clover/platform/sdl/SdlAppShell.h"
 #include "clover/frontend/SnesEmulatorCore.h"
+#include "clover/platform/RomLibrary.h"
 
 #include <SDL3/SDL.h>
 
@@ -32,14 +33,114 @@ namespace clover::platform
         constexpr float k_menu_bar_height{ 28.f };
         constexpr SDL_FRect k_file_menu_button{ 0.f, 0.f, 56.f, k_menu_bar_height };
         constexpr SDL_FRect k_emulation_menu_button{ 56.f, 0.f, 96.f, k_menu_bar_height };
-        constexpr SDL_FRect k_load_rom_menu_item{ 0.f, k_menu_bar_height, 136.f, 28.f };
-        constexpr SDL_FRect k_reset_menu_item{ 56.f, k_menu_bar_height, 96.f, 28.f };
+        constexpr SDL_FRect k_video_menu_button{ 152.f, 0.f, 56.f, k_menu_bar_height };
+        constexpr float k_file_menu_width{ 240.f };
+        constexpr SDL_FRect k_import_rom_menu_item{
+            0.f, k_menu_bar_height, k_file_menu_width, 28.f
+        };
+        constexpr SDL_FRect k_open_library_menu_item{
+            0.f, k_menu_bar_height + 28.f, k_file_menu_width, 28.f
+        };
+        constexpr SDL_FRect k_open_temporary_rom_menu_item{
+            0.f, k_menu_bar_height + 56.f, k_file_menu_width, 28.f
+        };
+        constexpr SDL_FRect k_quit_menu_item{
+            0.f, k_menu_bar_height + 84.f, k_file_menu_width, 28.f
+        };
+        constexpr float k_emulation_menu_width{ 176.f };
+        constexpr SDL_FRect k_pause_menu_item{
+            56.f, k_menu_bar_height, k_emulation_menu_width, 28.f
+        };
+        constexpr SDL_FRect k_frame_advance_menu_item{
+            56.f, k_menu_bar_height + 28.f, k_emulation_menu_width, 28.f
+        };
+        constexpr SDL_FRect k_reset_menu_item{
+            56.f, k_menu_bar_height + 56.f, k_emulation_menu_width, 28.f
+        };
+        constexpr std::array<SDL_FRect, 5> k_speed_menu_items{
+            SDL_FRect{ 56.f, k_menu_bar_height + 84.f, k_emulation_menu_width, 28.f },
+            SDL_FRect{ 56.f, k_menu_bar_height + 112.f, k_emulation_menu_width, 28.f },
+            SDL_FRect{ 56.f, k_menu_bar_height + 140.f, k_emulation_menu_width, 28.f },
+            SDL_FRect{ 56.f, k_menu_bar_height + 168.f, k_emulation_menu_width, 28.f },
+            SDL_FRect{ 56.f, k_menu_bar_height + 196.f, k_emulation_menu_width, 28.f }
+        };
+        constexpr float k_video_menu_width{ 136.f };
+        constexpr float k_library_row_y{ 72.f };
+        constexpr float k_library_row_height{ 24.f };
+        constexpr size_t k_library_visible_rows{ 24u };
         constexpr uint8_t k_file_menu{ 1u };
         constexpr uint8_t k_emulation_menu{ 2u };
+        constexpr uint8_t k_video_menu{ 3u };
+        constexpr uint8_t k_menu_hit_none{ 0u };
+        constexpr uint8_t k_menu_hit_file{ 1u };
+        constexpr uint8_t k_menu_hit_emulation{ 2u };
+        constexpr uint8_t k_menu_hit_video{ 3u };
+        constexpr uint8_t k_menu_hit_import{ 4u };
+        constexpr uint8_t k_menu_hit_library{ 5u };
+        constexpr uint8_t k_menu_hit_temporary{ 6u };
+        constexpr uint8_t k_menu_hit_quit{ 7u };
+        constexpr uint8_t k_menu_hit_pause{ 8u };
+        constexpr uint8_t k_menu_hit_frame_advance{ 9u };
+        constexpr uint8_t k_menu_hit_reset{ 10u };
+        constexpr uint8_t k_menu_hit_speed_base{ 11u };
+        constexpr uint8_t k_menu_hit_video_base{ 32u };
 
         [[nodiscard]] bool contains(const SDL_FRect& rect, float x, float y) noexcept
         {
             return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
+        }
+
+        [[nodiscard]] uint8_t menu_hit(uint8_t open_menu,
+                                       size_t video_plane_count,
+                                       float x,
+                                       float y) noexcept
+        {
+            if (contains(k_file_menu_button, x, y))
+                return k_menu_hit_file;
+            if (contains(k_emulation_menu_button, x, y))
+                return k_menu_hit_emulation;
+            if (video_plane_count != 0u && contains(k_video_menu_button, x, y))
+                return k_menu_hit_video;
+            if (open_menu == k_file_menu)
+            {
+                if (contains(k_import_rom_menu_item, x, y))
+                    return k_menu_hit_import;
+                if (contains(k_open_library_menu_item, x, y))
+                    return k_menu_hit_library;
+                if (contains(k_open_temporary_rom_menu_item, x, y))
+                    return k_menu_hit_temporary;
+                if (contains(k_quit_menu_item, x, y))
+                    return k_menu_hit_quit;
+            }
+            if (open_menu == k_emulation_menu)
+            {
+                if (contains(k_pause_menu_item, x, y))
+                    return k_menu_hit_pause;
+                if (contains(k_frame_advance_menu_item, x, y))
+                    return k_menu_hit_frame_advance;
+                if (contains(k_reset_menu_item, x, y))
+                    return k_menu_hit_reset;
+                for (size_t index{ 0 }; index < k_speed_menu_items.size(); ++index)
+                {
+                    if (contains(k_speed_menu_items[index], x, y))
+                        return static_cast<uint8_t>(k_menu_hit_speed_base + index);
+                }
+            }
+            if (open_menu == k_video_menu)
+            {
+                for (size_t index{ 0 }; index < video_plane_count; ++index)
+                {
+                    const SDL_FRect item{
+                        152.f,
+                        k_menu_bar_height + static_cast<float>(index) * 28.f,
+                        k_video_menu_width,
+                        28.f
+                    };
+                    if (contains(item, x, y))
+                        return static_cast<uint8_t>(k_menu_hit_video_base + index);
+                }
+            }
+            return k_menu_hit_none;
         }
 
         void SDLCALL rom_dialog_callback(void* userdata,
@@ -64,6 +165,14 @@ namespace clover::platform
             std::string_view capture_path{};
             uint64_t frame_limit{ 0 };
             bool valid{ true };
+        };
+
+        enum class pending_rom_source_t : uint8_t
+        {
+            none,
+            import,
+            temporary,
+            library
         };
 
         [[nodiscard]] uint32_t crc32(std::span<const std::byte> bytes) noexcept
@@ -480,6 +589,37 @@ namespace clover::platform
 
     void sdl_presentation_t::handle_event(const SDL_Event& event) noexcept
     {
+        if (_rom_library_visible
+            && (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP))
+        {
+            if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat)
+            {
+                if (event.key.scancode == SDL_SCANCODE_ESCAPE)
+                    _rom_library_visible = false;
+                else if (!_rom_library_names.empty() && event.key.scancode == SDL_SCANCODE_UP)
+                {
+                    if (_rom_library_selected > 0u)
+                        --_rom_library_selected;
+                    if (_rom_library_selected < _rom_library_scroll)
+                        _rom_library_scroll = _rom_library_selected;
+                }
+                else if (!_rom_library_names.empty() && event.key.scancode == SDL_SCANCODE_DOWN)
+                {
+                    _rom_library_selected = std::min(_rom_library_selected + 1u,
+                                                     _rom_library_names.size() - 1u);
+                    if (_rom_library_selected >= _rom_library_scroll + k_library_visible_rows)
+                        _rom_library_scroll = _rom_library_selected - k_library_visible_rows + 1u;
+                }
+                else if (!_rom_library_names.empty()
+                         && event.key.scancode == SDL_SCANCODE_RETURN)
+                {
+                    _rom_library_selection = _rom_library_selected;
+                    _rom_library_visible = false;
+                }
+            }
+            return;
+        }
+
         switch (event.type)
         {
         case SDL_EVENT_KEY_DOWN:
@@ -496,11 +636,35 @@ namespace clover::platform
             {
                 const bool menu_shortcut{ (event.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) != 0 };
                 if (menu_shortcut && event.key.scancode == SDL_SCANCODE_O)
-                    _load_rom_requested = true;
+                    _open_library_requested = true;
                 else if (menu_shortcut && event.key.scancode == SDL_SCANCODE_R)
                     _reset_requested = true;
+                else if (menu_shortcut && event.key.scancode == SDL_SCANCODE_Q)
+                    _quit_requested = true;
+                else if (!menu_shortcut && event.key.scancode == SDL_SCANCODE_SPACE)
+                    _pause_requested = true;
+                else if (!menu_shortcut && event.key.scancode == SDL_SCANCODE_PERIOD)
+                    _frame_advance_requested = true;
             }
             break;
+        case SDL_EVENT_MOUSE_MOTION:
+        {
+            float x{ event.motion.x };
+            float y{ event.motion.y };
+            if (_renderer != nullptr)
+                static_cast<void>(SDL_RenderCoordinatesFromWindow(_renderer, x, y, &x, &y));
+            _hovered_menu_item = menu_hit(_open_menu, _video_plane_names.size(), x, y);
+            if (_rom_library_visible && x >= 20.f && x < 620.f && y >= k_library_row_y)
+            {
+                const size_t row{
+                    static_cast<size_t>((y - k_library_row_y) / k_library_row_height)
+                };
+                const size_t index{ _rom_library_scroll + row };
+                if (row < k_library_visible_rows && index < _rom_library_names.size())
+                    _rom_library_selected = index;
+            }
+            break;
+        }
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
             if (event.button.button == SDL_BUTTON_LEFT)
             {
@@ -509,25 +673,105 @@ namespace clover::platform
                 if (_renderer != nullptr)
                     static_cast<void>(SDL_RenderCoordinatesFromWindow(_renderer, x, y, &x, &y));
 
-                if (contains(k_file_menu_button, x, y))
-                    _open_menu = _open_menu == k_file_menu ? 0u : k_file_menu;
-                else if (contains(k_emulation_menu_button, x, y))
-                    _open_menu = _open_menu == k_emulation_menu ? 0u : k_emulation_menu;
-                else if (_open_menu == k_file_menu && contains(k_load_rom_menu_item, x, y))
+                _hovered_menu_item = menu_hit(_open_menu, _video_plane_names.size(), x, y);
+                _pressed_menu_item = _hovered_menu_item;
+                if (_rom_library_visible && x >= 20.f && x < 620.f && y >= k_library_row_y)
                 {
-                    _load_rom_requested = true;
-                    _open_menu = 0u;
+                    const size_t row{ static_cast<size_t>((y - k_library_row_y) / k_library_row_height) };
+                    const size_t index{ _rom_library_scroll + row };
+                    if (row < k_library_visible_rows && index < _rom_library_names.size())
+                    {
+                        _rom_library_selected = index;
+                        if (event.button.clicks >= 2)
+                        {
+                            _rom_library_selection = index;
+                            _rom_library_visible = false;
+                        }
+                    }
                 }
-                else if (_open_menu == k_emulation_menu && contains(k_reset_menu_item, x, y))
-                {
-                    _reset_requested = true;
-                    _open_menu = 0u;
-                }
-                else
+                else if (_pressed_menu_item == k_menu_hit_none)
                 {
                     _open_menu = 0u;
                 }
             }
+            break;
+        case SDL_EVENT_MOUSE_BUTTON_UP:
+            if (event.button.button == SDL_BUTTON_LEFT)
+            {
+                float x{ event.button.x };
+                float y{ event.button.y };
+                if (_renderer != nullptr)
+                    static_cast<void>(SDL_RenderCoordinatesFromWindow(_renderer, x, y, &x, &y));
+                const uint8_t released_item{
+                    menu_hit(_open_menu, _video_plane_names.size(), x, y)
+                };
+                if (released_item == _pressed_menu_item)
+                {
+                    switch (released_item)
+                    {
+                    case k_menu_hit_file:
+                        _rom_library_visible = false;
+                        _open_menu = _open_menu == k_file_menu ? 0u : k_file_menu;
+                        break;
+                    case k_menu_hit_emulation:
+                        _rom_library_visible = false;
+                        _open_menu = _open_menu == k_emulation_menu ? 0u : k_emulation_menu;
+                        break;
+                    case k_menu_hit_video:
+                        _rom_library_visible = false;
+                        _open_menu = _open_menu == k_video_menu ? 0u : k_video_menu;
+                        break;
+                    case k_menu_hit_import:
+                        _import_rom_requested = true;
+                        _open_menu = 0u;
+                        break;
+                    case k_menu_hit_library:
+                        _open_library_requested = true;
+                        _open_menu = 0u;
+                        break;
+                    case k_menu_hit_temporary:
+                        _open_temporary_rom_requested = true;
+                        _open_menu = 0u;
+                        break;
+                    case k_menu_hit_quit:
+                        _quit_requested = true;
+                        _open_menu = 0u;
+                        break;
+                    case k_menu_hit_pause:
+                        _pause_requested = true;
+                        _open_menu = 0u;
+                        break;
+                    case k_menu_hit_frame_advance:
+                        _frame_advance_requested = true;
+                        _open_menu = 0u;
+                        break;
+                    case k_menu_hit_reset:
+                        _reset_requested = true;
+                        _open_menu = 0u;
+                        break;
+                    default:
+                        if (released_item >= k_menu_hit_speed_base
+                            && released_item < k_menu_hit_speed_base + k_speed_menu_items.size())
+                        {
+                            _requested_speed_selection = released_item - k_menu_hit_speed_base;
+                            _open_menu = 0u;
+                        }
+                        else if (released_item >= k_menu_hit_video_base
+                                 && released_item
+                                     < k_menu_hit_video_base + _video_plane_names.size())
+                        {
+                            _video_plane_selection = released_item - k_menu_hit_video_base;
+                            _open_menu = 0u;
+                        }
+                        break;
+                    }
+                }
+                _pressed_menu_item = k_menu_hit_none;
+                _hovered_menu_item = menu_hit(_open_menu, _video_plane_names.size(), x, y);
+            }
+            break;
+        case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+            _hovered_menu_item = k_menu_hit_none;
             break;
         case SDL_EVENT_GAMEPAD_ADDED:
             if (_gamepad == nullptr)
@@ -597,42 +841,172 @@ namespace clover::platform
         static_cast<void>(SDL_SetRenderDrawColor(_renderer, 34u, 32u, 31u, SDL_ALPHA_OPAQUE));
         static_cast<void>(SDL_RenderFillRect(_renderer, &menu_bar));
 
-        const SDL_FRect* selected_button{ nullptr };
-        if (_open_menu == k_file_menu)
-            selected_button = &k_file_menu_button;
-        else if (_open_menu == k_emulation_menu)
-            selected_button = &k_emulation_menu_button;
-        if (selected_button != nullptr)
+        const auto set_interaction_color{ [this](uint8_t item, bool selected) noexcept
         {
-            static_cast<void>(SDL_SetRenderDrawColor(_renderer, 74u, 71u, 68u, SDL_ALPHA_OPAQUE));
-            static_cast<void>(SDL_RenderFillRect(_renderer, selected_button));
+            if (_pressed_menu_item == item)
+                static_cast<void>(SDL_SetRenderDrawColor(_renderer, 46u, 82u, 128u,
+                                                         SDL_ALPHA_OPAQUE));
+            else if (_hovered_menu_item == item || selected)
+                static_cast<void>(SDL_SetRenderDrawColor(_renderer, 74u, 71u, 68u,
+                                                         SDL_ALPHA_OPAQUE));
+            else
+                static_cast<void>(SDL_SetRenderDrawColor(_renderer, 54u, 52u, 50u,
+                                                         SDL_ALPHA_OPAQUE));
+        } };
+        const auto draw_menu_background{ [this, &set_interaction_color](
+            const SDL_FRect& rect,
+            uint8_t item,
+            bool selected = false
+        ) noexcept
+        {
+            set_interaction_color(item, selected);
+            static_cast<void>(SDL_RenderFillRect(_renderer, &rect));
+        } };
+
+        draw_menu_background(k_file_menu_button,
+                             k_menu_hit_file,
+                             _open_menu == k_file_menu);
+        draw_menu_background(k_emulation_menu_button,
+                             k_menu_hit_emulation,
+                             _open_menu == k_emulation_menu);
+        if (!_video_plane_names.empty())
+        {
+            draw_menu_background(k_video_menu_button,
+                                 k_menu_hit_video,
+                                 _open_menu == k_video_menu);
         }
 
         static_cast<void>(SDL_SetRenderDrawColor(_renderer, 236u, 234u, 231u, SDL_ALPHA_OPAQUE));
         static_cast<void>(SDL_RenderDebugText(_renderer, 12.f, 10.f, "File"));
         static_cast<void>(SDL_RenderDebugText(_renderer, 68.f, 10.f, "Emulation"));
+        if (!_video_plane_names.empty())
+            static_cast<void>(SDL_RenderDebugText(_renderer, 164.f, 10.f, "Video"));
 
-        const SDL_FRect* menu_item{ nullptr };
-        const char* label{ nullptr };
+        if (_open_menu == k_emulation_menu)
+        {
+            static constexpr std::array<const char*, 5> speed_labels{
+                "Speed: 0.5x", "Speed: 1x", "Speed: 2x", "Speed: 4x", "Speed: Unlimited"
+            };
+            const std::string pause_label{ _paused ? "[x] Pause" : "[ ] Pause" };
+            const auto draw_item{ [this, &draw_menu_background](
+                const SDL_FRect& item,
+                uint8_t hit,
+                const char* item_label
+            ) noexcept
+            {
+                draw_menu_background(item, hit);
+                static_cast<void>(SDL_SetRenderDrawColor(_renderer, 236u, 234u, 231u,
+                                                         SDL_ALPHA_OPAQUE));
+                static_cast<void>(SDL_RenderDebugText(_renderer,
+                                                      item.x + 12.f,
+                                                      item.y + 10.f,
+                                                      item_label));
+            } };
+            draw_item(k_pause_menu_item, k_menu_hit_pause, pause_label.c_str());
+            draw_item(k_frame_advance_menu_item, k_menu_hit_frame_advance, "Frame Advance");
+            draw_item(k_reset_menu_item, k_menu_hit_reset, "Reset");
+            for (size_t index{ 0 }; index < k_speed_menu_items.size(); ++index)
+            {
+                std::string speed_label{ index == _speed_selection ? "(*) " : "( ) " };
+                speed_label += speed_labels[index];
+                draw_item(k_speed_menu_items[index],
+                          static_cast<uint8_t>(k_menu_hit_speed_base + index),
+                          speed_label.c_str());
+            }
+        }
+
         if (_open_menu == k_file_menu)
         {
-            menu_item = &k_load_rom_menu_item;
-            label = "Load ROM...";
+            static constexpr std::array<const char*, 4> labels{
+                "Import ROM to Library...",
+                "Open ROM Library...",
+                "Open ROM Temporarily...",
+                "Quit"
+            };
+            static constexpr std::array<SDL_FRect, 4> items{
+                k_import_rom_menu_item,
+                k_open_library_menu_item,
+                k_open_temporary_rom_menu_item,
+                k_quit_menu_item
+            };
+            static constexpr std::array<uint8_t, 4> hits{
+                k_menu_hit_import,
+                k_menu_hit_library,
+                k_menu_hit_temporary,
+                k_menu_hit_quit
+            };
+            for (size_t index{ 0 }; index < items.size(); ++index)
+            {
+                draw_menu_background(items[index], hits[index]);
+                static_cast<void>(SDL_SetRenderDrawColor(_renderer, 236u, 234u, 231u, SDL_ALPHA_OPAQUE));
+                static_cast<void>(SDL_RenderDebugText(_renderer,
+                                                      items[index].x + 12.f,
+                                                      items[index].y + 10.f,
+                                                      labels[index]));
+            }
         }
-        else if (_open_menu == k_emulation_menu)
+
+        if (_open_menu == k_video_menu)
         {
-            menu_item = &k_reset_menu_item;
-            label = "Reset";
+            for (size_t index{ 0 }; index < _video_plane_names.size(); ++index)
+            {
+                const SDL_FRect item{
+                    152.f,
+                    k_menu_bar_height + static_cast<float>(index) * 28.f,
+                    k_video_menu_width,
+                    28.f
+                };
+                const uint8_t hit{ static_cast<uint8_t>(k_menu_hit_video_base + index) };
+                draw_menu_background(item, hit);
+                static_cast<void>(SDL_SetRenderDrawColor(_renderer, 236u, 234u, 231u,
+                                                         SDL_ALPHA_OPAQUE));
+                std::string item_label{ _video_plane_enabled[index] ? "[x] " : "[ ] " };
+                item_label += _video_plane_names[index];
+                static_cast<void>(SDL_RenderDebugText(_renderer,
+                                                      item.x + 12.f,
+                                                      item.y + 10.f,
+                                                      item_label.c_str()));
+            }
         }
-        if (menu_item != nullptr)
+
+        if (_rom_library_visible)
         {
-            static_cast<void>(SDL_SetRenderDrawColor(_renderer, 54u, 52u, 50u, SDL_ALPHA_OPAQUE));
-            static_cast<void>(SDL_RenderFillRect(_renderer, menu_item));
+            const SDL_FRect panel{ 20.f, 44.f, std::min(static_cast<float>(output_width) - 40.f, 600.f),
+                                   std::min(static_cast<float>(output_height) - 64.f, 640.f) };
+            static_cast<void>(SDL_SetRenderDrawColor(_renderer, 24u, 24u, 24u, SDL_ALPHA_OPAQUE));
+            static_cast<void>(SDL_RenderFillRect(_renderer, &panel));
             static_cast<void>(SDL_SetRenderDrawColor(_renderer, 236u, 234u, 231u, SDL_ALPHA_OPAQUE));
-            static_cast<void>(SDL_RenderDebugText(_renderer,
-                                                  menu_item->x + 12.f,
-                                                  menu_item->y + 10.f,
-                                                  label));
+            static_cast<void>(SDL_RenderDebugText(_renderer, 32.f, 54.f, "ROM Library"));
+            if (_rom_library_names.empty())
+            {
+                static_cast<void>(SDL_RenderDebugText(_renderer, 32.f, k_library_row_y,
+                                                      "No ROMs imported yet. Press Esc to close."));
+            }
+            else
+            {
+                const size_t end{ std::min(_rom_library_scroll + k_library_visible_rows,
+                                           _rom_library_names.size()) };
+                for (size_t index{ _rom_library_scroll }; index < end; ++index)
+                {
+                    const float y{ k_library_row_y
+                        + static_cast<float>(index - _rom_library_scroll) * k_library_row_height };
+                    if (index == _rom_library_selected)
+                    {
+                        const SDL_FRect selection{ 28.f, y - 6.f, panel.w - 16.f, 20.f };
+                        static_cast<void>(SDL_SetRenderDrawColor(_renderer, 60u, 88u, 132u,
+                                                                 SDL_ALPHA_OPAQUE));
+                        static_cast<void>(SDL_RenderFillRect(_renderer, &selection));
+                    }
+                    static_cast<void>(SDL_SetRenderDrawColor(_renderer, 236u, 234u, 231u,
+                                                             SDL_ALPHA_OPAQUE));
+                    std::string label{ _rom_library_names[index] };
+                    if (label.size() > 66u)
+                        label.resize(66u);
+                    static_cast<void>(SDL_RenderDebugText(_renderer, 32.f, y, label.c_str()));
+                }
+                static_cast<void>(SDL_RenderDebugText(_renderer, 32.f, panel.y + panel.h - 18.f,
+                                                      "Up/Down + Enter, double-click, Esc to close"));
+            }
         }
     }
 
@@ -699,11 +1073,111 @@ namespace clover::platform
         return requested;
     }
 
-    bool sdl_presentation_t::consume_load_rom_request() noexcept
+    bool sdl_presentation_t::consume_import_rom_request() noexcept
     {
-        const bool requested{ _load_rom_requested };
-        _load_rom_requested = false;
+        const bool requested{ _import_rom_requested };
+        _import_rom_requested = false;
         return requested;
+    }
+
+    bool sdl_presentation_t::consume_open_library_request() noexcept
+    {
+        const bool requested{ _open_library_requested };
+        _open_library_requested = false;
+        return requested;
+    }
+
+    bool sdl_presentation_t::consume_open_temporary_rom_request() noexcept
+    {
+        const bool requested{ _open_temporary_rom_requested };
+        _open_temporary_rom_requested = false;
+        return requested;
+    }
+
+    bool sdl_presentation_t::consume_quit_request() noexcept
+    {
+        const bool requested{ _quit_requested };
+        _quit_requested = false;
+        return requested;
+    }
+
+    bool sdl_presentation_t::consume_pause_request() noexcept
+    {
+        const bool requested{ _pause_requested };
+        _pause_requested = false;
+        return requested;
+    }
+
+    bool sdl_presentation_t::consume_frame_advance_request() noexcept
+    {
+        const bool requested{ _frame_advance_requested };
+        _frame_advance_requested = false;
+        return requested;
+    }
+
+    std::optional<size_t> sdl_presentation_t::consume_speed_selection() noexcept
+    {
+        const std::optional<size_t> selection{ _requested_speed_selection };
+        _requested_speed_selection.reset();
+        return selection;
+    }
+
+    std::optional<size_t> sdl_presentation_t::consume_video_plane_selection() noexcept
+    {
+        const std::optional<size_t> selection{ _video_plane_selection };
+        _video_plane_selection.reset();
+        return selection;
+    }
+
+    void sdl_presentation_t::set_paused(bool paused) noexcept
+    {
+        _paused = paused;
+    }
+
+    void sdl_presentation_t::set_speed_selection(size_t index) noexcept
+    {
+        if (index < k_speed_menu_items.size())
+            _speed_selection = index;
+    }
+
+    void sdl_presentation_t::set_video_planes(
+        std::span<const frontend::video_plane_descriptor_t> planes)
+    {
+        _video_plane_names.clear();
+        _video_plane_enabled.clear();
+        _video_plane_names.reserve(planes.size());
+        _video_plane_enabled.reserve(planes.size());
+        for (const frontend::video_plane_descriptor_t& plane : planes)
+        {
+            _video_plane_names.emplace_back(plane.label);
+            _video_plane_enabled.push_back(plane.enabled);
+        }
+        if (_video_plane_names.empty() && _open_menu == k_video_menu)
+            _open_menu = 0u;
+    }
+
+    void sdl_presentation_t::show_rom_library(std::vector<std::string> display_names) noexcept
+    {
+        _key_states.fill(false);
+        refresh_gamepad_state();
+        _rom_library_names = std::move(display_names);
+        _rom_library_selected = 0u;
+        _rom_library_scroll = 0u;
+        _rom_library_selection.reset();
+        _rom_library_visible = true;
+        _open_menu = 0u;
+    }
+
+    std::optional<size_t> sdl_presentation_t::consume_library_selection() noexcept
+    {
+        const std::optional<size_t> selection{ _rom_library_selection };
+        _rom_library_selection.reset();
+        return selection;
+    }
+
+    bool sdl_presentation_t::rom_library_visible() const noexcept
+    {
+        return _rom_library_visible;
     }
 
     int sdl_presentation_t::audio_queued_bytes_before_put() const noexcept
@@ -882,13 +1356,34 @@ namespace clover::platform
             return 1;
         }
 
-        const Uint32 rom_dialog_event_type{ SDL_RegisterEvents(1) };
-        if (rom_dialog_event_type == 0u)
+        const Uint32 first_rom_dialog_event_type{ SDL_RegisterEvents(2) };
+        if (first_rom_dialog_event_type == 0u)
         {
             std::fprintf(stderr, "Unable to register ROM dialog event: %s\n", SDL_GetError());
             SDL_Quit();
             return 1;
         }
+        const Uint32 import_rom_dialog_event_type{ first_rom_dialog_event_type };
+        const Uint32 temporary_rom_dialog_event_type{ first_rom_dialog_event_type + 1u };
+
+        char* const preference_path{ SDL_GetPrefPath("BunnySoft", "Clover") };
+        if (preference_path == nullptr)
+        {
+            std::fprintf(stderr, "Unable to locate Clover application data: %s\n", SDL_GetError());
+            SDL_Quit();
+            return 1;
+        }
+        const std::filesystem::path data_root{ preference_path };
+        SDL_free(preference_path);
+        rom_library_t rom_library{};
+        std::string library_error{};
+        if (!rom_library.initialize(data_root, library_error))
+        {
+            std::fprintf(stderr, "Unable to initialize ROM library: %s\n", library_error.c_str());
+            SDL_Quit();
+            return 1;
+        }
+        std::printf("Clover application data: %s\n", data_root.string().c_str());
 
         auto core{ frontend::create_emulator_core(frontend::system_id_t::snes) };
         if (!core)
@@ -905,11 +1400,24 @@ namespace clover::platform
         if (!command_line.rom_path.empty())
         {
             rom_path = command_line.rom_path;
-            save_path = save_path_for_rom(rom_path);
             media = load_file_bytes(rom_path.string().c_str());
             if (media.empty() || !core->load_media(media))
             {
                 std::fprintf(stderr, "Unable to load media: %s\n", rom_path.string().c_str());
+                SDL_Quit();
+                return 1;
+            }
+            const std::string content_hash{
+                rom_library.identify(frontend::system_id_t::snes, media)
+            };
+            save_path = rom_library.save_path(frontend::system_id_t::snes, content_hash);
+            if (!core->persistent_memory().empty()
+                && !rom_library.migrate_sibling_save(rom_path,
+                                                     save_path,
+                                                     core->persistent_memory().size(),
+                                                     library_error))
+            {
+                std::fprintf(stderr, "Unable to migrate save RAM: %s\n", library_error.c_str());
                 SDL_Quit();
                 return 1;
             }
@@ -955,6 +1463,8 @@ namespace clover::platform
             SDL_Quit();
             return 1;
         }
+        if (frontend::video_plane_control_t* const planes{ core->video_plane_control() })
+            presentation.set_video_planes(planes->video_planes());
         if (media_loaded)
             presentation.present(core->video_frame());
         else
@@ -994,10 +1504,17 @@ namespace clover::platform
         uint64_t audio_discontinuities{ 0 };
         size_t max_audio_sample_values_per_frame{ 0 };
         int32_t audio_peak{ 0 };
+        bool paused{ false };
+        bool frame_advance_pending{ false };
+        size_t speed_selection{ 1u };
         bool rom_dialog_active{ false };
         uint64_t window_focus_restore_ns{ 0u };
         uint8_t window_focus_restore_attempts{ 0u };
         std::filesystem::path selected_rom_path{};
+        std::string selected_rom_hash{};
+        std::string selected_rom_display_name{};
+        pending_rom_source_t selected_rom_source{ pending_rom_source_t::none };
+        std::vector<rom_library_entry_t> library_entries{};
         while (running && (frame_limit == 0u || frames_run < frame_limit))
         {
             const uint64_t frame_start_ns{ SDL_GetTicksNS() };
@@ -1011,13 +1528,19 @@ namespace clover::platform
                     running = false;
                     break;
                 }
-                if (event.type == rom_dialog_event_type)
+                if (event.type == import_rom_dialog_event_type
+                    || event.type == temporary_rom_dialog_event_type)
                 {
                     rom_dialog_active = false;
                     window_focus_restore_ns = SDL_GetTicksNS() + k_dialog_focus_retry_ns;
                     window_focus_restore_attempts = 0u;
                     if (event.user.code == 0 && event.user.data1 != nullptr)
+                    {
                         selected_rom_path = static_cast<const char*>(event.user.data1);
+                        selected_rom_source = event.type == import_rom_dialog_event_type
+                            ? pending_rom_source_t::import
+                            : pending_rom_source_t::temporary;
+                    }
                     else if (event.user.code == 2)
                         std::fprintf(stderr,
                                      "ROM dialog failed: %s\n",
@@ -1034,14 +1557,94 @@ namespace clover::platform
                 break;
 
             const bool reset_requested{ presentation.consume_reset_request() };
-            const bool load_rom_requested{ presentation.consume_load_rom_request() };
-            if ((reset_requested || load_rom_requested) && capture.active())
+            const bool pause_requested{ presentation.consume_pause_request() };
+            const bool frame_advance_requested{ presentation.consume_frame_advance_request() };
+            const std::optional<size_t> requested_speed{
+                presentation.consume_speed_selection()
+            };
+            const std::optional<size_t> requested_video_plane{
+                presentation.consume_video_plane_selection()
+            };
+            const bool import_rom_requested{ presentation.consume_import_rom_request() };
+            const bool open_library_requested{ presentation.consume_open_library_request() };
+            const bool open_temporary_rom_requested{
+                presentation.consume_open_temporary_rom_request()
+            };
+            if (presentation.consume_quit_request())
+            {
+                running = false;
+                break;
+            }
+            const bool media_change_requested{
+                import_rom_requested || open_library_requested || open_temporary_rom_requested
+            };
+            const bool runtime_override_requested{
+                pause_requested || frame_advance_requested || requested_speed.has_value()
+                    || requested_video_plane.has_value()
+            };
+            if ((reset_requested || media_change_requested || runtime_override_requested)
+                && capture.active())
             {
                 std::fprintf(stderr,
-                             "Reset and ROM loading are disabled during a deterministic capture\n");
+                             "Reset, ROM loading, and runtime overrides are disabled during "
+                             "a deterministic capture\n");
             }
             else
             {
+                if (pause_requested)
+                {
+                    paused = !paused;
+                    frame_advance_pending = false;
+                    presentation.set_paused(paused);
+                    presentation.reset_audio();
+                    next_frame_deadline_ns = SDL_GetTicksNS();
+                    previous_frame_start_ns = next_frame_deadline_ns;
+                }
+                if (frame_advance_requested)
+                {
+                    paused = true;
+                    frame_advance_pending = media_loaded;
+                    presentation.set_paused(true);
+                    presentation.reset_audio();
+                    next_frame_deadline_ns = SDL_GetTicksNS();
+                    previous_frame_start_ns = next_frame_deadline_ns;
+                }
+                if (requested_speed.has_value()
+                    && *requested_speed < k_speed_menu_items.size())
+                {
+                    static constexpr std::array<const char*, 5> speed_names{
+                        "0.5x", "1x", "2x", "4x", "Unlimited"
+                    };
+                    speed_selection = *requested_speed;
+                    presentation.set_speed_selection(speed_selection);
+                    presentation.reset_audio();
+                    next_frame_deadline_ns = SDL_GetTicksNS();
+                    previous_frame_start_ns = next_frame_deadline_ns;
+                    std::printf("Emulation speed: %s\n", speed_names[speed_selection]);
+                }
+                if (requested_video_plane.has_value())
+                {
+                    if (frontend::video_plane_control_t* const planes{
+                            core->video_plane_control()
+                        };
+                        planes != nullptr)
+                    {
+                        const std::span<const frontend::video_plane_descriptor_t> descriptors{
+                            planes->video_planes()
+                        };
+                        if (*requested_video_plane < descriptors.size())
+                        {
+                            const frontend::video_plane_descriptor_t descriptor{
+                                descriptors[*requested_video_plane]
+                            };
+                            static_cast<void>(planes->set_video_plane_enabled(
+                                descriptor.id,
+                                !descriptor.enabled
+                            ));
+                            presentation.set_video_planes(planes->video_planes());
+                        }
+                    }
+                }
                 if (reset_requested)
                 {
                     if (!media_loaded)
@@ -1058,7 +1661,7 @@ namespace clover::platform
                         std::printf("Emulator reset\n");
                     }
                 }
-                if (load_rom_requested && !rom_dialog_active)
+                if ((import_rom_requested || open_temporary_rom_requested) && !rom_dialog_active)
                 {
                     static constexpr std::array<SDL_DialogFileFilter, 2> filters{
                         SDL_DialogFileFilter{ "SNES ROMs", "sfc;smc" },
@@ -1068,7 +1671,11 @@ namespace clover::platform
                     window_focus_restore_ns = 0u;
                     SDL_ShowOpenFileDialog(rom_dialog_callback,
                                            reinterpret_cast<void*>(
-                                               static_cast<uintptr_t>(rom_dialog_event_type)
+                                               static_cast<uintptr_t>(
+                                                   import_rom_requested
+                                                       ? import_rom_dialog_event_type
+                                                       : temporary_rom_dialog_event_type
+                                               )
                                            ),
                                            window,
                                            filters.data(),
@@ -1076,45 +1683,153 @@ namespace clover::platform
                                            nullptr,
                                            false);
                 }
+                if (open_library_requested)
+                {
+                    library_error.clear();
+                    library_entries = rom_library.entries(frontend::system_id_t::snes,
+                                                          library_error);
+                    if (!library_error.empty())
+                    {
+                        std::fprintf(stderr, "Unable to read ROM library: %s\n",
+                                     library_error.c_str());
+                    }
+                    else
+                    {
+                        std::vector<std::string> names{};
+                        names.reserve(library_entries.size());
+                        for (const rom_library_entry_t& entry : library_entries)
+                            names.push_back(entry.display_name);
+                        presentation.show_rom_library(std::move(names));
+                    }
+                }
+            }
+
+            if (const std::optional<size_t> selection{ presentation.consume_library_selection() };
+                selection.has_value() && *selection < library_entries.size())
+            {
+                selected_rom_path = library_entries[*selection].rom_path;
+                selected_rom_hash = library_entries[*selection].content_hash;
+                selected_rom_display_name = library_entries[*selection].display_name;
+                selected_rom_source = pending_rom_source_t::library;
             }
 
             if (!selected_rom_path.empty())
             {
                 const std::filesystem::path requested_path{ std::move(selected_rom_path) };
                 selected_rom_path.clear();
-                const std::vector<std::byte> requested_media{
+                std::vector<std::byte> requested_media{
                     load_file_bytes(requested_path.string().c_str())
                 };
                 auto replacement{ frontend::create_emulator_core(frontend::system_id_t::snes) };
-                const std::filesystem::path requested_save_path{ save_path_for_rom(requested_path) };
+                std::filesystem::path active_requested_path{ requested_path };
+                std::string active_display_name{
+                    selected_rom_display_name.empty()
+                        ? requested_path.stem().string()
+                        : std::move(selected_rom_display_name)
+                };
+                selected_rom_display_name.clear();
+                std::string requested_hash{ std::move(selected_rom_hash) };
+                selected_rom_hash.clear();
+                const pending_rom_source_t requested_source{ selected_rom_source };
+                selected_rom_source = pending_rom_source_t::none;
+                if (requested_source == pending_rom_source_t::library
+                    && rom_library.identify(frontend::system_id_t::snes, requested_media)
+                        != requested_hash)
+                {
+                    std::fprintf(stderr, "Library ROM failed its SHA-256 identity check: %s\n",
+                                 requested_path.string().c_str());
+                    requested_media.clear();
+                }
                 if (!replacement
                     || requested_media.empty()
                     || !replacement->load_media(requested_media))
                 {
                     std::fprintf(stderr, "Unable to load media: %s\n", requested_path.string().c_str());
                 }
-                else if (!load_persistent_memory(*replacement, requested_save_path))
-                {
-                    std::fprintf(stderr, "Keeping current ROM because its replacement save could not be loaded\n");
-                }
-                else if (media_loaded && !flush_persistent_memory(*core, save_path))
-                {
-                    std::fprintf(stderr, "Keeping current ROM because its save RAM could not be written\n");
-                }
                 else
                 {
-                    replacement->power_on();
-                    core = std::move(replacement);
-                    rom_path = requested_path;
-                    save_path = requested_save_path;
-                    media_loaded = true;
-                    const std::string window_title{ "Clover — " + rom_path.filename().string() };
-                    static_cast<void>(SDL_SetWindowTitle(window, window_title.c_str()));
-                    presentation.reset_audio();
-                    presentation.present(core->video_frame());
-                    next_frame_deadline_ns = SDL_GetTicksNS();
-                    previous_frame_start_ns = next_frame_deadline_ns;
-                    std::printf("Loaded ROM: %s\n", rom_path.string().c_str());
+                    if (requested_source == pending_rom_source_t::import)
+                    {
+                        library_error.clear();
+                        const rom_import_result_t imported{
+                            rom_library.import_rom(frontend::system_id_t::snes,
+                                                   requested_path,
+                                                   requested_media,
+                                                   library_error)
+                        };
+                        if (!library_error.empty())
+                        {
+                            std::fprintf(stderr, "Unable to import ROM: %s\n", library_error.c_str());
+                            replacement.reset();
+                        }
+                        else
+                        {
+                            active_requested_path = imported.entry.rom_path;
+                            active_display_name = imported.entry.display_name;
+                            requested_hash = imported.entry.content_hash;
+                            std::printf("%s ROM in library: %s\n",
+                                        imported.newly_imported ? "Imported" : "Found existing",
+                                        active_requested_path.string().c_str());
+                        }
+                    }
+                    if (replacement && requested_hash.empty())
+                        requested_hash = rom_library.identify(frontend::system_id_t::snes,
+                                                              requested_media);
+                    const std::filesystem::path requested_save_path{
+                        rom_library.save_path(frontend::system_id_t::snes, requested_hash)
+                    };
+                    if (replacement
+                        && requested_source != pending_rom_source_t::library
+                        && !replacement->persistent_memory().empty())
+                    {
+                        library_error.clear();
+                        if (!rom_library.migrate_sibling_save(requested_path,
+                                                             requested_save_path,
+                                                             replacement->persistent_memory().size(),
+                                                             library_error))
+                        {
+                            std::fprintf(stderr, "Unable to migrate save RAM: %s\n",
+                                         library_error.c_str());
+                            replacement.reset();
+                        }
+                    }
+                    if (replacement && !load_persistent_memory(*replacement, requested_save_path))
+                    {
+                        std::fprintf(stderr,
+                                     "Keeping current ROM because its replacement save could not be loaded\n");
+                        replacement.reset();
+                    }
+                    if (replacement && media_loaded && !flush_persistent_memory(*core, save_path))
+                    {
+                        std::fprintf(stderr,
+                                     "Keeping current ROM because its save RAM could not be written\n");
+                        replacement.reset();
+                    }
+                    if (replacement)
+                    {
+                        replacement->power_on();
+                        core = std::move(replacement);
+                        rom_path = active_requested_path;
+                        save_path = requested_save_path;
+                        media_loaded = true;
+                        const std::string window_title{ "Clover — " + active_display_name };
+                        static_cast<void>(SDL_SetWindowTitle(window, window_title.c_str()));
+                        if (frontend::video_plane_control_t* const planes{
+                                core->video_plane_control()
+                            })
+                        {
+                            presentation.set_video_planes(planes->video_planes());
+                        }
+                        else
+                        {
+                            presentation.set_video_planes({});
+                        }
+                        presentation.reset_audio();
+                        presentation.present(core->video_frame());
+                        next_frame_deadline_ns = SDL_GetTicksNS();
+                        previous_frame_start_ns = next_frame_deadline_ns;
+                        std::printf("Loaded ROM: %s\n", rom_path.string().c_str());
+                    }
                 }
             }
 
@@ -1142,6 +1857,18 @@ namespace clover::platform
                 continue;
             }
 
+            if (presentation.rom_library_visible())
+            {
+                if (media_loaded)
+                    presentation.present(core->video_frame());
+                else
+                    presentation.present_test_pattern();
+                SDL_Delay(10u);
+                next_frame_deadline_ns = SDL_GetTicksNS();
+                previous_frame_start_ns = next_frame_deadline_ns;
+                continue;
+            }
+
             if (!media_loaded)
             {
                 presentation.present_test_pattern();
@@ -1151,54 +1878,102 @@ namespace clover::platform
                 continue;
             }
 
+            if (paused && !frame_advance_pending)
+            {
+                presentation.present(core->video_frame());
+                SDL_Delay(10u);
+                next_frame_deadline_ns = SDL_GetTicksNS();
+                previous_frame_start_ns = next_frame_deadline_ns;
+                continue;
+            }
+
+            const bool advancing_paused_frame{ paused && frame_advance_pending };
+            frame_advance_pending = false;
             const frontend::gamepad_state_t gamepad_state{ presentation.gamepad_state() };
             const bool capture_marker{ presentation.consume_capture_marker() };
             core->set_gamepad_state(0u, gamepad_state);
-            const uint64_t core_run_start_ns{ SDL_GetTicksNS() };
-            core->run_frame();
-            const uint64_t core_run_end_ns{ SDL_GetTicksNS() };
-            ++frames_run;
-            presentation.present(core->video_frame());
-            const uint64_t present_end_ns{ SDL_GetTicksNS() };
-            const frontend::audio_frame_view_t audio{ core->audio_frame() };
-            presentation.queue_audio(audio);
-            const uint64_t audio_queue_end_ns{ SDL_GetTicksNS() };
-            if (capture.active())
+            static constexpr std::array<size_t, 5> frames_per_presentation{ 1u, 1u, 2u, 4u, 8u };
+            const size_t batch_size{
+                advancing_paused_frame ? 1u : frames_per_presentation[speed_selection]
+            };
+            for (size_t batch_index{ 0u };
+                 batch_index < batch_size && (frame_limit == 0u || frames_run < frame_limit);
+                 ++batch_index)
             {
-                capture.record_frame(frames_run,
-                                     frontend::snes_joypad_state(gamepad_state),
-                                     audio,
-                                     core->video_frame(),
-                                     capture_marker,
-                                     host_interval_ns,
-                                     presentation.audio_queued_bytes_before_put(),
-                                     presentation.audio_queued_bytes_after_put(),
-                                     presentation.audio_started(),
-                                     core_run_end_ns - core_run_start_ns,
-                                     present_end_ns - core_run_end_ns,
-                                     audio_queue_end_ns - present_end_ns);
-            }
-            audio_sample_values += audio.interleaved_samples.size();
-            audio_discontinuities += audio.discontinuity ? 1u : 0u;
-            max_audio_sample_values_per_frame = std::max(
-                max_audio_sample_values_per_frame,
-                audio.interleaved_samples.size()
-            );
-            for (const int16_t sample : audio.interleaved_samples)
-            {
-                const int32_t magnitude{
-                    sample < 0 ? -static_cast<int32_t>(sample) : static_cast<int32_t>(sample)
+                const uint64_t core_run_start_ns{ SDL_GetTicksNS() };
+                core->run_frame();
+                const uint64_t core_run_end_ns{ SDL_GetTicksNS() };
+                ++frames_run;
+                const frontend::audio_frame_view_t audio{ core->audio_frame() };
+                const bool batch_complete{
+                    batch_index + 1u == batch_size
+                        || (frame_limit != 0u && frames_run >= frame_limit)
                 };
-                audio_peak = std::max(audio_peak, magnitude);
+                uint64_t present_end_ns{ core_run_end_ns };
+                uint64_t audio_queue_end_ns{ core_run_end_ns };
+                if (batch_complete)
+                {
+                    presentation.present(core->video_frame());
+                    present_end_ns = SDL_GetTicksNS();
+                    if (!paused && speed_selection == 1u)
+                        presentation.queue_audio(audio);
+                    audio_queue_end_ns = SDL_GetTicksNS();
+                }
+                if (capture.active())
+                {
+                    capture.record_frame(frames_run,
+                                         frontend::snes_joypad_state(gamepad_state),
+                                         audio,
+                                         core->video_frame(),
+                                         capture_marker,
+                                         host_interval_ns,
+                                         presentation.audio_queued_bytes_before_put(),
+                                         presentation.audio_queued_bytes_after_put(),
+                                         presentation.audio_started(),
+                                         core_run_end_ns - core_run_start_ns,
+                                         present_end_ns - core_run_end_ns,
+                                         audio_queue_end_ns - present_end_ns);
+                }
+                audio_sample_values += audio.interleaved_samples.size();
+                audio_discontinuities += audio.discontinuity ? 1u : 0u;
+                max_audio_sample_values_per_frame = std::max(
+                    max_audio_sample_values_per_frame,
+                    audio.interleaved_samples.size()
+                );
+                for (const int16_t sample : audio.interleaved_samples)
+                {
+                    const int32_t magnitude{
+                        sample < 0 ? -static_cast<int32_t>(sample) : static_cast<int32_t>(sample)
+                    };
+                    audio_peak = std::max(audio_peak, magnitude);
+                }
+                if ((frames_run % 60u) == 0u)
+                    static_cast<void>(flush_persistent_memory(*core, save_path));
             }
-            if ((frames_run % 60u) == 0u)
-                static_cast<void>(flush_persistent_memory(*core, save_path));
 
-            next_frame_deadline_ns += target_frame_duration_ns;
+            if (advancing_paused_frame)
+            {
+                next_frame_deadline_ns = SDL_GetTicksNS();
+                previous_frame_start_ns = next_frame_deadline_ns;
+                continue;
+            }
+
+            static constexpr std::array<double, 4> speed_multipliers{ 0.5, 1.0, 2.0, 4.0 };
+            if (speed_selection >= speed_multipliers.size())
+            {
+                next_frame_deadline_ns = SDL_GetTicksNS();
+                continue;
+            }
+            const uint64_t paced_batch_duration_ns{ static_cast<uint64_t>(std::llround(
+                static_cast<double>(target_frame_duration_ns)
+                    * static_cast<double>(batch_size)
+                    / speed_multipliers[speed_selection]
+            )) };
+            next_frame_deadline_ns += paced_batch_duration_ns;
             const uint64_t current_ticks_ns{ SDL_GetTicksNS() };
             if (next_frame_deadline_ns > current_ticks_ns)
                 SDL_DelayPrecise(next_frame_deadline_ns - current_ticks_ns);
-            else if (current_ticks_ns - next_frame_deadline_ns > target_frame_duration_ns * 3u)
+            else if (current_ticks_ns - next_frame_deadline_ns > paced_batch_duration_ns * 3u)
                 next_frame_deadline_ns = current_ticks_ns;
         }
 
@@ -1247,13 +2022,6 @@ namespace clover::platform
         return bytes;
     }
 
-    std::filesystem::path sdl_app_shell_t::save_path_for_rom(const std::filesystem::path& rom_path)
-    {
-        std::filesystem::path result{ rom_path };
-        result.replace_extension(".srm");
-        return result;
-    }
-
     bool sdl_app_shell_t::load_persistent_memory(frontend::emulator_core_t& core,
                                                   const std::filesystem::path& save_path) noexcept
     {
@@ -1299,6 +2067,16 @@ namespace clover::platform
         if (memory.empty() || !core.persistent_memory_dirty())
             return true;
 
+        std::error_code directory_error{};
+        std::filesystem::create_directories(save_path.parent_path(), directory_error);
+        if (directory_error)
+        {
+            std::fprintf(stderr, "Unable to create save RAM directory %s: %s\n",
+                         save_path.parent_path().string().c_str(),
+                         directory_error.message().c_str());
+            return false;
+        }
+
         std::filesystem::path temporary_path{ save_path };
         temporary_path += ".tmp";
         std::ofstream output{ temporary_path, std::ios::binary | std::ios::trunc };
@@ -1318,14 +2096,12 @@ namespace clover::platform
             return false;
         }
 
-        std::error_code error{};
-        std::filesystem::rename(temporary_path, save_path, error);
-        if (error)
+        if (!SDL_RenamePath(temporary_path.string().c_str(), save_path.string().c_str()))
         {
             std::fprintf(stderr,
                          "Unable to replace save RAM file %s: %s\n",
                          save_path.string().c_str(),
-                         error.message().c_str());
+                         SDL_GetError());
             std::error_code cleanup_error{};
             static_cast<void>(std::filesystem::remove(temporary_path, cleanup_error));
             return false;

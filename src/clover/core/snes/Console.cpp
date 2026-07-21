@@ -227,6 +227,11 @@ namespace clover::core
         _ppu.present(_framebuffer, options);
     }
 
+    void console_t::set_presentation_layer_mask(uint8_t visible_layer_mask) noexcept
+    {
+        _ppu.set_presentation_layer_mask(visible_layer_mask);
+    }
+
     hardware_timing_snapshot_t console_t::capture_timing_snapshot() const noexcept
     {
         return {

@@ -13,6 +13,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
+#include <string>
 #include <vector>
 
 namespace clover::platform
@@ -35,7 +37,20 @@ namespace clover::platform
         [[nodiscard]] const frontend::gamepad_state_t& gamepad_state() const noexcept;
         [[nodiscard]] bool consume_capture_marker() noexcept;
         [[nodiscard]] bool consume_reset_request() noexcept;
-        [[nodiscard]] bool consume_load_rom_request() noexcept;
+        [[nodiscard]] bool consume_import_rom_request() noexcept;
+        [[nodiscard]] bool consume_open_library_request() noexcept;
+        [[nodiscard]] bool consume_open_temporary_rom_request() noexcept;
+        [[nodiscard]] bool consume_quit_request() noexcept;
+        [[nodiscard]] bool consume_pause_request() noexcept;
+        [[nodiscard]] bool consume_frame_advance_request() noexcept;
+        [[nodiscard]] std::optional<size_t> consume_speed_selection() noexcept;
+        [[nodiscard]] std::optional<size_t> consume_video_plane_selection() noexcept;
+        void set_paused(bool paused) noexcept;
+        void set_speed_selection(size_t index) noexcept;
+        void set_video_planes(std::span<const frontend::video_plane_descriptor_t> planes);
+        void show_rom_library(std::vector<std::string> display_names) noexcept;
+        [[nodiscard]] std::optional<size_t> consume_library_selection() noexcept;
+        [[nodiscard]] bool rom_library_visible() const noexcept;
         [[nodiscard]] int audio_queued_bytes_before_put() const noexcept;
         [[nodiscard]] int audio_queued_bytes_after_put() const noexcept;
         [[nodiscard]] bool audio_started() const noexcept;
@@ -66,8 +81,26 @@ namespace clover::platform
         bool _audio_started{ false };
         bool _capture_marker_requested{ false };
         bool _reset_requested{ false };
-        bool _load_rom_requested{ false };
+        bool _import_rom_requested{ false };
+        bool _open_library_requested{ false };
+        bool _open_temporary_rom_requested{ false };
+        bool _quit_requested{ false };
+        bool _pause_requested{ false };
+        bool _frame_advance_requested{ false };
+        bool _paused{ false };
+        size_t _speed_selection{ 1u };
+        std::optional<size_t> _requested_speed_selection{};
+        std::vector<std::string> _video_plane_names{};
+        std::vector<bool> _video_plane_enabled{};
+        std::optional<size_t> _video_plane_selection{};
+        bool _rom_library_visible{ false };
+        std::vector<std::string> _rom_library_names{};
+        size_t _rom_library_selected{ 0u };
+        size_t _rom_library_scroll{ 0u };
+        std::optional<size_t> _rom_library_selection{};
         uint8_t _open_menu{ 0 };
+        uint8_t _hovered_menu_item{ 0 };
+        uint8_t _pressed_menu_item{ 0 };
         int _audio_queued_bytes_before_put{ -1 };
         int _audio_queued_bytes_after_put{ -1 };
         uint64_t _audio_empty_queue_observations{ 0 };
@@ -80,7 +113,6 @@ namespace clover::platform
 
     private:
         [[nodiscard]] static std::vector<std::byte> load_file_bytes(const char* path) noexcept;
-        [[nodiscard]] static std::filesystem::path save_path_for_rom(const std::filesystem::path& rom_path);
         [[nodiscard]] static bool load_persistent_memory(frontend::emulator_core_t& core,
                                                          const std::filesystem::path& save_path) noexcept;
         [[nodiscard]] static bool flush_persistent_memory(frontend::emulator_core_t& core,

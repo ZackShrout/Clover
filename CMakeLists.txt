@@ -50,6 +50,12 @@ target_link_libraries(clover PRIVATE clover_core)
 
 if(CLOVER_BUILD_SDL_FRONTEND)
     find_package(SDL3 CONFIG REQUIRED)
+    find_package(SQLite3 REQUIRED)
+    add_library(clover_rom_library STATIC
+        src/clover/platform/RomLibrary.cpp
+    )
+    target_include_directories(clover_rom_library PUBLIC src)
+    target_link_libraries(clover_rom_library PUBLIC SQLite::SQLite3)
     add_executable(clover_sdl
         src/clover/frontend/EmulatorCore.cpp
         src/clover/frontend/SnesEmulatorCore.cpp
@@ -57,7 +63,13 @@ if(CLOVER_BUILD_SDL_FRONTEND)
         src/sdl_main.cpp
     )
     target_include_directories(clover_sdl PRIVATE src)
-    target_link_libraries(clover_sdl PRIVATE clover_core SDL3::SDL3)
+    target_link_libraries(clover_sdl PRIVATE clover_core clover_rom_library SDL3::SDL3)
+
+    add_executable(clover_rom_library_test
+        tests/RomLibraryTest.cpp
+    )
+    target_include_directories(clover_rom_library_test PRIVATE src)
+    target_link_libraries(clover_rom_library_test PRIVATE clover_rom_library)
 endif()
 
 add_executable(clover_smoke_test
@@ -77,6 +89,14 @@ add_executable(clover_save_ram_test
 )
 target_include_directories(clover_save_ram_test PRIVATE src)
 target_link_libraries(clover_save_ram_test PRIVATE clover_core)
+
+add_executable(clover_frontend_capability_test
+    tests/FrontendCapabilityTest.cpp
+    src/clover/frontend/EmulatorCore.cpp
+    src/clover/frontend/SnesEmulatorCore.cpp
+)
+target_include_directories(clover_frontend_capability_test PRIVATE src)
+target_link_libraries(clover_frontend_capability_test PRIVATE clover_core)
 
 add_executable(clover_rom_bringup
     tests/RomBringup.cpp
@@ -121,7 +141,11 @@ enable_testing()
 add_test(NAME clover_smoke_test COMMAND clover_smoke_test)
 add_test(NAME clover_hardware_loop_test COMMAND clover_hardware_loop_test)
 add_test(NAME clover_save_ram_test COMMAND clover_save_ram_test)
+add_test(NAME clover_frontend_capability_test COMMAND clover_frontend_capability_test)
 add_test(NAME clover_local_rom_regression_test COMMAND clover_local_rom_regression_test)
+if(CLOVER_BUILD_SDL_FRONTEND)
+    add_test(NAME clover_rom_library_test COMMAND clover_rom_library_test)
+endif()
 set_tests_properties(clover_local_rom_regression_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )

@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <string_view>
 
 namespace clover::frontend
 {
@@ -79,6 +80,24 @@ namespace clover::frontend
         bool discontinuity{ false };
     };
 
+    using video_plane_id_t = uint32_t;
+
+    struct video_plane_descriptor_t
+    {
+        video_plane_id_t id{ 0u };
+        std::string_view label{};
+        bool enabled{ true };
+    };
+
+    struct video_plane_control_t
+    {
+    public:
+        virtual ~video_plane_control_t() = default;
+        [[nodiscard]] virtual std::span<const video_plane_descriptor_t> video_planes() const noexcept = 0;
+        [[nodiscard]] virtual bool set_video_plane_enabled(video_plane_id_t id,
+                                                           bool enabled) noexcept = 0;
+    };
+
     struct emulator_core_t
     {
     public:
@@ -97,6 +116,10 @@ namespace clover::frontend
         [[nodiscard]] virtual bool load_persistent_memory(std::span<const std::byte> data) noexcept = 0;
         [[nodiscard]] virtual bool persistent_memory_dirty() const noexcept = 0;
         virtual void mark_persistent_memory_clean() noexcept = 0;
+        [[nodiscard]] virtual video_plane_control_t* video_plane_control() noexcept
+        {
+            return nullptr;
+        }
     };
 
     [[nodiscard]] std::unique_ptr<emulator_core_t> create_emulator_core(system_id_t system) noexcept;

@@ -24,6 +24,7 @@ factory case, not SDL dependencies in that core.
 - `display_info()`
 - a read-only ARGB8888 `video_frame()`
 - read-only interleaved signed-16-bit `audio_frame()` data
+- optional typed capabilities, currently `video_plane_control_t`
 
 The SNES adapter maps semantic buttons into the SNES serial joypad bit layout
 and supports ports 0 and 1. The SDL app currently drives port 0.
@@ -31,6 +32,9 @@ and supports ports 0 and 1. The SDL app currently drives port 0.
 The core reports a 256x240 framebuffer, 8:7 pixel aspect ratio, and nominal
 NTSC refresh rate of 60.098812 Hz. Audio is stereo at the core's native output
 rate. The platform owns resampling/device negotiation and queue policy.
+A core may optionally advertise named presentation planes without making the
+base contract SNES-shaped. The SNES adapter reports BG1–BG4 and Objects; a
+future Genesis adapter can report its own planes through the same capability.
 
 ## SDL Runtime
 
@@ -50,9 +54,9 @@ Run with:
 
 If `rom-path` is omitted, the executable opens without media, displays a
 frontend-owned test pattern, and waits for a ROM to be selected through
-**File → Load ROM…**. The pattern is replaced immediately when media loads.
-An explicit path still loads that ROM at startup for command-line and
-deterministic test runs.
+**File → Import ROM to Library…** or **File → Open ROM Library…**. The pattern
+is replaced immediately when media loads. An explicit path still loads that ROM
+at startup without importing it for command-line and deterministic test runs.
 
 The shell:
 
@@ -67,19 +71,37 @@ The shell:
 Wall-clock pacing exists only in the platform layer. Headless tools can run the
 same core as fast as the host permits.
 
-## Menu and Save RAM
+## ROM Library, Menu, and Save RAM
 
-The menu bar exposes **File → Load ROM…** and **Emulation → Reset**. The same
-actions are available through `Cmd/Ctrl+O` and `Cmd/Ctrl+R`. Loading is
-transactional at the app level: a replacement core and its save RAM must load
-successfully, and the current cartridge's dirty save RAM must flush, before the
-active core is replaced.
+The menu bar exposes:
+
+- **Import ROM to Library…** validates the ROM, canonicalizes an optional SNES
+  copier header, copies it atomically into managed storage, deduplicates it by
+  SHA-256, records SQLite metadata, and opens it
+- **Open ROM Library…** (`Cmd/Ctrl+O`) displays the indexed library; use arrow
+  keys and Enter or double-click an entry
+- **Open ROM Temporarily…** opens external media without adding it to the library
+- **Quit** (`Cmd/Ctrl+Q`) flushes dirty save RAM and exits
+- **Emulation → Pause** (`Space`) stops host-driven frame advancement
+- **Emulation → Frame Advance** (`.`) enters pause and advances one exact frame
+- **Emulation → Reset** (`Cmd/Ctrl+R`) models the console reset button
+- **Emulation → Speed** selects 0.5×, 1×, 2×, 4×, or unlimited pacing
+- **Video** is populated from the active core's optional plane capability
+
+Loading is transactional at the app level: a replacement core and its save RAM
+must load successfully, and the current cartridge's dirty save RAM must flush,
+before the active core is replaced. Explicit command-line and temporary ROMs
+still use central hash-keyed saves; they simply are not copied or indexed.
 
 The frontend contract exposes persistent memory as a system-neutral byte span
 with dirty-state acknowledgement. The SNES adapter maps that contract to
-battery-backed cartridge SRAM. Filesystem ownership remains in the SDL shell:
+battery-backed cartridge SRAM. Filesystem ownership remains in the host layer:
 
-- the save path is the ROM path with its extension replaced by `.srm`
+- SDL resolves the platform-standard application data directory
+- canonical ROMs are stored as `library/roms/snes/<sha256>.sfc`
+- the SQLite index is `library/library.sqlite3`
+- saves are stored as `saves/snes/<sha256>/battery.srm`
+- a same-sized sibling `.srm` is migrated only when no central save exists
 - the file size must exactly match the cartridge header's SRAM size
 - an existing save is loaded before the console is powered on
 - changed SRAM is written through a temporary file and atomically renamed
@@ -89,9 +111,23 @@ battery-backed cartridge SRAM. Filesystem ownership remains in the SDL shell:
 SNES reset preserves SRAM. Audio queued from the previous machine state is
 cleared after reset or ROM replacement.
 
-Menu reset and ROM loading are deliberately unavailable while a deterministic
-capture is active because version 3 controller movies do not encode either
-operation.
+Menu reset, library browsing, importing, ROM loading, pause/frame advance,
+speed selection, and video-plane overrides are deliberately unavailable while
+a deterministic capture is active because version 3 controller movies do not
+encode those operations.
+
+Pause and speed are host scheduling policy: they do not alter emulated clocks.
+Frame Advance invokes one normal `run_frame()` and then returns to pause. The
+0.5×, 2×, 4×, and unlimited modes currently mute presentation audio rather than
+play native-rate samples at an incorrect wall-clock rate. Returning to 1×
+restarts the SDL audio queue cleanly. Faster modes batch multiple fully emulated
+frames between host presentations so a refresh-limited window does not impose
+a false emulation-speed ceiling; unlimited uses bounded batches to keep input
+and menus responsive.
+
+SNES video-plane overrides are presentation-only. They recomposite the
+already-emulated BG/OBJ candidates without writing SNES registers, changing
+timing, or modifying the canonical all-layers framebuffer path.
 
 ## Controls
 
@@ -107,6 +143,8 @@ operation.
 | Select | Right Shift | Back |
 | Start | Return | Start |
 | Capture marker | F8 | — |
+| Pause | Space | — |
+| Frame advance | Period (`.`) | — |
 
 F8 marks the next emulated frame only while a capture is active.
 
@@ -144,10 +182,11 @@ and CSV preserve audio and host-performance evidence.
 ## Deliberate Limitations
 
 The current frontend has one active core, one presented logical controller,
-fixed keyboard bindings, and no save-state UI, remapping UI, rumble, mouse,
-multitap, or light-gun support. Battery-backed cartridge saves are supported;
-save states are a different, unimplemented capability. These are frontend
-capabilities, not reasons to mix platform concepts into the emulator core.
+fixed keyboard bindings, muted non-1× audio, and no save-state UI, remapping
+UI, rumble, mouse, multitap, or light-gun support. Battery-backed cartridge
+saves are supported; save states are a different, unimplemented capability.
+These are frontend capabilities, not reasons to mix platform concepts into the
+emulator core.
 
 The next frontend work should be driven by an actual use case—such as a second
 core, renderer, or input device—and should extend the existing seam without

@@ -44,11 +44,13 @@ namespace clover::frontend
     void snes_emulator_core_t::power_on() noexcept
     {
         _console.power_on();
+        _console.set_presentation_layer_mask(_visible_layer_mask);
     }
 
     void snes_emulator_core_t::reset() noexcept
     {
         _console.reset();
+        _console.set_presentation_layer_mask(_visible_layer_mask);
     }
 
     void snes_emulator_core_t::set_gamepad_state(uint32_t port, const gamepad_state_t& state) noexcept
@@ -60,6 +62,12 @@ namespace clover::frontend
     void snes_emulator_core_t::run_frame() noexcept
     {
         _console.run_frame();
+        if (_visible_layer_mask != core::ppu_presentation_options_t::k_all_layers_visible)
+        {
+            _console.refresh_framebuffer({
+                .visible_layer_mask = _visible_layer_mask
+            });
+        }
     }
 
     display_info_t snes_emulator_core_t::display_info() const noexcept
@@ -111,5 +119,28 @@ namespace clover::frontend
     void snes_emulator_core_t::mark_persistent_memory_clean() noexcept
     {
         _console.mark_persistent_memory_clean();
+    }
+
+    video_plane_control_t* snes_emulator_core_t::video_plane_control() noexcept
+    {
+        return this;
+    }
+
+    std::span<const video_plane_descriptor_t> snes_emulator_core_t::video_planes() const noexcept
+    {
+        return _video_planes;
+    }
+
+    bool snes_emulator_core_t::set_video_plane_enabled(video_plane_id_t id, bool enabled) noexcept
+    {
+        if (id >= _video_planes.size())
+            return false;
+        const uint8_t bit{ static_cast<uint8_t>(1u << id) };
+        _visible_layer_mask = enabled
+            ? static_cast<uint8_t>(_visible_layer_mask | bit)
+            : static_cast<uint8_t>(_visible_layer_mask & ~bit);
+        _video_planes[id].enabled = enabled;
+        _console.set_presentation_layer_mask(_visible_layer_mask);
+        return true;
     }
 }

@@ -627,6 +627,8 @@ namespace clover::core
 
         _composed_frame.clear();
         _presented_frame.clear();
+        _presentation_composed_frame.clear();
+        _presentation_presented_frame.clear();
         std::fill(_registers.begin(), _registers.end(), 0);
         std::fill(_vram.begin(), _vram.end(), 0);
         std::fill(_oam.begin(), _oam.end(), 0);
@@ -1841,6 +1843,81 @@ namespace clover::core
         _compositor_state.output_color[sample_x] = output_color;
     }
 
+    uint16_t ppu_t::presentation_pixel_color(uint16_t x) const noexcept
+    {
+        const size_t sample_x{ static_cast<size_t>(x) };
+        ppu_pixel_candidate_t above{};
+        ppu_pixel_candidate_t below{};
+        for (uint8_t background_index{ 0u }; background_index < 4u; ++background_index)
+        {
+            if ((_presentation_layer_mask & (1u << background_index)) == 0u)
+                continue;
+            const auto& background{ _compositor_state.backgrounds[background_index] };
+            if (background.above_samples[sample_x].priority > above.priority)
+                above = background.above_samples[sample_x];
+            if (background.below_samples[sample_x].priority > below.priority)
+                below = background.below_samples[sample_x];
+        }
+        if ((_presentation_layer_mask & (1u << 4u)) != 0u)
+        {
+            if (_compositor_state.objects.above_samples[sample_x].priority > above.priority)
+                above = _compositor_state.objects.above_samples[sample_x];
+            if (_compositor_state.objects.below_samples[sample_x].priority > below.priority)
+                below = _compositor_state.objects.below_samples[sample_x];
+        }
+
+        const auto candidate_color{ [this](const ppu_pixel_candidate_t& candidate) noexcept
+            -> uint16_t
+        {
+            if (candidate.priority == 0u)
+                return _cgram[0];
+            if (_color_math_state.direct_color
+                && candidate.source == ppu_pixel_source_t::background_1
+                && (_bg_state.mode == 3u || _bg_state.mode == 4u || _bg_state.mode == 7u))
+            {
+                return direct_color(candidate.palette, candidate.palette_group);
+            }
+            return _cgram[candidate.palette];
+        } };
+
+        const bool above_transparent{ above.priority == 0u };
+        const bool below_transparent{ below.priority == 0u };
+        const uint16_t above_color{ candidate_color(above) };
+        const uint16_t below_color{ candidate_color(below) };
+        const uint16_t fixed_color{
+            static_cast<uint16_t>(
+                (_color_math_state.fixed_blue << 10u)
+                | (_color_math_state.fixed_green << 5u)
+                | _color_math_state.fixed_red)
+        };
+        ppu_pixel_candidate_t math_source{ .source = ppu_pixel_source_t::backdrop };
+        if (!above_transparent)
+            math_source = above;
+        bool math_enabled{
+            source_allows_color_math(math_source, _color_math_state.backdrop_color_enable)
+                && _compositor_state.color_enable_below[sample_x]
+        };
+        const bool above_color_enabled{ _compositor_state.color_enable_above[sample_x] };
+        if (!math_enabled)
+            return static_cast<uint16_t>(above_color_enabled ? above_color : 0u);
+
+        bool blend_mode{ _color_math_state.blend_mode };
+        bool halve{ false };
+        if (blend_mode && below_transparent)
+        {
+            blend_mode = false;
+        }
+        else
+        {
+            halve = _color_math_state.color_halve && above_color_enabled;
+        }
+        const uint16_t rhs{ blend_mode ? below_color : fixed_color };
+        return blend_colors(static_cast<uint16_t>(above_color_enabled ? above_color : 0u),
+                            rhs,
+                            _color_math_state.color_mode_subtract,
+                            halve);
+    }
+
     void ppu_t::render_pixel(uint16_t scanline, uint16_t x) noexcept
     {
         if (scanline == 0u || scanline >= active_visible_scanlines() || x >= framebuffer_t::k_width)
@@ -1858,6 +1935,12 @@ namespace clover::core
             if (row_index < framebuffer_t::k_height)
             {
                 _composed_frame.data()[row_index * framebuffer_t::k_width + x] = 0xff000000u;
+                if (_presentation_layer_mask
+                    != ppu_presentation_options_t::k_all_layers_visible)
+                {
+                    _presentation_composed_frame.data()[row_index * framebuffer_t::k_width + x]
+                        = 0xff000000u;
+                }
             }
             return;
         }
@@ -1900,6 +1983,11 @@ namespace clover::core
             snes_color_to_rgba8(_compositor_state.output_color[sample_x], _display.brightness)
         };
         _composed_frame.data()[row_index * framebuffer_t::k_width + sample_x] = rgba8;
+        if (_presentation_layer_mask != ppu_presentation_options_t::k_all_layers_visible)
+        {
+            _presentation_composed_frame.data()[row_index * framebuffer_t::k_width + sample_x]
+                = snes_color_to_rgba8(presentation_pixel_color(x), _display.brightness);
+        }
 
         static const render_write_trace_filter_t trace_filter{ load_render_write_trace_filter() };
         if (trace_filter.enabled
@@ -3208,6 +3296,8 @@ namespace clover::core
         {
             ++_frame_counter;
             _presented_frame = _composed_frame;
+            if (_presentation_layer_mask != ppu_presentation_options_t::k_all_layers_visible)
+                _presentation_presented_frame = _presentation_composed_frame;
             render_placeholder_frame();
             result.frame_complete = true;
         }
@@ -3474,13 +3564,29 @@ namespace clover::core
 
     void ppu_t::present(framebuffer_t& framebuffer, const ppu_presentation_options_t& options) const noexcept
     {
-        static_cast<void>(options);
+        const bool filtered{
+            options.visible_layer_mask != ppu_presentation_options_t::k_all_layers_visible
+        };
         const framebuffer_t& source{
-            options.source == ppu_presentation_source_t::composed ? _composed_frame : _presented_frame
+            options.source == ppu_presentation_source_t::composed
+                ? (filtered ? _presentation_composed_frame : _composed_frame)
+                : (filtered ? _presentation_presented_frame : _presented_frame)
         };
         std::copy(source.data(),
                   source.data() + framebuffer_t::k_pixel_count,
                   framebuffer.data());
+    }
+
+    void ppu_t::set_presentation_layer_mask(uint8_t visible_layer_mask) noexcept
+    {
+        const uint8_t masked{ static_cast<uint8_t>(
+            visible_layer_mask & ppu_presentation_options_t::k_all_layers_visible
+        ) };
+        if (masked == _presentation_layer_mask)
+            return;
+        _presentation_layer_mask = masked;
+        _presentation_composed_frame.clear();
+        _presentation_presented_frame.clear();
     }
 
     void ppu_t::render_placeholder_frame() noexcept
@@ -3489,5 +3595,7 @@ namespace clover::core
         // Those rows are not PPU backdrop pixels: bsnes leaves them cleared and
         // only writes CGRAM color 0 while rendering active scanlines.
         _composed_frame.clear();
+        if (_presentation_layer_mask != ppu_presentation_options_t::k_all_layers_visible)
+            _presentation_composed_frame.clear();
     }
 }

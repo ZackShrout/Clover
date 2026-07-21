@@ -68,6 +68,7 @@ namespace clover::core
         [[nodiscard]] master_clock_delta_t cpu_interrupt_poll_phase_for_testing() const noexcept;
         [[nodiscard]] master_clock_delta_t current_scanline_clocks() const noexcept;
         void refresh_framebuffer(const ppu_presentation_options_t& options = {}) noexcept;
+        void set_presentation_layer_mask(uint8_t visible_layer_mask) noexcept;
         [[nodiscard]] hardware_timing_snapshot_t capture_timing_snapshot() const noexcept;
         [[nodiscard]] ppu_render_state_snapshot_t ppu_render_state() const noexcept;
         [[nodiscard]] ppu_compositor_snapshot_t ppu_compositor_state() const noexcept;

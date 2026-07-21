@@ -2,148 +2,118 @@
 
 ## Purpose
 
-This document records the current hardware-accuracy baseline for Clover so we can
-tell the difference between:
+This document records what Clover has actually demonstrated. It is not a
+compatibility promise. A passing ROM remains evidence about the hardware paths
+that ROM exercised, not permission to add ROM-specific behavior.
 
-- a regression against a known-good checkpoint
-- a newly exposed inaccuracy in an area we already know is simplified
-- a harness mismatch between Clover and bsnes
+The project standard is hardware-faithful emulation. Exact comparison against
+bsnes is a powerful reference, while hardware documentation and tests remain
+authoritative when reference behavior needs reconciliation.
 
-## Current Validation Modes
+## Validation Modes
 
-### Deterministic bringup mode
+### Deterministic comparison
 
-The default Clover-vs-bsnes comparison mode is deterministic.
+Deterministic startup is the default for Clover-versus-bsnes work:
 
-- Clover startup entropy is disabled by default in the validation harness.
-- bsnes entropy is also forced to deterministic startup by default in the
-  bsnes bringup harness.
-- This is the mode to use for exact frame-by-frame and memory-dump comparisons.
+- Clover startup entropy is disabled by default in the bringup harness.
+- The bsnes harness also requests deterministic startup by default.
+- Input movies can be replayed in both runners through
+  `CLOVER_JOYPAD1_SCRIPT_FILE`.
 
-Relevant knobs:
+Relevant controls:
 
 - `CLOVER_STARTUP_ENTROPY=none|low|high`
 - `CLOVER_STARTUP_ENTROPY_SEED=<integer>`
 - `CLOVER_STARTUP_ENTROPY_SEQUENCE=<integer>`
 - `CLOVER_BSNES_ENTROPY=None|Low|High`
 
-Backward-compatible fallback env vars still exist for the older PPU-only path:
+The older PPU-only entropy variables remain as compatibility aliases:
 
 - `CLOVER_PPU_ENTROPY`
 - `CLOVER_PPU_ENTROPY_SEED`
 - `CLOVER_PPU_ENTROPY_SEQUENCE`
 
-### Startup entropy mode
+### Entropy mode
 
-Clover can also model bsnes-style undefined cold-boot state.
-
-Currently modeled:
-
-- WRAM cold-boot entropy
-- PPU VRAM cold-boot entropy
-- PPU CGRAM and related startup-visible PPU state
-- warm-reset preservation where bsnes preserves state
-
-The intended workflow is:
-
-- use deterministic mode for exact Clover-vs-bsnes debugging
-- use entropy mode for realism / undefined-startup investigations
+Clover can model undefined cold-boot state for WRAM, VRAM, CGRAM, and related
+startup-visible state, including warm-reset preservation where modeled.
+Entropy mode is for startup realism and undefined-state investigations; it is
+not the default for deterministic frame comparison.
 
 ## Comparison Contract
 
-Unless a test says otherwise, a "match" currently means:
+An exact visual match means:
 
-- identical rendered frame output at the checked frame
-- analogous frame capture point relative to vblank entry
-- identical Clover-side dump timing for VRAM/CGRAM/OAM/WRAM when requested
-- comparable CPU/PPU/APU event summaries in the bringup harness
+- identical 256x240 rendered pixels at the same emulated frame boundary
+- equivalent power-on and controller input sequences
+- comparable capture timing relative to the completed frame
 
-The standard reference sweep uses the
-`bsnes-libretro-bottom-corner-artifact` compare profile. This masks a verified
-bsnes libretro capture artifact in the extreme bottom corners of the 256x240
-output buffer, while leaving the active picture comparison exact.
+When memory or event dumps are part of an investigation, their observation
+points must also be equivalent. Similar screenshots or matching frame rates are
+not sufficient.
 
-## Milestone ROMs
+The `exact` frame-compare profile is the closure criterion. A legacy profile
+can mask known extreme-corner differences in older bsnes libretro captures, but
+masked output is diagnostic only and cannot establish pixel perfection.
 
-These ROMs are our current real-world baseline set:
+## Automated Milestone Set
 
-- `roms/local/Super Mario World (USA).sfc`
-- `roms/local/Legend of Zelda, The - A Link to the Past (USA).sfc`
-- `roms/local/Final Fantasy 3 (USA).smc`
+The established deterministic no-input milestone set is:
 
-These were chosen because together they exercised:
+- Super Mario World (USA)
+- The Legend of Zelda: A Link to the Past (USA)
+- Final Fantasy III (USA)
+- Chrono Trigger (USA)
 
-- CPU / PPU / APU bringup sequencing
-- DMA / HDMA behavior
-- OBJ and active-display PPU behavior
-- APU handshakes and timer-driven cadence
-- reset / startup-state interactions
+The most recently completed continuous sweeps compared every rendered frame
+through frame 1000 exactly against bsnes for all four ROMs. Commercial ROM
+images and generated sweep directories are deliberately not stored in the
+repository; they must be reproduced from local ROM copies.
 
-## Archived Deterministic Sweep
+This 1000-frame result supersedes the old three-ROM, 300-frame baseline. The
+default `run_core_validation.py` configuration is still a smaller regression
+checkpoint loop and should not be confused with the full milestone sweep.
 
-Post-milestone archival deterministic sweeps are stored under:
+## Interactive Validation Record
 
-- `reference-sweep-zelda-300-deterministic-20260708`
-- `reference-sweep-smw-300-deterministic-20260708`
-- `reference-sweep-ff3-300-deterministic-20260708`
+Deterministic power-on sweeps do not reach input-gated paths. SDL capture and
+shared input replay were subsequently used to investigate and correct:
 
-Bulk one-pass capture archives for the same 300-frame window are stored under:
+- Chrono Trigger post-title corruption and CGRAM color-zero borders/flashes
+- Zelda player-name entry and the stuck state after selecting a player
+- Final Fantasy III sound-effect corruption, host-time startup/stutter
+  regressions, the Mode 7 snow-march transition, and a combat scanline defect
+- Mortal Kombat audio queue failure and CGRAM color-zero border behavior
 
-- `bulk-zelda-bsnes-300`
-- `bulk-zelda-clover-300`
-- `bulk-smw-bsnes-300`
-- `bulk-smw-clover-300`
-- `bulk-ff3-bsnes-300`
-- `bulk-ff3-clover-300`
+For the final Final Fantasy III rendering pass:
 
-These 300-frame sweeps are the authoritative post-startup-semantics baseline,
-and the current harness interpretation is:
+- the Mode 7 transition comparison was exact for frames 8300 through 8425
+- the affected combat scanline matched at the checked marker frames
+- live playtesting found no remaining issue in the previously reported paths
 
-- Zelda matches through frame 300 in the active picture
-- SMW matches through frame 300
-- FF3 matches through frame 300
-
-Lower-level observable-behavior questions that were intentionally removed from
-the main pass/fail harness are tracked separately in:
-
-- `docs/archive/REFERENCE_RECONCILIATION.md`
-
-## Known Strong Checkpoints
-
-The following deterministic checkpoints were explicitly re-verified after the
-startup entropy and reset-semantics work:
-
-- Zelda frame 83
-- SMW frame 86
-- FF3 frame 117
-
-These were the critical comparison points we had previously used while
-investigating drift, so they remain useful spot-check frames even when the full
-300-frame sweeps are also available.
-
-## Current Real-World Status
-
-Under the deterministic Clover-vs-bsnes harness:
-
-- `Legend of Zelda, The - A Link to the Past (USA).sfc`
-  matches through frame 300 in the active picture; raw exact-buffer compares
-  still expose a known bsnes libretro bottom-corner artifact
-- `Super Mario World (USA).sfc`
-  matches through frame 300
-- `Final Fantasy 3 (USA).smc`
-  matches through frame 300 in the current archived sweep
+These statements describe the paths tested. They do not imply that every later
+game state, PPU edge case, or audio sequence has been exhausted.
 
 ## Bringup Guardrails
 
-The bringup harness now reports:
+The Clover bringup summary reports `terminal_pc` and
+`cpu_placeholder_opcodes`. `cpu_placeholder_opcodes` must remain zero in a
+known-good run. A nonzero value means execution reached the fallback path for a
+CPU opcode without an explicit Clover execution/timing implementation.
 
-- `terminal_pc`
-- `cpu_placeholder_opcodes`
+Timing and performance investigations must be run without optional trace and
+capture probes unless those probes are the subject of the test. Always-on
+diagnostics have previously produced host-time slowdown without changing the
+number of emulated frames, so wall-clock behavior and emulated-frame behavior
+must be measured separately.
 
-`cpu_placeholder_opcodes` should remain `0` on known-good bringup sweeps. A
-non-zero value means execution hit the CPU fallback path for an opcode that does
-not yet have an explicit Clover timing/execution model.
+## Reproducing Comparisons
 
-Notably, the milestone ROM bringup path now reaches the current 300-frame
-baseline with `cpu_placeholder_opcodes=0`, so the CPU fallback opcode path is
-not responsible for the previously investigated Zelda/SMW drift work.
+Use `scripts/run_reference_sweep.py` for selected exact frame checkpoints and
+the headless bringup binaries plus `clover_frame_range_compare` for continuous
+captured ranges. Use SDL version-3 captures when controller input or audio is
+needed to reach the fault.
+
+The closed low-level reference investigations are preserved as historical
+context in [`archive/REFERENCE_RECONCILIATION.md`](archive/REFERENCE_RECONCILIATION.md).

@@ -1,4 +1,10 @@
-# Reference Reconciliation Backlog
+# Archived Reference Reconciliation
+
+> Historical record: these investigations were closed during the earlier
+> three-ROM, 300-frame milestone. References below to the "current" or "green"
+> path describe that point in project history, not Clover's present accuracy
+> baseline. The active baseline is maintained in
+> [`../ACCURACY_BASELINE.md`](../ACCURACY_BASELINE.md).
 
 ## Purpose
 
@@ -14,9 +20,9 @@ The distinction matters:
 - until they are reconciled against a trusted reference, they are
   `investigation targets`, not `core regressions`
 
-## Current Green Path
+## Historical Green Path
 
-The current authoritative green path is:
+The authoritative green path at the time was:
 
 - `ctest --test-dir build --output-on-failure`
 - deterministic 300-frame Clover-vs-bsnes sweeps for:
@@ -24,9 +30,8 @@ The current authoritative green path is:
   - `Legend of Zelda, The - A Link to the Past (USA).sfc`
   - `Final Fantasy 3 (USA).smc`
 
-If that path is green, Clover is considered correct at the current
-project-wide validation level unless a lower-level discrepancy is independently
-confirmed against bsnes or hardware.
+That path was the project-wide validation level used to close the observations
+recorded in this archive. It has since been superseded.
 
 ## Removed From Green Path
 

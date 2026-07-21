@@ -1,69 +1,73 @@
-# Known Simplifications
+# Known Simplifications and Unsupported Hardware
 
-This list is for active hardware-faithfulness gaps that are understood and
-should not be mistaken for already-solved behavior.
+This is the active list of understood gaps. A ROM appearing to work does not
+close these areas; a gap is closed only by implementing and validating the
+hardware behavior.
+
+## Cartridge Hardware
+
+Clover currently maps ordinary LoROM and HiROM cartridges with SRAM. It does
+not implement enhancement coprocessors or their mapping/timing behavior,
+including CX4, Super FX, SA-1, and cartridge DSP families.
+
+Consequences:
+
+- Mega Man X2 and other CX4 software are unsupported even if they boot or avoid
+  crashing.
+- ExLoROM/ExHiROM and unusual cartridge layouts have not been established as
+  supported.
+- Header scoring recognizes a base mapping; it is not a substitute for parsing
+  and constructing the complete cartridge hardware configuration.
 
 ## CPU
 
-### Placeholder opcode fallback still exists
+An explicit fallback remains in `Cpu.cpp` for an opcode that reaches no
+implemented execution path. It retires the fetched opcode with a trailing idle
+cycle and is a guardrail, not a hardware model.
 
-Location:
-
-- `src/clover/core/snes/Cpu.cpp`
-
-Current behavior:
-
-- if an opcode is not handled by any explicit execute path, Clover retires it as
-  one fetched opcode plus one trailing idle cycle
-
-Why it matters:
-
-- this is not a real hardware-timing model
-- it is only acceptable as a guardrail for unimplemented opcodes, not as a
-  tuning mechanism
-
-Current mitigation:
-
-- bringup now reports `cpu_placeholder_opcodes`
-- milestone sweeps should keep this at `0`
-
-Next step:
-
-- replace fallback timing with explicit opcode coverage until the fallback is no
-  longer reachable for any intended software path
+`clover_rom_bringup` reports this as `cpu_placeholder_opcodes`. It must remain
+zero for every validated run. Future work should make the fallback unreachable
+for all 65C816 opcodes and modes, then remove it.
 
 ## PPU
 
-### Coverage is not exhaustive
+The validated ROM paths cover substantial background, object, window, color
+math, DMA/HDMA, and Mode 7 behavior, but PPU coverage is not exhaustive.
+Remaining risk is highest around:
 
-The current milestone coverage does not imply full PPU closure. We should still
-expect future work in:
+- rare mid-scanline register changes and exact dot effects
+- less common window, mosaic, interlace, overscan, and pseudo-hires cases
+- active-display access restrictions and latch/open-bus edge cases
+- object overflow/range behavior and unusual priority interactions
 
-- window / mosaic / Mode 7 edge cases
-- mid-scanline register effects
-- less common active-display access quirks
+These must be solved as hardware timing/composition behavior, never as
+per-title rendering exceptions.
 
-## APU / DSP
+## APU and DSP
 
-### Reset semantics are stronger than runtime-internal proof
+Clover implements SPC700 execution, timers, ports, DSP state, BRR/voice output,
+echo, and real-time stereo delivery. The corrected Final Fantasy III sound
+effects are strong coverage, not proof of complete internal equivalence.
 
-Cold-boot and warm-reset state handling are covered for:
+Full SPC/DSP pipeline timing, reset state, voice edge cases, echo behavior, and
+all CPU/APU synchronization patterns remain open to additional reference and
+hardware tests.
 
-- APURAM preservation across warm reset
-- DSP `FLG` soft-reset behavior
+## Video Standard and Input Devices
 
-What is not yet implied by that:
+- NTSC is the only active timing profile; PAL timing is not implemented.
+- The core/frontend seam currently models standard gamepad state on two logical
+  ports.
+- The SDL app presents one keyboard/gamepad-controlled port. Mouse, multitap,
+  Super Scope, and other devices are not implemented.
 
-- full DSP internal-state equivalence
-- full SPC/DSP pipeline equivalence under all test ROMs
+## Validation Scope
 
-## Harness
+Deterministic Clover-versus-bsnes comparison is the default regression mode.
+Entropy mode exists for undefined cold-boot-state investigations.
 
-### Deterministic comparison is the default for validation
-
-This is intentional. It means:
-
-- exact Clover-vs-bsnes comparisons should happen in deterministic mode
-- entropy mode should be treated as a realism mode, not the default regression mode
-
-Any new comparison tool or test should preserve that distinction.
+The four-ROM 1000-frame exact baseline and later interactive captures cover
+only the paths executed. They do not imply universal compatibility. Exact
+pixels, audio evidence, hardware state, and equivalent observation points are
+required according to the fault being investigated; a game merely reaching a
+screen is not sufficient.

@@ -1,0 +1,26 @@
+{
+  "version": 2,
+  "configurePresets": [
+    {
+      "name": "sdl-release",
+      "displayName": "SDL Release",
+      "description": "Optimized Clover SDL desktop frontend",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/cmake-build-sdl-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CLOVER_BUILD_SDL_FRONTEND": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "sdl-release",
+      "displayName": "Build SDL Release",
+      "configurePreset": "sdl-release",
+      "targets": [
+        "clover_sdl"
+      ]
+    }
+  ]
+}

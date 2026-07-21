@@ -668,20 +668,6 @@ namespace clover::core
             const uint16_t base_address{ effective_absolute_address(fetch_operand_u16(state)) };
             idle();
             const uint16_t address{ static_cast<uint16_t>(base_address + index) };
-            if (state.pb == 0x09u
-                && address >= 0xee80u
-                && address <= 0xeea0u)
-            {
-                std::printf("CPU abs-indexed write8: PB:%02x PC:%04x base=%04x index=%04x addr=%04x value=%02x DB:%02x P:%02x\n",
-                            state.pb,
-                            state.pc,
-                            base_address,
-                            index,
-                            address,
-                            value,
-                            state.db,
-                            state.p);
-            }
             write_u8(data_address(state, address), value);
         }
 
@@ -690,20 +676,6 @@ namespace clover::core
             const uint16_t base_address{ effective_absolute_address(fetch_operand_u16(state)) };
             idle();
             const uint16_t address{ static_cast<uint16_t>(base_address + index) };
-            if (state.pb == 0x09u
-                && address >= 0xee80u
-                && address <= 0xeea0u)
-            {
-                std::printf("CPU abs-indexed write16: PB:%02x PC:%04x base=%04x index=%04x addr=%04x value=%04x DB:%02x P:%02x\n",
-                            state.pb,
-                            state.pc,
-                            base_address,
-                            index,
-                            address,
-                            value,
-                            state.db,
-                            state.p);
-            }
             write_u8(data_address(state, address), static_cast<uint8_t>(value & 0x00ffu));
             write_u8(data_address(state, static_cast<uint16_t>(address + 1u)),
                      static_cast<uint8_t>(value >> 8u));

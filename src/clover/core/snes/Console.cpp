@@ -105,10 +105,16 @@ namespace clover::core
         if (!_powered_on)
             return;
 
+        _apu.begin_audio_frame();
         _ppu.set_frame_capture_enabled(true);
         _scheduler.run_frame(_cpu, _bus, _ppu, _apu, _dma, _interrupts);
         _ppu.set_frame_capture_enabled(false);
         _ppu.present(_framebuffer);
+    }
+
+    void console_t::set_controller_state(uint8_t port, uint16_t state) noexcept
+    {
+        _cpu.set_controller_state(port, state);
     }
 
     uint8_t console_t::read_u8(uint32_t address) noexcept
@@ -124,6 +130,16 @@ namespace clover::core
     const framebuffer_t& console_t::framebuffer() const noexcept
     {
         return _framebuffer;
+    }
+
+    std::span<const int16_t> console_t::audio_samples() const noexcept
+    {
+        return _apu.audio_samples();
+    }
+
+    bool console_t::audio_output_overflowed() const noexcept
+    {
+        return _apu.audio_output_overflowed();
     }
 
     master_clock_count_t console_t::master_clock() const noexcept
@@ -330,6 +346,11 @@ namespace clover::core
         return _apu.peek_dsp_register(address);
     }
 
+    std::array<uint8_t, SPC_DSP::state_size> console_t::apu_dsp_state() noexcept
+    {
+        return _apu.dsp_state();
+    }
+
     uint16_t console_t::apu_instruction_trace_count() const noexcept
     {
         return _apu.instruction_trace_count();
@@ -383,6 +404,11 @@ namespace clover::core
     std::span<const uint8_t> console_t::wram_span(uint32_t offset, uint32_t length) const noexcept
     {
         return _bus.wram_span(offset, length);
+    }
+
+    void console_t::set_apu_port_trace_enabled(bool enabled) noexcept
+    {
+        _bus.set_apu_port_trace_enabled(enabled);
     }
 
     uint16_t console_t::apu_port_trace_count() const noexcept

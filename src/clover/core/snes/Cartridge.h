@@ -25,6 +25,7 @@ namespace clover::core
     {
         cartridge_mapping_mode_t mapping_mode{ cartridge_mapping_mode_t::none };
         uint8_t raw_map_mode{ 0 };
+        uint8_t raw_ram_size{ 0 };
         uint16_t reset_vector{ 0 };
     };
 
@@ -46,6 +47,7 @@ namespace clover::core
         {
             cartridge_mapping_mode_t mapping_mode{ cartridge_mapping_mode_t::none };
             uint8_t raw_map_mode{ 0 };
+            uint8_t raw_ram_size{ 0 };
             uint16_t reset_vector{ 0 };
             int score{ -1 };
         };
@@ -54,6 +56,10 @@ namespace clover::core
         [[nodiscard]] static bool has_copier_header(std::span<const std::byte> rom_data) noexcept;
         [[nodiscard]] static uint32_t lorom_rom_offset(uint32_t address, size_t rom_size) noexcept;
         [[nodiscard]] static uint32_t hirom_rom_offset(uint32_t address, size_t rom_size) noexcept;
+        [[nodiscard]] static bool is_lorom_ram_address(uint32_t address) noexcept;
+        [[nodiscard]] static bool is_hirom_ram_address(uint32_t address) noexcept;
+        [[nodiscard]] static uint32_t lorom_ram_offset(uint32_t address, size_t ram_size) noexcept;
+        [[nodiscard]] static uint32_t hirom_ram_offset(uint32_t address, size_t ram_size) noexcept;
         [[nodiscard]] static bool is_lorom_address(uint32_t address) noexcept;
         [[nodiscard]] static bool is_hirom_address(uint32_t address) noexcept;
         [[nodiscard]] static header_candidate_t score_lorom_header(std::span<const uint8_t> rom_data) noexcept;
@@ -67,6 +73,7 @@ namespace clover::core
         // Temporary bring-up surface for vectors and synthetic CPU programs.
         std::array<uint8_t, k_bootstrap_program_rom_size> _bootstrap_program_rom{};
         std::vector<uint8_t> _rom_data{};
+        std::vector<uint8_t> _ram_data{};
         cartridge_header_t _header{};
         cartridge_mapping_mode_t _mapping_mode{ cartridge_mapping_mode_t::bootstrap };
         bool _loaded{ false };

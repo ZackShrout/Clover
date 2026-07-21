@@ -13,9 +13,10 @@ namespace clover::core
             if (index_is_8bit(state))
             {
                 const uint8_t narrowed{ static_cast<uint8_t>(index & 0x00ffu) };
-                index = static_cast<uint16_t>(adjustment > 0
+                const uint8_t adjusted{ adjustment > 0
                     ? static_cast<uint8_t>(narrowed + 1u)
-                    : static_cast<uint8_t>(narrowed - 1u));
+                    : static_cast<uint8_t>(narrowed - 1u) };
+                index = static_cast<uint16_t>((index & 0xff00u) | adjusted);
                 return;
             }
 
@@ -90,17 +91,6 @@ namespace clover::core
                     executor.write_absolute_u8(state, value);
                     return;
                 case 0x99u:
-                    if (state.pb == 0x09u)
-                    {
-                        std::printf("CPU opcode 99 (8): PB:%02x PC:%04x A:%04x X:%04x Y:%04x DB:%02x P:%02x\n",
-                                    state.pb,
-                                    state.pc,
-                                    state.a,
-                                    state.x,
-                                    state.y,
-                                    state.db,
-                                    state.p);
-                    }
                     executor.write_absolute_indexed_u8(state, state.y, value);
                     return;
                 case 0x8fu:
@@ -148,17 +138,6 @@ namespace clover::core
                 executor.write_absolute_u16(state, state.a);
                 return;
             case 0x99u:
-                if (state.pb == 0x09u)
-                {
-                    std::printf("CPU opcode 99 (16): PB:%02x PC:%04x A:%04x X:%04x Y:%04x DB:%02x P:%02x\n",
-                                state.pb,
-                                state.pc,
-                                state.a,
-                                state.x,
-                                state.y,
-                                state.db,
-                                state.p);
-                }
                 executor.write_absolute_indexed_u16(state, state.y, state.a);
                 return;
             case 0x8fu:

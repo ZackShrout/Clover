@@ -45,9 +45,12 @@ namespace clover::core
         [[nodiscard]] hardware_step_result_t step_hardware() noexcept;
         void run_scanline() noexcept;
         void run_frame() noexcept;
+        void set_controller_state(uint8_t port, uint16_t state) noexcept;
         [[nodiscard]] uint8_t read_u8(uint32_t address) noexcept;
         void write_u8(uint32_t address, uint8_t value) noexcept;
         [[nodiscard]] const framebuffer_t& framebuffer() const noexcept;
+        [[nodiscard]] std::span<const int16_t> audio_samples() const noexcept;
+        [[nodiscard]] bool audio_output_overflowed() const noexcept;
         [[nodiscard]] master_clock_count_t master_clock() const noexcept;
         [[nodiscard]] uint64_t frame_index() const noexcept;
         [[nodiscard]] video_standard_t video_standard() const noexcept;
@@ -88,6 +91,7 @@ namespace clover::core
         [[nodiscard]] apu_state_t apu_state() const noexcept;
         [[nodiscard]] uint8_t apu_peek_ram(uint16_t address) const noexcept;
         [[nodiscard]] uint8_t apu_peek_dsp_register(uint8_t address) const noexcept;
+        [[nodiscard]] std::array<uint8_t, SPC_DSP::state_size> apu_dsp_state() noexcept;
         [[nodiscard]] uint16_t apu_instruction_trace_count() const noexcept;
         [[nodiscard]] const std::array<apu_state_t::trace_entry_t, k_apu_trace_capacity>& apu_instruction_trace() const noexcept;
         [[nodiscard]] uint16_t apu_io_trace_count() const noexcept;
@@ -99,6 +103,7 @@ namespace clover::core
         [[nodiscard]] uint8_t watched_write_trace_count() const noexcept;
         [[nodiscard]] const std::array<bus_t::watched_write_trace_t, bus_t::k_watched_write_trace_capacity>& watched_write_trace() const noexcept;
         [[nodiscard]] std::span<const uint8_t> wram_span(uint32_t offset, uint32_t length) const noexcept;
+        void set_apu_port_trace_enabled(bool enabled) noexcept;
         [[nodiscard]] uint16_t apu_port_trace_count() const noexcept;
         [[nodiscard]] const std::array<bus_t::apu_port_trace_t, bus_t::k_apu_port_trace_capacity>& apu_port_trace() const noexcept;
 

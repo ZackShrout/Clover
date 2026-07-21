@@ -9,8 +9,14 @@
 
 namespace clover::frontend
 {
-    std::unique_ptr<emulator_core_t> create_default_emulator_core() noexcept
+    std::unique_ptr<emulator_core_t> create_emulator_core(system_id_t system) noexcept
     {
-        return std::make_unique<snes_emulator_core_t>();
+        switch (system)
+        {
+        case system_id_t::snes:
+            return std::make_unique<snes_emulator_core_t>();
+        }
+
+        return nullptr;
     }
 }

@@ -365,6 +365,7 @@ namespace clover::core
                                               uint16_t scanline) const noexcept;
         void evaluate_background_scanline(uint16_t scanline) noexcept;
         void begin_object_scanline(uint16_t scanline) noexcept;
+        void prepare_background_scanline(uint16_t scanline) noexcept;
         void initialize_scanline_pipeline(uint16_t scanline) noexcept;
         void process_pipeline_range(const timing_snapshot_t& previous_timing,
                                     const timing_snapshot_t& current_timing) noexcept;
@@ -626,6 +627,7 @@ namespace clover::core
             uint16_t next_object_evaluate_dot{ 0u };
             uint16_t next_pixel_dot{ 58u };
             uint16_t next_pixel_x{ 0u };
+            bool background_fetch_state_dirty{ false };
             bool object_fetch_completed{ false };
         };
 

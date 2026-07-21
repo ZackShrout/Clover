@@ -11,7 +11,9 @@ namespace clover
 {
     int app_t::run() const noexcept
     {
-        auto emulator_core{ frontend::create_default_emulator_core() };
+        auto emulator_core{ frontend::create_emulator_core(frontend::system_id_t::snes) };
+        if (!emulator_core)
+            return 1;
         emulator_core->power_on();
         emulator_core->run_frame();
         return 0;

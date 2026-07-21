@@ -47,6 +47,20 @@ namespace clover::core
     {
         if (_loaded)
         {
+            if (!_ram_data.empty())
+            {
+                if (_mapping_mode == cartridge_mapping_mode_t::lorom
+                    && is_lorom_ram_address(address))
+                {
+                    return _ram_data[lorom_ram_offset(address, _ram_data.size())];
+                }
+                if (_mapping_mode == cartridge_mapping_mode_t::hirom
+                    && is_hirom_ram_address(address))
+                {
+                    return _ram_data[hirom_ram_offset(address, _ram_data.size())];
+                }
+            }
+
             switch (_mapping_mode)
             {
             case cartridge_mapping_mode_t::lorom:
@@ -71,7 +85,22 @@ namespace clover::core
     void cartridge_t::write_u8(uint32_t address, uint8_t value) noexcept
     {
         if (_loaded)
+        {
+            if (!_ram_data.empty())
+            {
+                if (_mapping_mode == cartridge_mapping_mode_t::lorom
+                    && is_lorom_ram_address(address))
+                {
+                    _ram_data[lorom_ram_offset(address, _ram_data.size())] = value;
+                }
+                else if (_mapping_mode == cartridge_mapping_mode_t::hirom
+                         && is_hirom_ram_address(address))
+                {
+                    _ram_data[hirom_ram_offset(address, _ram_data.size())] = value;
+                }
+            }
             return;
+        }
 
         if (!is_bootstrap_program_rom_address(address))
             return;
@@ -120,6 +149,37 @@ namespace clover::core
         return linear_offset % static_cast<uint32_t>(rom_size);
     }
 
+    bool cartridge_t::is_lorom_ram_address(uint32_t address) noexcept
+    {
+        const uint8_t bank{ static_cast<uint8_t>(address >> 16u) };
+        const uint16_t offset{ static_cast<uint16_t>(address) };
+        return ((bank >= 0x70u && bank <= 0x7du) || bank >= 0xf0u) && offset < 0x8000u;
+    }
+
+    bool cartridge_t::is_hirom_ram_address(uint32_t address) noexcept
+    {
+        const uint8_t bank{ static_cast<uint8_t>(address >> 16u) };
+        const uint16_t offset{ static_cast<uint16_t>(address) };
+        return ((bank >= 0x20u && bank <= 0x3fu) || (bank >= 0xa0u && bank <= 0xbfu))
+            && offset >= 0x6000u && offset < 0x8000u;
+    }
+
+    uint32_t cartridge_t::lorom_ram_offset(uint32_t address, size_t ram_size) noexcept
+    {
+        const uint32_t linear_offset{
+            ((address >> 16u) & 0x0fu) * 0x8000u + (address & 0x7fffu)
+        };
+        return linear_offset % static_cast<uint32_t>(ram_size);
+    }
+
+    uint32_t cartridge_t::hirom_ram_offset(uint32_t address, size_t ram_size) noexcept
+    {
+        const uint32_t linear_offset{
+            ((address >> 16u) & 0x1fu) * 0x2000u + (address & 0x1fffu)
+        };
+        return linear_offset % static_cast<uint32_t>(ram_size);
+    }
+
     bool cartridge_t::is_lorom_address(uint32_t address) noexcept
     {
         const uint32_t bank{ (address >> 16u) & 0xffu };
@@ -153,6 +213,7 @@ namespace clover::core
 
         const size_t header_offset{ 0x7fc0u };
         candidate.raw_map_mode = rom_data[header_offset + 0x15u];
+        candidate.raw_ram_size = rom_data[header_offset + 0x18u];
         candidate.reset_vector = static_cast<uint16_t>(
             rom_data[header_offset + 0x3cu] | (rom_data[header_offset + 0x3du] << 8u)
         );
@@ -173,6 +234,7 @@ namespace clover::core
 
         const size_t header_offset{ 0xffc0u };
         candidate.raw_map_mode = rom_data[header_offset + 0x15u];
+        candidate.raw_ram_size = rom_data[header_offset + 0x18u];
         candidate.reset_vector = static_cast<uint16_t>(
             rom_data[header_offset + 0x3cu] | (rom_data[header_offset + 0x3du] << 8u)
         );
@@ -235,13 +297,17 @@ namespace clover::core
         _mapping_mode = winner.mapping_mode;
         _header.mapping_mode = winner.mapping_mode;
         _header.raw_map_mode = winner.raw_map_mode;
+        _header.raw_ram_size = winner.raw_ram_size;
         _header.reset_vector = winner.reset_vector;
+        if (winner.raw_ram_size != 0u && winner.raw_ram_size < 16u)
+            _ram_data.assign(static_cast<size_t>(1024u) << winner.raw_ram_size, 0u);
         return true;
     }
 
     void cartridge_t::unload() noexcept
     {
         _rom_data.clear();
+        _ram_data.clear();
         _header = {};
         _mapping_mode = cartridge_mapping_mode_t::bootstrap;
         _loaded = false;

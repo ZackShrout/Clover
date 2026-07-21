@@ -48,6 +48,26 @@ add_executable(clover ${CLOVER_APP_SOURCES})
 target_include_directories(clover PRIVATE src)
 target_link_libraries(clover PRIVATE clover_core)
 
+if(CLOVER_BUILD_SDL_FRONTEND)
+    find_package(SDL3 CONFIG REQUIRED)
+    set(CLOVER_SDL_DEFAULT_ROM_PATH
+        "${CMAKE_SOURCE_DIR}/roms/local/Final Fantasy 3 (USA).smc"
+        CACHE FILEPATH
+        "ROM loaded by clover_sdl when no ROM path is supplied on the command line."
+    )
+    add_executable(clover_sdl
+        src/clover/frontend/EmulatorCore.cpp
+        src/clover/frontend/SnesEmulatorCore.cpp
+        src/clover/platform/sdl/SdlAppShell.cpp
+        src/sdl_main.cpp
+    )
+    target_include_directories(clover_sdl PRIVATE src)
+    target_link_libraries(clover_sdl PRIVATE clover_core SDL3::SDL3)
+    target_compile_definitions(clover_sdl PRIVATE
+        CLOVER_SDL_DEFAULT_ROM_PATH="${CLOVER_SDL_DEFAULT_ROM_PATH}"
+    )
+endif()
+
 add_executable(clover_smoke_test
     tests/SmokeTest.cpp
 )

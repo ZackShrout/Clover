@@ -4,6 +4,7 @@
 //
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -16,6 +17,8 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+#include "InputScript.h"
 
 namespace
 {
@@ -149,6 +152,10 @@ namespace
     };
 
     libretro_state_t* g_state{ nullptr };
+    clover::test::joypad_input_script_t g_input_script{};
+    uint64_t g_input_frame{ 0 };
+    bool g_capture_audio{ false };
+    std::vector<int16_t> g_audio_samples{};
 
     void print_usage(const char* executable)
     {
@@ -179,6 +186,61 @@ namespace
             output.write(reinterpret_cast<const char*>(&blue), 1);
         }
 
+        return static_cast<bool>(output);
+    }
+
+    [[nodiscard]] bool write_binary_file(const std::filesystem::path& path,
+                                         const void* data,
+                                         size_t size)
+    {
+        if (data == nullptr)
+            return false;
+        std::ofstream output{ path, std::ios::binary };
+        if (!output)
+            return false;
+        output.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
+        return static_cast<bool>(output);
+    }
+
+    [[nodiscard]] bool write_audio_wav(const std::filesystem::path& path,
+                                       const std::vector<int16_t>& samples,
+                                       uint32_t sample_rate)
+    {
+        const size_t sample_bytes{ samples.size() * sizeof(int16_t) };
+        if ((samples.size() & 1u) != 0u || sample_bytes > 0xffff'ffffu - 36u)
+            return false;
+
+        std::ofstream output{ path, std::ios::binary | std::ios::trunc };
+        if (!output)
+            return false;
+
+        const auto write_u16 = [&output](uint16_t value) {
+            const std::array<uint8_t, 2> bytes{
+                static_cast<uint8_t>(value), static_cast<uint8_t>(value >> 8u)
+            };
+            output.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+        };
+        const auto write_u32 = [&output](uint32_t value) {
+            const std::array<uint8_t, 4> bytes{
+                static_cast<uint8_t>(value), static_cast<uint8_t>(value >> 8u),
+                static_cast<uint8_t>(value >> 16u), static_cast<uint8_t>(value >> 24u)
+            };
+            output.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+        };
+        const uint32_t data_bytes{ static_cast<uint32_t>(sample_bytes) };
+        output.write("RIFF", 4);
+        write_u32(36u + data_bytes);
+        output.write("WAVEfmt ", 8);
+        write_u32(16u);
+        write_u16(1u);
+        write_u16(2u);
+        write_u32(sample_rate);
+        write_u32(sample_rate * 4u);
+        write_u16(4u);
+        write_u16(16u);
+        output.write("data", 4);
+        write_u32(data_bytes);
+        output.write(reinterpret_cast<const char*>(samples.data()), data_bytes);
         return static_cast<bool>(output);
     }
 
@@ -864,12 +926,18 @@ namespace
         g_state->latest_frame = maybe_normalize_frame(std::move(g_state->latest_frame));
     }
 
-    void audio_sample_callback(int16_t, int16_t)
+    void audio_sample_callback(int16_t left, int16_t right)
     {
+        if (!g_capture_audio)
+            return;
+        g_audio_samples.push_back(left);
+        g_audio_samples.push_back(right);
     }
 
-    size_t audio_sample_batch_callback(const int16_t*, size_t frames)
+    size_t audio_sample_batch_callback(const int16_t* samples, size_t frames)
     {
+        if (g_capture_audio && samples != nullptr)
+            g_audio_samples.insert(g_audio_samples.end(), samples, samples + frames * 2u);
         return frames;
     }
 
@@ -877,14 +945,20 @@ namespace
     {
     }
 
-    int16_t input_state_callback(unsigned, unsigned, unsigned, unsigned)
+    int16_t input_state_callback(unsigned port, unsigned device, unsigned index, unsigned id)
     {
-        return 0;
+        constexpr unsigned k_retro_device_joypad{ 1u };
+        if (port != 0u || device != k_retro_device_joypad || index != 0u || id > 11u)
+            return 0;
+
+        const uint16_t state{ g_input_script.state_for_frame(g_input_frame) };
+        return static_cast<int16_t>((state >> (15u - id)) & 0x01u);
     }
 }
 
 int main(int argc, char** argv)
 {
+    g_capture_audio = std::getenv("CLOVER_BSNES_AUDIO_FILE") != nullptr;
     if (argc < 2 || argc > 7)
     {
         print_usage(argv[0]);
@@ -1020,6 +1094,17 @@ int main(int argc, char** argv)
     }
 
     retro_reset();
+    g_input_script = clover::test::joypad_input_script_t::from_environment();
+    if (!g_input_script.valid())
+    {
+        std::fprintf(stderr,
+                     "Invalid CLOVER_JOYPAD1_SCRIPT or CLOVER_JOYPAD1_SCRIPT_FILE; "
+                     "expected start-end=hhhh[,start-end=hhhh...]\n");
+        retro_unload_game();
+        retro_deinit();
+        dlclose(handle);
+        return 1;
+    }
     const bool dump_state_diff_enabled{ std::getenv("CLOVER_BSNES_STATE_DIFF") != nullptr };
     std::vector<uint8_t> state_before{};
     if (dump_state_diff_enabled)
@@ -1036,8 +1121,10 @@ int main(int argc, char** argv)
     retro_get_system_av_info(&state.geometry);
 
     uint64_t dumped_frames{ 0 };
+    const bool dump_state{ std::getenv("CLOVER_DUMP_BSNES_STATE") != nullptr };
     for (uint64_t frame{ 0 }; frame < target_frames; ++frame)
     {
+        g_input_frame = frame + 1u;
         retro_run();
         const uint64_t frame_number{ frame + 1 };
         if (dump_frames && frame_number >= dump_start_frame && dumped_frames < dump_count)
@@ -1052,6 +1139,23 @@ int main(int argc, char** argv)
                 retro_deinit();
                 dlclose(handle);
                 return 1;
+            }
+            if (dump_state)
+            {
+                const std::vector<uint8_t> serialized_state{
+                    capture_state_blob(retro_serialize_size, retro_serialize)
+                };
+                const std::filesystem::path state_path{
+                    dump_directory / ("frame_" + std::to_string(frame_number) + ".state.bin")
+                };
+                if (!write_binary_file(state_path, serialized_state.data(), serialized_state.size()))
+                {
+                    std::fprintf(stderr, "Failed to write bsnes state dump: %s\n", state_path.string().c_str());
+                    retro_unload_game();
+                    retro_deinit();
+                    dlclose(handle);
+                    return 1;
+                }
             }
             std::printf("Dumped frame_%llu from video_callback_frame=%llu\n",
                         static_cast<unsigned long long>(frame_number),
@@ -1091,6 +1195,52 @@ int main(int argc, char** argv)
         }
     }
 
+    if (const char* const path_raw{ std::getenv("CLOVER_DUMP_BSNES_WRAM_FILE") };
+        path_raw != nullptr && *path_raw != '\0')
+    {
+        const size_t memory_size{ retro_get_memory_size(k_retro_memory_system_ram) };
+        const auto* const memory{
+            static_cast<const uint8_t*>(retro_get_memory_data(k_retro_memory_system_ram))
+        };
+        bool wrote_wram{ false };
+        size_t written_size{ memory_size };
+        if (memory != nullptr && memory_size != 0u)
+            wrote_wram = write_binary_file(path_raw, memory, memory_size);
+        else
+        {
+            // This bsnes libretro target deliberately leaves retro_get_memory_* unimplemented.
+            // WRAM follows cartridge RAM in the serialized state; callers tracing a cartridge
+            // with save RAM provide its manifest size explicitly.
+            const std::vector<uint8_t> serialized_state{
+                capture_state_blob(retro_serialize_size, retro_serialize)
+            };
+            size_t cartridge_ram_size{ 0u };
+            if (const char* const size_raw{ std::getenv("CLOVER_BSNES_CARTRIDGE_RAM_SIZE") };
+                size_raw != nullptr && *size_raw != '\0')
+            {
+                cartridge_ram_size = static_cast<size_t>(std::strtoull(size_raw, nullptr, 0));
+            }
+            const size_t wram_offset{ 644u + cartridge_ram_size };
+            constexpr size_t k_wram_size{ 128u * 1024u };
+            if (serialized_state.size() >= wram_offset + k_wram_size)
+            {
+                wrote_wram = write_binary_file(path_raw,
+                                               serialized_state.data() + wram_offset,
+                                               k_wram_size);
+                written_size = k_wram_size;
+            }
+        }
+        if (!wrote_wram)
+        {
+            std::fprintf(stderr, "Failed to write bsnes WRAM dump: %s\n", path_raw);
+            retro_unload_game();
+            retro_deinit();
+            dlclose(handle);
+            return 1;
+        }
+        std::printf("bsnes WRAM dump: path=%s bytes=%zu\n", path_raw, written_size);
+    }
+
     if (dump_state_diff_enabled)
     {
         const std::vector<uint8_t> state_after{ capture_state_blob(retro_serialize_size, retro_serialize) };
@@ -1121,6 +1271,22 @@ int main(int argc, char** argv)
                     static_cast<unsigned long long>(dump_start_frame));
         if (!trace_path.empty())
             std::printf("Trace dump: %s\n", trace_path.string().c_str());
+    }
+
+    if (const char* audio_path{ std::getenv("CLOVER_BSNES_AUDIO_FILE") };
+        audio_path != nullptr && *audio_path != '\0')
+    {
+        const uint32_t sample_rate{ static_cast<uint32_t>(state.geometry.timing.sample_rate + 0.5) };
+        if (!write_audio_wav(audio_path, g_audio_samples, sample_rate))
+        {
+            std::fprintf(stderr, "Failed to write bsnes audio dump: %s\n", audio_path);
+            retro_unload_game();
+            retro_deinit();
+            dlclose(handle);
+            return 1;
+        }
+        std::printf("Audio dump: %s sample_frames=%zu sample_rate=%u\n",
+                    audio_path, g_audio_samples.size() / 2u, sample_rate);
     }
 
     retro_unload_game();

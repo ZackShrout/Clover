@@ -28,6 +28,13 @@ namespace
         0xf6u, 0xdau, 0x00u, 0xbau, 0xf4u, 0xc4u, 0xf4u, 0xddu,
         0x5du, 0xd0u, 0xdbu, 0x1fu, 0x00u, 0x00u, 0xc0u, 0xffu
     };
+
+    void copy_dsp_state_bytes(unsigned char** output, void* input, size_t size)
+    {
+        std::copy_n(static_cast<const uint8_t*>(input), size, *output);
+        *output += size;
+    }
+
 } // anonymous namespace
 
 namespace clover::core
@@ -158,6 +165,30 @@ namespace clover::core
         _apu_to_cpu_ports[port & 0x03u] = value;
     }
 
+    void apu_t::begin_audio_frame() noexcept
+    {
+        _dsp.set_output(_audio_samples.data(), static_cast<int>(_audio_samples.size()));
+    }
+
+    std::span<const int16_t> apu_t::audio_samples() const noexcept
+    {
+        if (_dsp.output_overflowed())
+            return { _audio_samples.data(), _audio_samples.size() };
+
+        const size_t sample_count{
+            std::min(static_cast<size_t>(_dsp.sample_count()), _audio_samples.size())
+        };
+        return {
+            _audio_samples.data(),
+            sample_count
+        };
+    }
+
+    bool apu_t::audio_output_overflowed() const noexcept
+    {
+        return _dsp.output_overflowed();
+    }
+
     apu_state_t apu_t::state() const noexcept
     {
         return {
@@ -217,6 +248,14 @@ namespace clover::core
     uint8_t apu_t::peek_dsp_register(uint8_t address) const noexcept
     {
         return static_cast<uint8_t>(_dsp.read(address & 0x7fu));
+    }
+
+    std::array<uint8_t, SPC_DSP::state_size> apu_t::dsp_state() noexcept
+    {
+        std::array<uint8_t, SPC_DSP::state_size> state{};
+        unsigned char* output{ state.data() };
+        _dsp.copy_state(&output, copy_dsp_state_bytes);
+        return state;
     }
 
     uint16_t apu_t::instruction_trace_count() const noexcept
@@ -1087,7 +1126,11 @@ namespace clover::core
         else
             _registers.psw &= static_cast<uint8_t>(~k_psw_overflow);
 
-        if (_registers.y < static_cast<uint8_t>(_registers.x << 1u))
+        // The S-SMP compares Y with the full nine-bit X * 2 value here.
+        // Narrowing the product to eight bits selects the overflow algorithm
+        // incorrectly for every divisor with bit 7 set.
+        if (static_cast<uint16_t>(_registers.y)
+            < (static_cast<uint16_t>(_registers.x) << 1u))
         {
             _registers.a = static_cast<uint8_t>(ya / _registers.x);
             _registers.y = static_cast<uint8_t>(ya % _registers.x);

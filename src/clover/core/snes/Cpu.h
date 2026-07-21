@@ -7,6 +7,7 @@
 
 #include "clover/core/snes/Timing.h"
 
+#include <array>
 #include <cstdint>
 
 namespace clover::core
@@ -57,6 +58,8 @@ namespace clover::core
         uint16_t quotient{ 0 };
         uint16_t multiply_or_remainder{ 0 };
         uint16_t auto_joypad_busy_clocks{ 0 };
+        uint16_t auto_joypad_latched_1{ 0 };
+        uint16_t auto_joypad_latched_2{ 0 };
         uint16_t joy1{ 0 };
         uint16_t joy2{ 0 };
         uint16_t joy3{ 0 };
@@ -97,6 +100,7 @@ namespace clover::core
                          dma_t& dma,
                          interrupt_controller_t& interrupts) noexcept;
         [[nodiscard]] const cpu_state_t& state() const noexcept;
+        void set_controller_state(uint8_t port, uint16_t state) noexcept;
         void set_interrupt_poll_phase_for_testing(master_clock_delta_t phase) noexcept;
         [[nodiscard]] master_clock_delta_t interrupt_poll_phase_for_testing() const noexcept;
 
@@ -148,6 +152,7 @@ namespace clover::core
         uint8_t _divide_counter{ 0 };
         uint32_t _math_shift{ 0 };
         uint64_t _placeholder_opcode_count{ 0u };
+        std::array<uint16_t, 2> _controller_state{};
 
         friend struct cpu_step_executor_t;
         friend bool execute_system_opcode(uint8_t opcode,

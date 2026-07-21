@@ -11,6 +11,7 @@
 #include <array>
 #include <cstdint>
 #include <optional>
+#include <span>
 
 namespace clover::core
 {
@@ -89,6 +90,9 @@ namespace clover::core
     struct apu_t
     {
     public:
+        static constexpr uint32_t k_audio_sample_rate_hz{ 32'040u };
+        static constexpr size_t k_audio_buffer_sample_capacity{ 4096u };
+
         void power_on() noexcept;
         void reset() noexcept;
         void step(master_clock_delta_t master_clocks) noexcept;
@@ -100,9 +104,13 @@ namespace clover::core
         void write_cpu_port(uint16_t address, uint8_t value) noexcept;
         [[nodiscard]] uint8_t read_input_port(uint8_t port) const noexcept;
         void write_output_port(uint8_t port, uint8_t value) noexcept;
+        void begin_audio_frame() noexcept;
+        [[nodiscard]] std::span<const int16_t> audio_samples() const noexcept;
+        [[nodiscard]] bool audio_output_overflowed() const noexcept;
         [[nodiscard]] apu_state_t state() const noexcept;
         [[nodiscard]] uint8_t peek_ram(uint16_t address) const noexcept;
         [[nodiscard]] uint8_t peek_dsp_register(uint8_t address) const noexcept;
+        [[nodiscard]] std::array<uint8_t, SPC_DSP::state_size> dsp_state() noexcept;
         [[nodiscard]] uint16_t instruction_trace_count() const noexcept;
         [[nodiscard]] const std::array<apu_state_t::trace_entry_t, k_apu_trace_capacity>& instruction_trace() const noexcept;
         [[nodiscard]] uint16_t io_trace_count() const noexcept;
@@ -159,7 +167,7 @@ namespace clover::core
         // SMP clock domain, so we convert master clocks to SMP clocks using the
         // same frequency ratio instead of multiplying each wait unit by 21.
         static constexpr int64_t k_master_clock_frequency_hz{ 21477272 };
-        static constexpr int64_t k_smp_clock_frequency_hz{ 32040 * 64 };
+        static constexpr int64_t k_smp_clock_frequency_hz{ k_audio_sample_rate_hz * 64 };
         static constexpr int64_t k_scheduler_zero_credit{ 0 };
         static constexpr int64_t k_force_cpu_sync_credit{
             768ll * 24ll * 24'000'000ll
@@ -328,6 +336,9 @@ namespace clover::core
         SPC_DSP _dsp{};
         master_clock_delta_t _dsp_clock_remainder{ 0 };
         bool _dsp_initialized{ false };
+        // 4096 interleaved values hold about 64 ms of stereo 32.04 kHz audio, covering
+        // the longest PAL/interlaced video frame with headroom.
+        std::array<int16_t, k_audio_buffer_sample_capacity> _audio_samples{};
         timer_t<128> _timer0{};
         timer_t<128> _timer1{};
         timer_t<16> _timer2{};

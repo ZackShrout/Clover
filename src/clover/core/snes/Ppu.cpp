@@ -659,7 +659,10 @@ namespace clover::core
         _oam_write_trace_count = 0;
         _oam_write_trace_start_frame = 0;
         _counter_latch = {};
-        _external_latch_enabled = false;
+        // S-CPU WRIO ($4201) powers on as $ff.  Its bit 7 gates software
+        // latching through SLHV ($2137), so counter latching is enabled until
+        // software explicitly clears that bit.
+        _external_latch_enabled = true;
         _ppu1_mdr = 0;
         _ppu2_mdr = 0;
         _oam_state.latched_address = 0;
@@ -1431,28 +1434,10 @@ namespace clover::core
         }
 
         advance_mosaic_scanline(scanline);
-        evaluate_background_scanline(scanline);
+        prepare_background_scanline(scanline);
         clear_scanline_compositor_outputs();
         begin_object_scanline(scanline);
         const size_t render_buffer_index{ _object_layer_state.active_buffer ? 0u : 1u };
-        for (uint8_t background_index{ 0 }; background_index < _background_layer_state.size(); ++background_index)
-        {
-            auto& background{ _background_layer_state[background_index] };
-            background.render_tiles = background.tiles;
-            background.rendering_index = 0u;
-            background.pixel_counter = static_cast<uint8_t>(_bg_state.hoffset[background_index] & 0x07u);
-            background.mosaic_hcounter = _mosaic_state.size;
-            background.mosaic_pixel = {};
-            if (background.tile_count != 0u)
-            {
-                for (uint8_t pair_index{ 0 }; pair_index < background.render_tiles[0].row_pair_count; ++pair_index)
-                {
-                    background.render_tiles[0].row_data[pair_index] = static_cast<uint16_t>(
-                        background.render_tiles[0].row_data[pair_index]
-                        >> (background.pixel_counter << 1u));
-                }
-            }
-        }
 
         _object_layer_state.rendered_scanline = scanline;
         _object_layer_state.render_tile_count = 0u;
@@ -1472,7 +1457,31 @@ namespace clover::core
         _pipeline_state.next_object_evaluate_dot = 0u;
         _pipeline_state.next_pixel_dot = 58u;
         _pipeline_state.next_pixel_x = 0u;
+        _pipeline_state.background_fetch_state_dirty = false;
         _pipeline_state.object_fetch_completed = false;
+    }
+
+    void ppu_t::prepare_background_scanline(uint16_t scanline) noexcept
+    {
+        evaluate_background_scanline(scanline);
+        for (uint8_t background_index{ 0 }; background_index < _background_layer_state.size(); ++background_index)
+        {
+            auto& background{ _background_layer_state[background_index] };
+            background.render_tiles = background.tiles;
+            background.rendering_index = 0u;
+            background.pixel_counter = static_cast<uint8_t>(_bg_state.hoffset[background_index] & 0x07u);
+            background.mosaic_hcounter = _mosaic_state.size;
+            background.mosaic_pixel = {};
+            if (background.tile_count != 0u)
+            {
+                for (uint8_t pair_index{ 0 }; pair_index < background.render_tiles[0].row_pair_count; ++pair_index)
+                {
+                    background.render_tiles[0].row_data[pair_index] = static_cast<uint16_t>(
+                        background.render_tiles[0].row_data[pair_index]
+                        >> (background.pixel_counter << 1u));
+                }
+            }
+        }
     }
 
     void ppu_t::evaluate_object_slot(uint16_t scanline, uint8_t slot) noexcept
@@ -1837,6 +1846,22 @@ namespace clover::core
         if (scanline == 0u || scanline >= active_visible_scanlines() || x >= framebuffer_t::k_width)
             return;
 
+        if (_display.disabled)
+        {
+            if (!_frame_capture_enabled)
+                return;
+
+            constexpr size_t k_non_overscan_top_border{ 8u };
+            const size_t row_index{
+                static_cast<size_t>(scanline - 1u) + (_screen_state.overscan ? 0u : k_non_overscan_top_border)
+            };
+            if (row_index < framebuffer_t::k_height)
+            {
+                _composed_frame.data()[row_index * framebuffer_t::k_width + x] = 0xff000000u;
+            }
+            return;
+        }
+
         ppu_pixel_candidate_t above{};
         ppu_pixel_candidate_t below{};
         const ppu_pixel_candidate_t object_candidate{ resolve_object_pixel_candidate(x) };
@@ -1922,6 +1947,12 @@ namespace clover::core
 
     void ppu_t::process_scanline_range(uint16_t scanline, uint16_t start_dot, uint16_t end_dot) noexcept
     {
+        if (_pipeline_state.background_fetch_state_dirty && end_dot >= 56u)
+        {
+            prepare_background_scanline(scanline);
+            _pipeline_state.background_fetch_state_dirty = false;
+        }
+
         while (_pipeline_state.next_object_evaluate_dot <= end_dot
             && _pipeline_state.next_object_evaluate_dot <= 1016u)
         {
@@ -2800,6 +2831,18 @@ namespace clover::core
 
         _registers[offset] = value;
 
+        const timing_snapshot_t write_timing{ timing() };
+        const bool changes_background_fetch_state{
+            (address >= 0x2105u && address <= 0x2114u)
+            || (address >= 0x211au && address <= 0x2120u)
+        };
+        if (changes_background_fetch_state
+            && _pipeline_state.initialized_scanline == write_timing.raster.scanline
+            && write_timing.raster.dot < 56u)
+        {
+            _pipeline_state.background_fetch_state_dirty = true;
+        }
+
         switch (address)
         {
         case 0x2101u:
@@ -3442,6 +3485,9 @@ namespace clover::core
 
     void ppu_t::render_placeholder_frame() noexcept
     {
-        _composed_frame.clear(snes_color_to_rgba8(_cgram[0], _display.brightness));
+        // The fixed 240-line output includes padding around a 224-line frame.
+        // Those rows are not PPU backdrop pixels: bsnes leaves them cleared and
+        // only writes CGRAM color 0 while rendering active scanlines.
+        _composed_frame.clear();
     }
 }

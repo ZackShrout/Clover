@@ -32,6 +32,29 @@ cmake --build build
 ctest --test-dir build
 ```
 
+### SDL desktop app
+
+CLion can import the checked-in **SDL Release** CMake preset. Select its
+`clover_sdl` target and Run; CLion will build the optimized executable first.
+With no program arguments it loads the configured
+`CLOVER_SDL_DEFAULT_ROM_PATH`, which currently defaults to the local Mortal Kombat
+ROM. A different ROM can still be passed as the first program argument.
+
+Add `--capture <new-directory>` to record a deterministic investigation
+bundle from power-on. The directory must not already exist. It contains the
+compressed SNES joypad movie (`joypad1.script`), raw core audio (`audio.wav`),
+per-frame audio sample ranges (`frames.csv`), and a ROM/audio manifest. Press
+F8 while playing to mark the next emulated frame and save its screenshot.
+
+Replay a captured input movie in either headless runner with:
+
+```bash
+CLOVER_JOYPAD1_SCRIPT_FILE=/path/to/capture/joypad1.script \
+    ./clover_rom_bringup /path/to/game.sfc 1000 10000000
+```
+
+The same environment variable is accepted by `clover_bsnes_bringup`.
+
 ## Core Validation
 
 Use the low-noise validation path for emulator core work. This keeps Clover and bsnes comparisons symmetric by default and leaves heavier bringup diagnostics opt-in.

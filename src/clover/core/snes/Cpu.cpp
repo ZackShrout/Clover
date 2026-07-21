@@ -420,7 +420,7 @@ namespace clover::core
             uint8_t serial_data{ 0 };
             if (_io.controller_port_1_latch)
             {
-                serial_data = static_cast<uint8_t>((_io.joy1 >> 15u) & 0x01u);
+                serial_data = static_cast<uint8_t>((_controller_state[0] >> 15u) & 0x01u);
             }
             else if (_io.controller_port_1_shift_count >= 16u)
             {
@@ -441,7 +441,7 @@ namespace clover::core
             uint8_t serial_data{ 0 };
             if (_io.controller_port_1_latch)
             {
-                serial_data = static_cast<uint8_t>((_io.joy2 >> 15u) & 0x01u);
+                serial_data = static_cast<uint8_t>((_controller_state[1] >> 15u) & 0x01u);
             }
             else if (_io.controller_port_2_shift_count >= 16u)
             {
@@ -573,6 +573,11 @@ namespace clover::core
             const bool latch{ (value & 0x01u) != 0 };
             if (_io.controller_port_1_latch != latch)
             {
+                if (_io.controller_port_1_latch && !latch)
+                {
+                    _io.joy1 = _controller_state[0];
+                    _io.joy2 = _controller_state[1];
+                }
                 _io.controller_port_1_latch = latch;
                 _io.controller_port_1_shift_count = 0;
                 _io.controller_port_2_shift_count = 0;
@@ -596,9 +601,6 @@ namespace clover::core
             {
                 if (_io.virq_enabled && !_io.hirq_enabled && _interrupts->sample().irq_line)
                     _interrupts->force_irq_transition();
-
-                if (_io.nmi_enabled && _interrupts->sample().nmi_line)
-                    _interrupts->force_nmi_transition();
 
                 repoll_irq_on_register_write(*_interrupts);
                 _interrupts->set_irq_lock();
@@ -1018,6 +1020,7 @@ namespace clover::core
 
         if (_io.auto_joypad_busy_clocks != 0)
         {
+            const uint16_t previous_busy{ _io.auto_joypad_busy_clocks };
             if (elapsed_master_clocks >= _io.auto_joypad_busy_clocks)
             {
                 _io.auto_joypad_busy_clocks = 0;
@@ -1026,6 +1029,30 @@ namespace clover::core
             }
             else
                 _io.auto_joypad_busy_clocks = static_cast<uint16_t>(_io.auto_joypad_busy_clocks - elapsed_master_clocks);
+
+            constexpr uint16_t k_first_auto_joypad_shift_clock{ 384u };
+            constexpr uint16_t k_auto_joypad_shift_period{ 256u };
+            const auto completed_bits = [](uint16_t busy_clocks) noexcept -> uint8_t
+            {
+                const uint16_t elapsed{ static_cast<uint16_t>(k_auto_joypad_busy_clocks - busy_clocks) };
+                if (elapsed < k_first_auto_joypad_shift_clock)
+                    return 0u;
+                return static_cast<uint8_t>(std::min<uint16_t>(
+                    16u,
+                    static_cast<uint16_t>(1u + (elapsed - k_first_auto_joypad_shift_clock)
+                        / k_auto_joypad_shift_period)
+                ));
+            };
+            if (completed_bits(previous_busy) != completed_bits(_io.auto_joypad_busy_clocks))
+            {
+                const uint8_t bit_count{ completed_bits(_io.auto_joypad_busy_clocks) };
+                _io.joy1 = bit_count == 0u
+                    ? 0u
+                    : static_cast<uint16_t>(_io.auto_joypad_latched_1 >> (16u - bit_count));
+                _io.joy2 = bit_count == 0u
+                    ? 0u
+                    : static_cast<uint16_t>(_io.auto_joypad_latched_2 >> (16u - bit_count));
+            }
         }
 
         _io.in_hblank = cpu_in_hblank(current_timing);
@@ -1050,6 +1077,12 @@ namespace clover::core
 
         if (entered_vblank && _io.auto_joypad_poll)
         {
+            _io.auto_joypad_latched_1 = _controller_state[0];
+            _io.auto_joypad_latched_2 = _controller_state[1];
+            _io.joy1 = 0;
+            _io.joy2 = 0;
+            _io.joy3 = 0;
+            _io.joy4 = 0;
             _io.auto_joypad_busy_clocks = k_auto_joypad_busy_clocks;
             _io.controller_port_1_shift_count = 0;
             _io.controller_port_2_shift_count = 0;
@@ -1147,6 +1180,12 @@ namespace clover::core
     const cpu_state_t& cpu_t::state() const noexcept
     {
         return _state;
+    }
+
+    void cpu_t::set_controller_state(uint8_t port, uint16_t state) noexcept
+    {
+        if (port < _controller_state.size())
+            _controller_state[port] = state;
     }
 
     void cpu_t::set_interrupt_poll_phase_for_testing(master_clock_delta_t phase) noexcept

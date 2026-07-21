@@ -382,6 +382,28 @@ namespace
         if (cpu_dma_enable_console.general_dma_pending())
             return fail("cpu_dma_enable_completed_on_cpu_edge");
 
+        static clover::core::console_t cpu_mmio_dma_console{};
+        cpu_mmio_dma_console.power_on();
+        cpu_mmio_dma_console.write_u8(0x002181u, 0x00u);
+        cpu_mmio_dma_console.write_u8(0x002182u, 0x10u);
+        cpu_mmio_dma_console.write_u8(0x002183u, 0x00u);
+        cpu_mmio_dma_console.write_u8(0x004300u, 0x08u);
+        cpu_mmio_dma_console.write_u8(0x004301u, 0x80u);
+        cpu_mmio_dma_console.write_u8(0x004302u, 0x00u);
+        cpu_mmio_dma_console.write_u8(0x004303u, 0x80u);
+        cpu_mmio_dma_console.write_u8(0x004304u, 0xc0u);
+        cpu_mmio_dma_console.write_u8(0x004305u, 0x20u);
+        cpu_mmio_dma_console.write_u8(0x004306u, 0x00u);
+        cpu_mmio_dma_console.write_u8(0x00420bu, 0x01u);
+        for (uint8_t step_index{ 0 }; step_index < 4u && cpu_mmio_dma_console.general_dma_pending(); ++step_index)
+            static_cast<void>(cpu_mmio_dma_console.step_hardware());
+        if (cpu_mmio_dma_console.general_dma_pending()
+            || cpu_mmio_dma_console.read_u8(0x002181u) != 0x20u
+            || cpu_mmio_dma_console.read_u8(0x002182u) != 0x10u)
+        {
+            return fail("dma_cpu_mmio_writes_commit_per_unit");
+        }
+
         static clover::core::console_t cpu_hdma_enable_console{};
         cpu_hdma_enable_console.power_on();
         cpu_hdma_enable_console.write_u8(0x004310u, 0x01u);
@@ -872,6 +894,28 @@ namespace
         if (apu_console.apu_state().pc < 0x1237u)
             return fail("apu_entry_jump");
 
+        static clover::core::console_t audio_console{};
+        audio_console.power_on();
+        audio_console.run_frame();
+        const std::span<const int16_t> audio_samples{ audio_console.audio_samples() };
+        if (audio_samples.empty()
+            || (audio_samples.size() & 1u) != 0u
+            || audio_samples.size() > clover::core::apu_t::k_audio_buffer_sample_capacity
+            || audio_console.audio_output_overflowed())
+        {
+            return fail("apu_frame_audio_output");
+        }
+
+        static std::array<uint8_t, 64 * 1024> dsp_test_ram{};
+        std::array<int16_t, 2> deliberately_short_output{};
+        SPC_DSP dsp_output_contract{};
+        dsp_output_contract.init(dsp_test_ram.data(), dsp_test_ram.data());
+        dsp_output_contract.set_output(deliberately_short_output.data(),
+                                       static_cast<int>(deliberately_short_output.size()));
+        dsp_output_contract.run(64);
+        if (!dsp_output_contract.output_overflowed())
+            return fail("dsp_output_overflow_detection");
+
         return 0;
     }
 
@@ -910,6 +954,23 @@ namespace
         {
             return fail("joyser_shared_latch_reset");
         }
+
+        constexpr uint16_t controller_pattern{ 0xa5b0u };
+        controller_console.set_controller_state(0u, controller_pattern);
+        controller_console.write_u8(0x004016u, 0x01u);
+        if ((controller_console.read_u8(0x004016u) & 0x01u) != 0x01u)
+            return fail("joyser_live_latch");
+        controller_console.write_u8(0x004016u, 0x00u);
+
+        uint16_t shifted_pattern{ 0u };
+        for (uint8_t bit{ 0 }; bit < 16u; ++bit)
+        {
+            shifted_pattern = static_cast<uint16_t>(
+                (shifted_pattern << 1u) | (controller_console.read_u8(0x004016u) & 0x01u)
+            );
+        }
+        if (shifted_pattern != controller_pattern)
+            return fail("joyser_physical_state_shift");
 
         return 0;
     }
@@ -998,6 +1059,7 @@ int main()
                     std::array<std::byte, 0x8000> cartridge_image{};
                     cartridge_image[0x0000] = std::byte{ 0x42 };
                     cartridge_image[0x1234] = std::byte{ 0x99 };
+                    cartridge_image[0x7fd8u] = std::byte{ 0x03 };
                     cartridge_image[0x7ffcu] = std::byte{ 0x34 };
                     cartridge_image[0x7ffdu] = std::byte{ 0x12 };
 
@@ -1022,6 +1084,15 @@ int main()
                     if (cartridge_console.read_u8(0x008000u) != 0x42u)
                         return fail("cartridge_loaded_ignores_bootstrap_writes");
 
+                    cartridge_console.write_u8(0x7003d9u, 0x29u);
+                    cartridge_console.write_u8(0x7003dau, 0x18u);
+                    if (cartridge_console.read_u8(0x7003d9u) != 0x29u
+                        || cartridge_console.read_u8(0x7003dau) != 0x18u
+                        || cartridge_console.read_u8(0xf003d9u) != 0x29u)
+                    {
+                        return fail("cartridge_lorom_sram_map");
+                    }
+
                     return 0;
                 }();
                 result != 0)
@@ -1042,6 +1113,7 @@ int main()
                     hirom_image[0xc000] = std::byte{ 0x27 };
                     hirom_image[0xffd5u] = std::byte{ 0x01 };
                     hirom_image[0xffd6u] = std::byte{ 0x09 };
+                    hirom_image[0xffd8u] = std::byte{ 0x03 };
                     hirom_image[0xffdcu] = std::byte{ 0xcb };
                     hirom_image[0xffddu] = std::byte{ 0xed };
                     hirom_image[0xffdeu] = std::byte{ 0x34 };
@@ -1070,6 +1142,14 @@ int main()
                         || hirom_console.read_u8(0x00fffdu) != 0x56u)
                     {
                         return fail("cartridge_hirom_map");
+                    }
+
+
+                    hirom_console.write_u8(0x206123u, 0x5au);
+                    if (hirom_console.read_u8(0x206123u) != 0x5au
+                        || hirom_console.read_u8(0xa06123u) != 0x5au)
+                    {
+                        return fail("cartridge_hirom_sram_map");
                     }
 
                     return 0;
@@ -3171,21 +3251,25 @@ int main()
     if (ppu_register_console.read_u8(0x002137u) != 0x5au)
         return fail("slhv_returns_open_bus");
 
+    const clover::core::timing_snapshot_t power_on_latched_timing{ ppu_register_console.timing() };
     static_cast<void>(ppu_register_console.read_u8(0x002137u));
-    const uint16_t unlatching_hcounter{
+    const uint16_t power_on_latched_hcounter{
         static_cast<uint16_t>(ppu_register_console.read_u8(0x00213cu)
             | ((ppu_register_console.read_u8(0x00213cu) & 0x01u) << 8u))
     };
-    const uint16_t unlatching_vcounter{
+    const uint16_t power_on_latched_vcounter{
         static_cast<uint16_t>(ppu_register_console.read_u8(0x00213du)
             | ((ppu_register_console.read_u8(0x00213du) & 0x01u) << 8u))
     };
-    const uint8_t stat78_without_external_latch{ ppu_register_console.read_u8(0x00213fu) };
-    if ((stat78_without_external_latch & 0x40u) == 0)
-        return fail("stat78_without_external_latch");
+    const uint8_t stat78_power_on_latch{ ppu_register_console.read_u8(0x00213fu) };
+    if ((stat78_power_on_latch & 0x40u) == 0)
+        return fail("stat78_power_on_latch");
 
-    if (unlatching_hcounter != 0u || unlatching_vcounter != 0u)
-        return fail("slhv_requires_external_latch");
+    if (power_on_latched_hcounter != power_on_latched_timing.raster.dot
+        || power_on_latched_vcounter != power_on_latched_timing.raster.scanline)
+    {
+        return fail("slhv_power_on_enabled");
+    }
 
     const clover::core::timing_snapshot_t latched_timing{ ppu_register_console.timing() };
     ppu_register_console.write_u8(0x004201u, 0x80u);
@@ -3240,6 +3324,9 @@ int main()
     ppu_framebuffer_console.write_u8(0x002107u, 0x00u);
     ppu_framebuffer_console.write_u8(0x00210bu, 0x01u);
     ppu_framebuffer_console.write_u8(0x00212cu, 0x01u);
+    ppu_framebuffer_console.write_u8(0x002121u, 0x00u);
+    ppu_framebuffer_console.write_u8(0x002122u, 0xe0u);
+    ppu_framebuffer_console.write_u8(0x002122u, 0x03u);
     ppu_framebuffer_console.write_u8(0x002121u, 0x01u);
     ppu_framebuffer_console.write_u8(0x002122u, 0x1fu);
     ppu_framebuffer_console.write_u8(0x002122u, 0x00u);
@@ -3267,6 +3354,28 @@ int main()
         || ppu_pixels[first_visible_pixel + clover::core::framebuffer_t::k_width] != 0xffff0000u)
     {
         return fail("ppu_framebuffer_bg1_tile");
+    }
+
+    constexpr size_t k_last_visible_row{ 231u };
+    constexpr size_t k_first_bottom_border_row{ 232u };
+    if (ppu_pixels[0] != 0xff000000u
+        || ppu_pixels[(k_first_visible_row - 1u) * clover::core::framebuffer_t::k_width] != 0xff000000u
+        || ppu_pixels[k_first_bottom_border_row * clover::core::framebuffer_t::k_width] != 0xff000000u
+        || ppu_pixels[(clover::core::framebuffer_t::k_height - 1u)
+            * clover::core::framebuffer_t::k_width] != 0xff000000u
+        || ppu_pixels[k_last_visible_row * clover::core::framebuffer_t::k_width] == 0xff000000u)
+    {
+        return fail("ppu_non_overscan_border_black");
+    }
+
+    ppu_framebuffer_console.write_u8(0x002100u, 0x8fu);
+    ppu_framebuffer_console.run_frame();
+    const uint32_t* const forced_blank_pixels{ ppu_framebuffer_console.framebuffer().data() };
+    if (forced_blank_pixels[first_visible_pixel] != 0xff000000u
+        || forced_blank_pixels[k_last_visible_row * clover::core::framebuffer_t::k_width]
+            != 0xff000000u)
+    {
+        return fail("ppu_forced_blank_outputs_black");
     }
 
     ppu_register_console.write_u8(0x002102u, 0x00u);

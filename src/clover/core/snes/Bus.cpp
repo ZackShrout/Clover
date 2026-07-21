@@ -17,6 +17,8 @@
 
 namespace
 {
+    [[nodiscard]] uint64_t parse_trace_u64_env(const char* name, uint64_t fallback) noexcept;
+
     constexpr uint32_t k_watch_brightness_offset{ 0x0daeu };
     constexpr uint32_t k_watch_hdmaen_offset{ 0x0d9fu };
     constexpr uint32_t k_watch_lowram_target{ 0x0003u };
@@ -30,6 +32,8 @@ namespace
         bool enabled{ false };
         uint32_t address_min{ 0u };
         uint32_t address_max{ 0u };
+        uint64_t frame_min{ 0u };
+        uint64_t frame_max{ UINT64_MAX };
     };
 
     [[nodiscard]] wram_write_live_trace_filter_t load_wram_write_live_trace_filter() noexcept
@@ -60,6 +64,10 @@ namespace
 
         if (filter.address_min > filter.address_max)
             std::swap(filter.address_min, filter.address_max);
+        filter.frame_min = parse_trace_u64_env("CLOVER_LIVE_WRAM_TRACE_FRAME_MIN", 0u);
+        filter.frame_max = parse_trace_u64_env("CLOVER_LIVE_WRAM_TRACE_FRAME_MAX", UINT64_MAX);
+        if (filter.frame_min > filter.frame_max)
+            std::swap(filter.frame_min, filter.frame_max);
         return filter;
     }
 
@@ -123,7 +131,17 @@ namespace
     struct ppu_register_live_trace_filter_t
     {
         bool enabled{ false };
-        uint16_t address{ 0 };
+        uint16_t address_min{ 0 };
+        uint16_t address_max{ 0 };
+        uint64_t frame_min{ 0 };
+        uint64_t frame_max{ 0 };
+    };
+
+    struct system_register_live_trace_filter_t
+    {
+        bool enabled{ false };
+        uint16_t address_min{ 0 };
+        uint16_t address_max{ 0 };
         uint64_t frame_min{ 0 };
         uint64_t frame_max{ 0 };
     };
@@ -145,13 +163,53 @@ namespace
     {
         ppu_register_live_trace_filter_t filter{};
         const char* addr_raw{ std::getenv("CLOVER_LIVE_PPU_REG_TRACE_ADDR") };
-        if (addr_raw == nullptr || *addr_raw == '\0')
+        const char* addr_min_raw{ std::getenv("CLOVER_LIVE_PPU_REG_TRACE_ADDR_MIN") };
+        if ((addr_raw == nullptr || *addr_raw == '\0')
+            && (addr_min_raw == nullptr || *addr_min_raw == '\0'))
+        {
+            return filter;
+        }
+
+        filter.enabled = true;
+        if (addr_raw != nullptr && *addr_raw != '\0')
+        {
+            filter.address_min = static_cast<uint16_t>(
+                parse_trace_u64_env("CLOVER_LIVE_PPU_REG_TRACE_ADDR", 0u) & 0xffffu
+            );
+            filter.address_max = filter.address_min;
+        }
+        else
+        {
+            filter.address_min = static_cast<uint16_t>(
+                parse_trace_u64_env("CLOVER_LIVE_PPU_REG_TRACE_ADDR_MIN", 0x2100u) & 0xffffu
+            );
+            filter.address_max = static_cast<uint16_t>(
+                parse_trace_u64_env("CLOVER_LIVE_PPU_REG_TRACE_ADDR_MAX", 0x2133u) & 0xffffu
+            );
+            if (filter.address_min > filter.address_max)
+                std::swap(filter.address_min, filter.address_max);
+        }
+        filter.frame_min = parse_trace_u64_env("CLOVER_LIVE_PPU_REG_TRACE_FRAME_MIN", 0u);
+        filter.frame_max = parse_trace_u64_env("CLOVER_LIVE_PPU_REG_TRACE_FRAME_MAX", UINT64_MAX);
+        if (filter.frame_min > filter.frame_max)
+            std::swap(filter.frame_min, filter.frame_max);
+        return filter;
+    }
+
+    [[nodiscard]] system_register_live_trace_filter_t load_system_register_live_trace_filter() noexcept
+    {
+        system_register_live_trace_filter_t filter{};
+        const char* min_raw{ std::getenv("CLOVER_LIVE_SYSTEM_REG_TRACE_ADDR_MIN") };
+        if (min_raw == nullptr || *min_raw == '\0')
             return filter;
 
         filter.enabled = true;
-        filter.address = static_cast<uint16_t>(parse_trace_u64_env("CLOVER_LIVE_PPU_REG_TRACE_ADDR", 0u) & 0xffffu);
-        filter.frame_min = parse_trace_u64_env("CLOVER_LIVE_PPU_REG_TRACE_FRAME_MIN", 0u);
-        filter.frame_max = parse_trace_u64_env("CLOVER_LIVE_PPU_REG_TRACE_FRAME_MAX", UINT64_MAX);
+        filter.address_min = static_cast<uint16_t>(parse_trace_u64_env("CLOVER_LIVE_SYSTEM_REG_TRACE_ADDR_MIN", 0u));
+        filter.address_max = static_cast<uint16_t>(parse_trace_u64_env("CLOVER_LIVE_SYSTEM_REG_TRACE_ADDR_MAX", filter.address_min));
+        filter.frame_min = parse_trace_u64_env("CLOVER_LIVE_SYSTEM_REG_TRACE_FRAME_MIN", 0u);
+        filter.frame_max = parse_trace_u64_env("CLOVER_LIVE_SYSTEM_REG_TRACE_FRAME_MAX", UINT64_MAX);
+        if (filter.address_min > filter.address_max)
+            std::swap(filter.address_min, filter.address_max);
         if (filter.frame_min > filter.frame_max)
             std::swap(filter.frame_min, filter.frame_max);
         return filter;
@@ -400,10 +458,15 @@ namespace clover::core
     {
         if (_ppu == nullptr || _pending_ppu_write_count == 0)
         {
-            if (_ppu != nullptr)
-                return _ppu->step(elapsed_master_clocks);
-
-            return {};
+            const ppu_step_result_t result{
+                _ppu != nullptr ? _ppu->step(elapsed_master_clocks) : ppu_step_result_t{}
+            };
+            // DMA B-bus writes to CPU MMIO (notably $2180) take effect at the
+            // end of the current eight-clock transfer unit. Committing here
+            // prevents a long DMA from accumulating more writes than the
+            // small intra-cycle queue can hold.
+            commit_cpu_writes();
+            return result;
         }
 
         ppu_step_result_t aggregate{};
@@ -441,6 +504,7 @@ namespace clover::core
 
         _pending_ppu_writes = remaining_writes;
         _pending_ppu_write_count = remaining_write_count;
+        commit_cpu_writes();
         return aggregate;
     }
 
@@ -566,12 +630,18 @@ namespace clover::core
         return std::span<const uint8_t>{ _wram.data() + clamped_offset, clamped_length };
     }
 
+    void bus_t::set_apu_port_trace_enabled(bool enabled) noexcept
+    {
+        _apu_port_trace_enabled = enabled;
+        _apu_port_trace_count = 0;
+    }
+
     void bus_t::trace_cpu_apu_port_access(uint32_t address,
                                           uint8_t value,
                                           bool is_write,
                                           master_clock_delta_t apply_after_clocks) noexcept
     {
-        if (_cpu == nullptr || !is_apu_register_address(address))
+        if (!_apu_port_trace_enabled || _cpu == nullptr || !is_apu_register_address(address))
             return;
 
         const apu_port_trace_t entry{
@@ -581,7 +651,15 @@ namespace clover::core
             .is_write = is_write,
             .apply_after_clocks = apply_after_clocks,
             .timing = _ppu != nullptr ? _ppu->timing() : timing_snapshot_t{},
-            .cpu = _cpu->state()
+            .cpu = _cpu->state(),
+            .apu_ram_probe = _apu != nullptr
+                ? std::array<uint8_t, 7>{
+                    _apu->peek_ram(0x0047u), _apu->peek_ram(0x0048u),
+                    _apu->peek_ram(0x0090u), _apu->peek_ram(0x0091u),
+                    _apu->peek_ram(0x00c8u), _apu->peek_ram(0x00f4u),
+                    _apu->peek_ram(0x00f5u)
+                }
+                : std::array<uint8_t, 7>{}
         };
 
         if (_apu_port_trace_count < _apu_port_trace.size())
@@ -635,15 +713,18 @@ namespace clover::core
             }
 
             const uint32_t offset{ wram_offset(address) };
+            const uint64_t frame_index{ _ppu != nullptr ? _ppu->frame_index() : 0u };
             if (live_wram_trace_filter.enabled
                 && offset >= live_wram_trace_filter.address_min
-                && offset <= live_wram_trace_filter.address_max)
+                && offset <= live_wram_trace_filter.address_max
+                && frame_index >= live_wram_trace_filter.frame_min
+                && frame_index <= live_wram_trace_filter.frame_max)
             {
                 const timing_snapshot_t timing{ _ppu != nullptr ? _ppu->timing() : timing_snapshot_t{} };
                 const cpu_state_t cpu{ _cpu->state() };
                 std::printf("Bus WRAM write: frame=%llu scanline=%u dot=%u addr=%06x offset=%05x value=%02x "
                             "PB:%02x PC:%04x A:%04x X:%04x Y:%04x SP:%04x D:%04x DB:%02x P:%02x E:%u\n",
-                            static_cast<unsigned long long>(_ppu != nullptr ? _ppu->frame_index() : 0u),
+                            static_cast<unsigned long long>(frame_index),
                             static_cast<unsigned>(timing.raster.scanline),
                             static_cast<unsigned>(timing.raster.dot),
                             static_cast<unsigned>(address),
@@ -698,7 +779,8 @@ namespace clover::core
             static const ppu_register_live_trace_filter_t live_trace_filter{ load_ppu_register_live_trace_filter() };
             if (_cpu != nullptr
                 && live_trace_filter.enabled
-                && register_address == live_trace_filter.address
+                && register_address >= live_trace_filter.address_min
+                && register_address <= live_trace_filter.address_max
                 && frame_index >= live_trace_filter.frame_min
                 && frame_index <= live_trace_filter.frame_max)
             {
@@ -748,6 +830,30 @@ namespace clover::core
                           std::end(_system_register_write_trace),
                           std::begin(_system_register_write_trace));
                 _system_register_write_trace[_system_register_write_trace.size() - 1u] = entry;
+            }
+        }
+
+        if (_cpu != nullptr && (is_cpu_register_address(address) || is_dma_register_address(address)))
+        {
+            static const system_register_live_trace_filter_t live_filter{
+                load_system_register_live_trace_filter()
+            };
+            const uint16_t register_address{ static_cast<uint16_t>(address & 0xffffu) };
+            const uint64_t frame_index{ _ppu != nullptr ? _ppu->frame_index() : 0u };
+            if (live_filter.enabled
+                && register_address >= live_filter.address_min
+                && register_address <= live_filter.address_max
+                && frame_index >= live_filter.frame_min
+                && frame_index <= live_filter.frame_max)
+            {
+                const timing_snapshot_t timing{ _ppu != nullptr ? _ppu->timing() : timing_snapshot_t{} };
+                const cpu_state_t cpu{ _cpu->state() };
+                std::printf("Bus system write: frame=%llu scanline=%u dot=%u addr=%04x value=%02x "
+                            "PB:%02x PC:%04x A:%04x X:%04x Y:%04x SP:%04x D:%04x DB:%02x P:%02x E:%u\n",
+                            static_cast<unsigned long long>(frame_index), timing.raster.scanline,
+                            timing.raster.dot, register_address, value, cpu.pb, cpu.pc, cpu.a,
+                            cpu.x, cpu.y, cpu.sp, cpu.d, cpu.db, cpu.p,
+                            cpu.emulation_mode ? 1u : 0u);
             }
         }
 

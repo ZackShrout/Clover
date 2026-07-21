@@ -5,8 +5,10 @@
 
 #include "clover/core/snes/Cartridge.h"
 #include "clover/core/snes/Console.h"
+#include "InputScript.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -988,6 +990,73 @@ namespace
         return static_cast<bool>(output);
     }
 
+    [[nodiscard]] bool write_audio_wav(const std::filesystem::path& path,
+                                       const std::vector<int16_t>& samples,
+                                       uint32_t sample_rate)
+    {
+        const size_t sample_bytes{ samples.size() * sizeof(int16_t) };
+        if ((samples.size() & 1u) != 0u || sample_bytes > 0xffff'ffffu - 36u)
+            return false;
+
+        std::ofstream output{ path, std::ios::binary | std::ios::trunc };
+        if (!output)
+            return false;
+
+        const auto write_u16 = [&output](uint16_t value) {
+            const std::array<uint8_t, 2> bytes{
+                static_cast<uint8_t>(value), static_cast<uint8_t>(value >> 8u)
+            };
+            output.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+        };
+        const auto write_u32 = [&output](uint32_t value) {
+            const std::array<uint8_t, 4> bytes{
+                static_cast<uint8_t>(value), static_cast<uint8_t>(value >> 8u),
+                static_cast<uint8_t>(value >> 16u), static_cast<uint8_t>(value >> 24u)
+            };
+            output.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+        };
+        const uint32_t data_bytes{ static_cast<uint32_t>(sample_bytes) };
+        output.write("RIFF", 4);
+        write_u32(36u + data_bytes);
+        output.write("WAVEfmt ", 8);
+        write_u32(16u);
+        write_u16(1u);
+        write_u16(2u);
+        write_u32(sample_rate);
+        write_u32(sample_rate * 4u);
+        write_u16(4u);
+        write_u16(16u);
+        output.write("data", 4);
+        write_u32(data_bytes);
+        output.write(reinterpret_cast<const char*>(samples.data()), data_bytes);
+        return static_cast<bool>(output);
+    }
+
+    [[nodiscard]] bool write_apu_state_text(const std::filesystem::path& path,
+                                            const clover::core::apu_state_t& state)
+    {
+        std::ofstream output{ path, std::ios::trunc };
+        if (!output)
+            return false;
+        output << std::hex
+               << "pc=" << state.pc << " a=" << static_cast<unsigned>(state.a)
+               << " x=" << static_cast<unsigned>(state.x) << " y=" << static_cast<unsigned>(state.y)
+               << " sp=" << static_cast<unsigned>(state.sp) << " psw=" << static_cast<unsigned>(state.psw)
+               << std::dec << " credit=" << state.smp_clock_credit << '\n';
+        const auto write_timer = [&output](unsigned index, const clover::core::apu_state_t::timer_state_t& timer) {
+            output << 't' << index << " stage0=" << static_cast<unsigned>(timer.stage0)
+                   << " stage1=" << static_cast<unsigned>(timer.stage1)
+                   << " stage2=" << static_cast<unsigned>(timer.stage2)
+                   << " stage3=" << static_cast<unsigned>(timer.stage3)
+                   << " line=" << timer.line << " enable=" << timer.enable
+                   << " target=" << static_cast<unsigned>(timer.target) << '\n';
+        };
+        write_timer(0u, state.timer0);
+        write_timer(1u, state.timer1);
+        write_timer(2u, state.timer2);
+        return static_cast<bool>(output);
+    }
+
     [[nodiscard]] bool write_binary_blob(const std::filesystem::path& path,
                                          std::span<const uint8_t> values)
     {
@@ -1783,34 +1852,62 @@ namespace
         }
     }
 
-    void print_apu_port_trace(const clover::core::console_t& console)
+    void write_apu_port_trace(std::FILE* output, const clover::core::console_t& console)
     {
         const auto& trace{ console.apu_port_trace() };
         const uint16_t trace_count{ console.apu_port_trace_count() };
         if (trace_count == 0)
             return;
 
-        std::printf("APU port trace:\n");
+        std::fprintf(output, "APU port trace:\n");
         for (uint16_t index{ 0 }; index < trace_count; ++index)
         {
             const auto& entry{ trace[index] };
-            std::printf("  %c frame=%llu addr=%04x value=%02x apply=%u clk=%llu scanline=%u dot=%u PB:%02x PC:%04x A:%04x X:%04x Y:%04x SP:%04x P:%02x\n",
-                        entry.is_write ? 'W' : 'R',
-                        static_cast<unsigned long long>(entry.frame_index),
-                        static_cast<uint16_t>(entry.address & 0xffffu),
-                        entry.value,
-                        entry.apply_after_clocks,
-                        static_cast<unsigned long long>(entry.timing.master_clock),
-                        entry.timing.raster.scanline,
-                        entry.timing.raster.dot,
-                        entry.cpu.pb,
-                        entry.cpu.pc,
-                        entry.cpu.a,
-                        entry.cpu.x,
-                        entry.cpu.y,
-                        entry.cpu.sp,
-                        entry.cpu.p);
+            std::fprintf(output,
+                         "  %c frame=%llu addr=%04x value=%02x apply=%u clk=%llu scanline=%u dot=%u PB:%02x PC:%04x A:%04x X:%04x Y:%04x SP:%04x P:%02x "
+                         "apuram47-48=%02x,%02x apuram90-91=%02x,%02x "
+                         "apuramc8=%02x apuramf4-f5=%02x,%02x\n",
+                         entry.is_write ? 'W' : 'R',
+                         static_cast<unsigned long long>(entry.frame_index),
+                         static_cast<uint16_t>(entry.address & 0xffffu),
+                         entry.value,
+                         entry.apply_after_clocks,
+                         static_cast<unsigned long long>(entry.timing.master_clock),
+                         entry.timing.raster.scanline,
+                         entry.timing.raster.dot,
+                         entry.cpu.pb,
+                         entry.cpu.pc,
+                         entry.cpu.a,
+                         entry.cpu.x,
+                         entry.cpu.y,
+                         entry.cpu.sp,
+                         entry.cpu.p,
+                         entry.apu_ram_probe[0],
+                         entry.apu_ram_probe[1],
+                         entry.apu_ram_probe[2],
+                         entry.apu_ram_probe[3],
+                         entry.apu_ram_probe[4],
+                         entry.apu_ram_probe[5],
+                         entry.apu_ram_probe[6]);
         }
+    }
+
+    void print_apu_port_trace(const clover::core::console_t& console)
+    {
+        write_apu_port_trace(stdout, console);
+    }
+
+    [[nodiscard]] bool maybe_write_apu_port_trace(const clover::core::console_t& console)
+    {
+        const char* const path{ std::getenv("CLOVER_APU_PORT_TRACE_FILE") };
+        if (path == nullptr || *path == '\0')
+            return true;
+
+        std::FILE* const output{ std::fopen(path, "w") };
+        if (output == nullptr)
+            return false;
+        write_apu_port_trace(output, console);
+        return std::fclose(output) == 0;
     }
 
     [[nodiscard]] const char* dma_activity_name(clover::core::dma_activity_t activity) noexcept
@@ -1930,6 +2027,11 @@ int main(int argc, char** argv)
 
     const startup_entropy_config_t startup_entropy_config{ load_startup_entropy_config() };
     clover::core::console_t console{};
+    const char* const apu_port_trace_path{ std::getenv("CLOVER_APU_PORT_TRACE_FILE") };
+    console.set_apu_port_trace_enabled(
+        (apu_port_trace_path != nullptr && *apu_port_trace_path != '\0')
+        || parse_bool_env("CLOVER_CAPTURE_APU_PORT_TRACE")
+    );
     console.set_startup_entropy_mode(startup_entropy_config.mode);
     if (startup_entropy_config.seed_enabled)
         console.set_startup_entropy_seed(startup_entropy_config.seed, startup_entropy_config.sequence);
@@ -1940,6 +2042,48 @@ int main(int argc, char** argv)
     }
 
     console.power_on();
+    const clover::test::joypad_input_script_t input_script{
+        clover::test::joypad_input_script_t::from_environment()
+    };
+    if (!input_script.valid())
+    {
+        std::fprintf(stderr,
+                     "Invalid CLOVER_JOYPAD1_SCRIPT or CLOVER_JOYPAD1_SCRIPT_FILE; "
+                     "expected start-end=hhhh[,start-end=hhhh...]\n");
+        return 1;
+    }
+    if (const char* const audio_path{ std::getenv("CLOVER_AUDIO_FILE") };
+        audio_path != nullptr && *audio_path != '\0')
+    {
+        std::vector<int16_t> audio_samples{};
+        audio_samples.reserve(static_cast<size_t>(target_frames * 1100u));
+        for (uint64_t frame{ 1 }; frame <= target_frames; ++frame)
+        {
+            console.set_controller_state(0u, input_script.state_for_frame(frame));
+            console.run_frame();
+            if (console.audio_output_overflowed())
+            {
+                std::fprintf(stderr, "Audio output overflow at frame %llu\n",
+                             static_cast<unsigned long long>(frame));
+                return 1;
+            }
+            const std::span<const int16_t> frame_samples{ console.audio_samples() };
+            audio_samples.insert(audio_samples.end(), frame_samples.begin(), frame_samples.end());
+        }
+
+        if (!write_audio_wav(audio_path, audio_samples, clover::core::apu_t::k_audio_sample_rate_hz))
+        {
+            std::fprintf(stderr, "Failed to write audio dump: %s\n", audio_path);
+            return 1;
+        }
+        std::printf("Audio dump: %s sample_frames=%zu sample_rate=%u\n",
+                    audio_path,
+                    audio_samples.size() / 2u,
+                    clover::core::apu_t::k_audio_sample_rate_hz);
+        if (!maybe_write_apu_port_trace(console))
+            return 1;
+        return 0;
+    }
     const hot_path_filter_t hot_path_filter{ load_hot_path_filter() };
     const watched_write_filter_t watched_write_filter{ load_watched_write_filter() };
     const bus_window_filter_t bus_window_filter{ load_bus_window_filter() };
@@ -2006,6 +2150,7 @@ int main(int argc, char** argv)
         const clover::core::cpu_state_t current_cpu{ console.cpu_state() };
         const uint8_t current_opcode{ console.read_u8((static_cast<uint32_t>(current_cpu.pb) << 16u) | current_cpu.pc) };
         const uint64_t active_frame{ summary.frame_completions + 1u };
+        console.set_controller_state(0u, input_script.state_for_frame(active_frame));
         const clover::core::hardware_timing_snapshot_t timing_snapshot{ console.capture_timing_snapshot() };
         if (should_emit_generic_trace(generic_trace_filter, current_cpu, timing_snapshot, active_frame))
         {
@@ -2415,12 +2560,75 @@ int main(int argc, char** argv)
                 return 1;
             }
 
+            std::array<uint8_t, 64 * 1024> apu_ram{};
+            for (uint32_t address{ 0 }; address < apu_ram.size(); ++address)
+                apu_ram[address] = console.apu_peek_ram(static_cast<uint16_t>(address));
+            const std::filesystem::path apu_ram_path{
+                dump_directory / (frame_basename + ".vblank.apuram.bin")
+            };
+            if (!write_binary_blob(apu_ram_path, apu_ram))
+            {
+                std::fprintf(stderr, "Failed to write vblank APU RAM dump: %s\n", apu_ram_path.string().c_str());
+                return 1;
+            }
+
+            std::array<uint8_t, 128> dsp_registers{};
+            for (uint16_t address{ 0 }; address < dsp_registers.size(); ++address)
+                dsp_registers[address] = console.apu_peek_dsp_register(static_cast<uint8_t>(address));
+            const std::filesystem::path dsp_register_path{
+                dump_directory / (frame_basename + ".vblank.dspregs.bin")
+            };
+            if (!write_binary_blob(dsp_register_path, dsp_registers))
+            {
+                std::fprintf(stderr, "Failed to write vblank DSP register dump: %s\n", dsp_register_path.string().c_str());
+                return 1;
+            }
+
+            const std::array<uint8_t, SPC_DSP::state_size> dsp_state{ console.apu_dsp_state() };
+            const std::filesystem::path dsp_state_path{
+                dump_directory / (frame_basename + ".vblank.dspstate.bin")
+            };
+            if (!write_binary_blob(dsp_state_path, dsp_state))
+            {
+                std::fprintf(stderr, "Failed to write vblank DSP state: %s\n", dsp_state_path.string().c_str());
+                return 1;
+            }
+
+            const std::filesystem::path apu_state_path{
+                dump_directory / (frame_basename + ".vblank.apustate.txt")
+            };
+            if (!write_apu_state_text(apu_state_path, console.apu_state()))
+            {
+                std::fprintf(stderr, "Failed to write vblank APU state: %s\n", apu_state_path.string().c_str());
+                return 1;
+            }
+
             ++dumped_frames;
         }
 
         if (step.ppu.entered_frame_start && should_dump_frame)
         {
             const std::string frame_basename{ "frame_" + std::to_string(active_frame) };
+            std::array<uint8_t, 64 * 1024> apu_ram{};
+            for (uint32_t address{ 0 }; address < apu_ram.size(); ++address)
+                apu_ram[address] = console.apu_peek_ram(static_cast<uint16_t>(address));
+            const std::filesystem::path apu_ram_path{ dump_directory / (frame_basename + ".apuram.bin") };
+            if (!write_binary_blob(apu_ram_path, apu_ram))
+            {
+                std::fprintf(stderr, "Failed to write APU RAM dump: %s\n", apu_ram_path.string().c_str());
+                return 1;
+            }
+
+            std::array<uint8_t, 128> dsp_registers{};
+            for (uint16_t address{ 0 }; address < dsp_registers.size(); ++address)
+                dsp_registers[address] = console.apu_peek_dsp_register(static_cast<uint8_t>(address));
+            const std::filesystem::path dsp_register_path{ dump_directory / (frame_basename + ".dspregs.bin") };
+            if (!write_binary_blob(dsp_register_path, dsp_registers))
+            {
+                std::fprintf(stderr, "Failed to write DSP register dump: %s\n", dsp_register_path.string().c_str());
+                return 1;
+            }
+
             const std::filesystem::path vram_path{ dump_directory / (frame_basename + ".vram.bin") };
             if (!write_binary_blob(vram_path, console.ppu_vram()))
             {
@@ -2651,6 +2859,12 @@ int main(int argc, char** argv)
                 static_cast<unsigned long long>(summary.irq_requests),
                 static_cast<unsigned long long>(summary.hdma_setup_triggers),
                 static_cast<unsigned long long>(summary.hdma_transfer_triggers));
+
+    if (!maybe_write_apu_port_trace(console))
+    {
+        std::fprintf(stderr, "Failed to write APU port trace\n");
+        return 1;
+    }
 
     if (!verbose_output && !terminal_pc_detected)
     {

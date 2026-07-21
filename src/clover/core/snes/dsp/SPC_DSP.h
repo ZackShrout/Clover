@@ -26,6 +26,10 @@ public:
 	// a multiple of 2. Undefined if more samples were generated than
 	// output buffer could hold.
 	int sample_count() const;
+	// True when output continued into the emergency buffer because the
+	// caller-provided destination filled. sample_count() must not be used in
+	// that state because the output pointer no longer shares its array.
+	bool output_overflowed() const;
 
 // Emulation
 
@@ -240,6 +244,10 @@ public:
 #include <assert.h>
 
 inline int SPC_DSP::sample_count() const { return m.out - m.out_begin; }
+inline bool SPC_DSP::output_overflowed() const
+{
+	return m.out_begin != m.extra && m.out_end == &m.extra [extra_size];
+}
 
 inline int SPC_DSP::read( int addr ) const
 {

@@ -50,11 +50,6 @@ target_link_libraries(clover PRIVATE clover_core)
 
 if(CLOVER_BUILD_SDL_FRONTEND)
     find_package(SDL3 CONFIG REQUIRED)
-    set(CLOVER_SDL_DEFAULT_ROM_PATH
-        "${CMAKE_SOURCE_DIR}/roms/local/Final Fantasy 3 (USA).smc"
-        CACHE FILEPATH
-        "ROM loaded by clover_sdl when no ROM path is supplied on the command line."
-    )
     add_executable(clover_sdl
         src/clover/frontend/EmulatorCore.cpp
         src/clover/frontend/SnesEmulatorCore.cpp
@@ -63,9 +58,6 @@ if(CLOVER_BUILD_SDL_FRONTEND)
     )
     target_include_directories(clover_sdl PRIVATE src)
     target_link_libraries(clover_sdl PRIVATE clover_core SDL3::SDL3)
-    target_compile_definitions(clover_sdl PRIVATE
-        CLOVER_SDL_DEFAULT_ROM_PATH="${CLOVER_SDL_DEFAULT_ROM_PATH}"
-    )
 endif()
 
 add_executable(clover_smoke_test
@@ -79,6 +71,12 @@ add_executable(clover_hardware_loop_test
 )
 target_include_directories(clover_hardware_loop_test PRIVATE src)
 target_link_libraries(clover_hardware_loop_test PRIVATE clover_core)
+
+add_executable(clover_save_ram_test
+    tests/SaveRamTest.cpp
+)
+target_include_directories(clover_save_ram_test PRIVATE src)
+target_link_libraries(clover_save_ram_test PRIVATE clover_core)
 
 add_executable(clover_rom_bringup
     tests/RomBringup.cpp
@@ -122,6 +120,7 @@ target_include_directories(clover_frame_range_compare PRIVATE src)
 enable_testing()
 add_test(NAME clover_smoke_test COMMAND clover_smoke_test)
 add_test(NAME clover_hardware_loop_test COMMAND clover_hardware_loop_test)
+add_test(NAME clover_save_ram_test COMMAND clover_save_ram_test)
 add_test(NAME clover_local_rom_regression_test COMMAND clover_local_rom_regression_test)
 set_tests_properties(clover_local_rom_regression_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"

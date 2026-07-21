@@ -12,6 +12,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <vector>
 
 namespace clover::platform
@@ -28,9 +29,13 @@ namespace clover::platform
         void shutdown() noexcept;
         void handle_event(const SDL_Event& event) noexcept;
         void present(const frontend::video_frame_view_t& frame) noexcept;
+        void present_test_pattern() noexcept;
         void queue_audio(const frontend::audio_frame_view_t& audio) noexcept;
+        void reset_audio() noexcept;
         [[nodiscard]] const frontend::gamepad_state_t& gamepad_state() const noexcept;
         [[nodiscard]] bool consume_capture_marker() noexcept;
+        [[nodiscard]] bool consume_reset_request() noexcept;
+        [[nodiscard]] bool consume_load_rom_request() noexcept;
         [[nodiscard]] int audio_queued_bytes_before_put() const noexcept;
         [[nodiscard]] int audio_queued_bytes_after_put() const noexcept;
         [[nodiscard]] bool audio_started() const noexcept;
@@ -42,6 +47,7 @@ namespace clover::platform
         [[nodiscard]] bool gamepad_button_pressed(SDL_GamepadButton button) const noexcept;
         [[nodiscard]] bool gamepad_axis_pressed(SDL_GamepadAxis axis, bool positive) const noexcept;
         [[nodiscard]] SDL_FRect presentation_rect() const noexcept;
+        void render_menu() noexcept;
         [[nodiscard]] bool open_gamepad(SDL_JoystickID joystick_id) noexcept;
         void open_first_available_gamepad() noexcept;
         void close_gamepad() noexcept;
@@ -54,10 +60,14 @@ namespace clover::platform
         SDL_Gamepad* _gamepad{ nullptr };
         SDL_JoystickID _gamepad_id{ 0 };
         frontend::display_info_t _display{};
+        std::vector<uint32_t> _test_pattern{};
         frontend::gamepad_state_t _input{};
         std::array<bool, SDL_SCANCODE_COUNT> _key_states{};
         bool _audio_started{ false };
         bool _capture_marker_requested{ false };
+        bool _reset_requested{ false };
+        bool _load_rom_requested{ false };
+        uint8_t _open_menu{ 0 };
         int _audio_queued_bytes_before_put{ -1 };
         int _audio_queued_bytes_after_put{ -1 };
         uint64_t _audio_empty_queue_observations{ 0 };
@@ -70,5 +80,10 @@ namespace clover::platform
 
     private:
         [[nodiscard]] static std::vector<std::byte> load_file_bytes(const char* path) noexcept;
+        [[nodiscard]] static std::filesystem::path save_path_for_rom(const std::filesystem::path& rom_path);
+        [[nodiscard]] static bool load_persistent_memory(frontend::emulator_core_t& core,
+                                                         const std::filesystem::path& save_path) noexcept;
+        [[nodiscard]] static bool flush_persistent_memory(frontend::emulator_core_t& core,
+                                                          const std::filesystem::path& save_path) noexcept;
     };
 }

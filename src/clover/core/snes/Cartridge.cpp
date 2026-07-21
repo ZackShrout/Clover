@@ -91,12 +91,22 @@ namespace clover::core
                 if (_mapping_mode == cartridge_mapping_mode_t::lorom
                     && is_lorom_ram_address(address))
                 {
-                    _ram_data[lorom_ram_offset(address, _ram_data.size())] = value;
+                    uint8_t& destination{ _ram_data[lorom_ram_offset(address, _ram_data.size())] };
+                    if (destination != value)
+                    {
+                        destination = value;
+                        _ram_dirty = true;
+                    }
                 }
                 else if (_mapping_mode == cartridge_mapping_mode_t::hirom
                          && is_hirom_ram_address(address))
                 {
-                    _ram_data[hirom_ram_offset(address, _ram_data.size())] = value;
+                    uint8_t& destination{ _ram_data[hirom_ram_offset(address, _ram_data.size())] };
+                    if (destination != value)
+                    {
+                        destination = value;
+                        _ram_dirty = true;
+                    }
                 }
             }
             return;
@@ -121,6 +131,32 @@ namespace clover::core
     const cartridge_header_t& cartridge_t::header() const noexcept
     {
         return _header;
+    }
+
+    std::span<const std::byte> cartridge_t::persistent_memory() const noexcept
+    {
+        return std::as_bytes(std::span<const uint8_t>{ _ram_data });
+    }
+
+    bool cartridge_t::load_persistent_memory(std::span<const std::byte> data) noexcept
+    {
+        if (data.size() != _ram_data.size())
+            return false;
+
+        for (size_t index{ 0 }; index < data.size(); ++index)
+            _ram_data[index] = static_cast<uint8_t>(data[index]);
+        _ram_dirty = false;
+        return true;
+    }
+
+    bool cartridge_t::persistent_memory_dirty() const noexcept
+    {
+        return _ram_dirty;
+    }
+
+    void cartridge_t::mark_persistent_memory_clean() noexcept
+    {
+        _ram_dirty = false;
     }
 
     bool cartridge_t::is_bootstrap_program_rom_address(uint32_t address) noexcept
@@ -301,6 +337,7 @@ namespace clover::core
         _header.reset_vector = winner.reset_vector;
         if (winner.raw_ram_size != 0u && winner.raw_ram_size < 16u)
             _ram_data.assign(static_cast<size_t>(1024u) << winner.raw_ram_size, 0u);
+        _ram_dirty = false;
         return true;
     }
 
@@ -311,5 +348,6 @@ namespace clover::core
         _header = {};
         _mapping_mode = cartridge_mapping_mode_t::bootstrap;
         _loaded = false;
+        _ram_dirty = false;
     }
 }

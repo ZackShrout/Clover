@@ -93,6 +93,10 @@ namespace clover::frontend
         [[nodiscard]] virtual display_info_t display_info() const noexcept = 0;
         [[nodiscard]] virtual video_frame_view_t video_frame() const noexcept = 0;
         [[nodiscard]] virtual audio_frame_view_t audio_frame() const noexcept = 0;
+        [[nodiscard]] virtual std::span<const std::byte> persistent_memory() const noexcept = 0;
+        [[nodiscard]] virtual bool load_persistent_memory(std::span<const std::byte> data) noexcept = 0;
+        [[nodiscard]] virtual bool persistent_memory_dirty() const noexcept = 0;
+        virtual void mark_persistent_memory_clean() noexcept = 0;
     };
 
     [[nodiscard]] std::unique_ptr<emulator_core_t> create_emulator_core(system_id_t system) noexcept;

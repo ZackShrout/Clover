@@ -24,6 +24,10 @@ namespace clover::frontend
         [[nodiscard]] display_info_t display_info() const noexcept override;
         [[nodiscard]] video_frame_view_t video_frame() const noexcept override;
         [[nodiscard]] audio_frame_view_t audio_frame() const noexcept override;
+        [[nodiscard]] std::span<const std::byte> persistent_memory() const noexcept override;
+        [[nodiscard]] bool load_persistent_memory(std::span<const std::byte> data) noexcept override;
+        [[nodiscard]] bool persistent_memory_dirty() const noexcept override;
+        void mark_persistent_memory_clean() noexcept override;
 
     private:
         core::console_t _console{};

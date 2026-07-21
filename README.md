@@ -57,18 +57,32 @@ cmake --build --preset sdl-release
 ./cmake-build-sdl-release/clover_sdl "/path/to/game.sfc"
 ```
 
-If no ROM argument is supplied, the build-time `CLOVER_SDL_DEFAULT_ROM_PATH`
-is used. It currently defaults to the local Final Fantasy III ROM. Override it
-while configuring with:
-
-```bash
-cmake --preset sdl-release \
-  -DCLOVER_SDL_DEFAULT_ROM_PATH="/absolute/path/to/game.sfc"
-```
+The ROM argument is optional. With no argument, Clover displays its frontend
+test pattern; choose **File → Load ROM…** when ready. The pattern immediately
+clears when media loads, before the game produces its first visible frame.
+Supplying a ROM path remains useful for command-line and deterministic test
+runs.
 
 The app also accepts `--frames <count>` to stop after a fixed number of frames.
 Controls and capture details are documented in
 [`docs/FRONTEND.md`](docs/FRONTEND.md).
+
+### Save RAM and app menu
+
+Battery-backed cartridge RAM is stored beside the ROM with an `.srm`
+extension. For example, `Final Fantasy 3 (USA).smc` uses
+`Final Fantasy 3 (USA).srm`. A matching save is restored before power-on;
+changed save RAM is written atomically during play and again when resetting,
+loading another ROM, or quitting.
+
+The SDL menu bar provides:
+
+- **File → Load ROM…** (`Cmd+O` on macOS, `Ctrl+O` elsewhere)
+- **Emulation → Reset** (`Cmd+R` or `Ctrl+R`)
+
+Reset models the console reset button and preserves cartridge save RAM. Reset
+and ROM switching are disabled during deterministic capture because the
+capture format does not encode those actions.
 
 ## Interactive Investigation Captures
 

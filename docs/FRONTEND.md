@@ -48,13 +48,16 @@ Run with:
   [--frames count] [--capture new-directory]
 ```
 
-If `rom-path` is omitted, the executable uses the configured
-`CLOVER_SDL_DEFAULT_ROM_PATH`. The source-tree default is the local Final
-Fantasy III ROM.
+If `rom-path` is omitted, the executable opens without media, displays a
+frontend-owned test pattern, and waits for a ROM to be selected through
+**File → Load ROM…**. The pattern is replaced immediately when media loads.
+An explicit path still loads that ROM at startup for command-line and
+deterministic test runs.
 
 The shell:
 
 - creates an aspect-correct window and streams the core framebuffer to a texture
+- provides an SDL-rendered menu bar and native ROM file picker
 - opens the first available SDL gamepad and handles hotplug
 - combines keyboard and gamepad state into one semantic gamepad
 - queues core audio to an SDL audio stream
@@ -63,6 +66,32 @@ The shell:
 
 Wall-clock pacing exists only in the platform layer. Headless tools can run the
 same core as fast as the host permits.
+
+## Menu and Save RAM
+
+The menu bar exposes **File → Load ROM…** and **Emulation → Reset**. The same
+actions are available through `Cmd/Ctrl+O` and `Cmd/Ctrl+R`. Loading is
+transactional at the app level: a replacement core and its save RAM must load
+successfully, and the current cartridge's dirty save RAM must flush, before the
+active core is replaced.
+
+The frontend contract exposes persistent memory as a system-neutral byte span
+with dirty-state acknowledgement. The SNES adapter maps that contract to
+battery-backed cartridge SRAM. Filesystem ownership remains in the SDL shell:
+
+- the save path is the ROM path with its extension replaced by `.srm`
+- the file size must exactly match the cartridge header's SRAM size
+- an existing save is loaded before the console is powered on
+- changed SRAM is written through a temporary file and atomically renamed
+- dirty SRAM is checked periodically and flushed on reset, ROM replacement,
+  and shutdown
+
+SNES reset preserves SRAM. Audio queued from the previous machine state is
+cleared after reset or ROM replacement.
+
+Menu reset and ROM loading are deliberately unavailable while a deterministic
+capture is active because version 3 controller movies do not encode either
+operation.
 
 ## Controls
 
@@ -115,9 +144,10 @@ and CSV preserve audio and host-performance evidence.
 ## Deliberate Limitations
 
 The current frontend has one active core, one presented logical controller,
-fixed keyboard bindings, and no file picker, save-state UI, remapping UI,
-rumble, mouse, multitap, or light-gun support. These are frontend capabilities,
-not reasons to mix platform concepts into the emulator core.
+fixed keyboard bindings, and no save-state UI, remapping UI, rumble, mouse,
+multitap, or light-gun support. Battery-backed cartridge saves are supported;
+save states are a different, unimplemented capability. These are frontend
+capabilities, not reasons to mix platform concepts into the emulator core.
 
 The next frontend work should be driven by an actual use case—such as a second
 core, renderer, or input device—and should extend the existing seam without

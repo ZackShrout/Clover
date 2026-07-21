@@ -52,6 +52,7 @@ Owns the system-neutral contract used by presentation targets:
 - semantic gamepad state for two logical ports
 - display metadata
 - read-only video-frame and audio-frame views
+- persistent-memory views, restore, dirty-state query, and flush acknowledgement
 - the factory that currently constructs the SNES implementation
 
 `snes_emulator_core_t` adapts `core::console_t` to this interface. The seam is
@@ -66,6 +67,11 @@ wall-clock frame pacing. It sends semantic input into `emulator_core_t` and
 pulls completed video/audio views after each `run_frame()`.
 
 No SDL type crosses into `core/` or the frontend contract.
+
+Battery-backed SRAM bytes and dirty state are emulated cartridge state. Save
+filenames, filesystem access, temporary-file replacement, and flush cadence are
+platform policy. This lets a headless tool or future host persist the same core
+memory without teaching the SNES cartridge about files.
 
 ## Core Runtime
 

@@ -92,4 +92,24 @@ namespace clover::frontend
             .discontinuity = _console.audio_output_overflowed()
         };
     }
+
+    std::span<const std::byte> snes_emulator_core_t::persistent_memory() const noexcept
+    {
+        return _console.persistent_memory();
+    }
+
+    bool snes_emulator_core_t::load_persistent_memory(std::span<const std::byte> data) noexcept
+    {
+        return _console.load_persistent_memory(data);
+    }
+
+    bool snes_emulator_core_t::persistent_memory_dirty() const noexcept
+    {
+        return _console.persistent_memory_dirty();
+    }
+
+    void snes_emulator_core_t::mark_persistent_memory_clean() noexcept
+    {
+        _console.mark_persistent_memory_clean();
+    }
 }

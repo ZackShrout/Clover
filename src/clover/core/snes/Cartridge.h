@@ -41,6 +41,10 @@ namespace clover::core
         [[nodiscard]] bool loaded() const noexcept;
         [[nodiscard]] cartridge_mapping_mode_t mapping_mode() const noexcept;
         [[nodiscard]] const cartridge_header_t& header() const noexcept;
+        [[nodiscard]] std::span<const std::byte> persistent_memory() const noexcept;
+        [[nodiscard]] bool load_persistent_memory(std::span<const std::byte> data) noexcept;
+        [[nodiscard]] bool persistent_memory_dirty() const noexcept;
+        void mark_persistent_memory_clean() noexcept;
 
     private:
         struct header_candidate_t
@@ -77,5 +81,6 @@ namespace clover::core
         cartridge_header_t _header{};
         cartridge_mapping_mode_t _mapping_mode{ cartridge_mapping_mode_t::bootstrap };
         bool _loaded{ false };
+        bool _ram_dirty{ false };
     };
 }

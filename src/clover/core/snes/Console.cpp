@@ -142,6 +142,26 @@ namespace clover::core
         return _apu.audio_output_overflowed();
     }
 
+    std::span<const std::byte> console_t::persistent_memory() const noexcept
+    {
+        return _cartridge.persistent_memory();
+    }
+
+    bool console_t::load_persistent_memory(std::span<const std::byte> data) noexcept
+    {
+        return _cartridge.load_persistent_memory(data);
+    }
+
+    bool console_t::persistent_memory_dirty() const noexcept
+    {
+        return _cartridge.persistent_memory_dirty();
+    }
+
+    void console_t::mark_persistent_memory_clean() noexcept
+    {
+        _cartridge.mark_persistent_memory_clean();
+    }
+
     master_clock_count_t console_t::master_clock() const noexcept
     {
         return _scheduler.master_clock();

@@ -960,18 +960,21 @@ namespace
             return false;
 
         output << "P6\n"
-               << clover::core::framebuffer_t::k_width << ' ' << clover::core::framebuffer_t::k_height << "\n255\n";
+               << framebuffer.width() << ' ' << framebuffer.height() << "\n255\n";
 
         const uint32_t* const pixels{ framebuffer.data() };
-        for (int index{ 0 }; index < clover::core::framebuffer_t::k_pixel_count; ++index)
+        for (uint32_t y{ 0 }; y < framebuffer.height(); ++y)
         {
-            const uint32_t rgba8{ pixels[index] };
-            const unsigned char red{ static_cast<unsigned char>((rgba8 >> 16u) & 0xffu) };
-            const unsigned char green{ static_cast<unsigned char>((rgba8 >> 8u) & 0xffu) };
-            const unsigned char blue{ static_cast<unsigned char>(rgba8 & 0xffu) };
-            output.write(reinterpret_cast<const char*>(&red), 1);
-            output.write(reinterpret_cast<const char*>(&green), 1);
-            output.write(reinterpret_cast<const char*>(&blue), 1);
+            for (uint32_t x{ 0 }; x < framebuffer.width(); ++x)
+            {
+                const uint32_t rgba8{ pixels[static_cast<size_t>(y) * framebuffer.pitch_pixels() + x] };
+                const unsigned char red{ static_cast<unsigned char>((rgba8 >> 16u) & 0xffu) };
+                const unsigned char green{ static_cast<unsigned char>((rgba8 >> 8u) & 0xffu) };
+                const unsigned char blue{ static_cast<unsigned char>(rgba8 & 0xffu) };
+                output.write(reinterpret_cast<const char*>(&red), 1);
+                output.write(reinterpret_cast<const char*>(&green), 1);
+                output.write(reinterpret_cast<const char*>(&blue), 1);
+            }
         }
 
         return static_cast<bool>(output);

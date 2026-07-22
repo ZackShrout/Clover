@@ -253,6 +253,10 @@ namespace clover::core
             _master_clocks = static_cast<master_clock_delta_t>(
                 _master_clocks + _cpu.advance_execution(leading_clocks, _dma, _interrupts, _ppu_step_result)
             );
+            // dmaEdge() holds interrupt recognition through the CPU-owned
+            // portion of this bus cycle.  The hardware releases that lock
+            // before a read's final four clocks and before its data appears.
+            _interrupts.clear_irq_lock();
             const uint8_t value{ _bus.read_u8(address) };
             _bus.trace_cpu_apu_port_access(address, value, false, _master_clocks);
             _master_clocks = static_cast<master_clock_delta_t>(
@@ -277,6 +281,7 @@ namespace clover::core
             _master_clocks = static_cast<master_clock_delta_t>(
                 _master_clocks + _cpu.advance_execution(access_clocks, _dma, _interrupts, _ppu_step_result)
             );
+            _interrupts.clear_irq_lock();
             _bus.trace_cpu_apu_port_access(address, value, true, _master_clocks);
             _bus.write_u8(address, value);
         }
@@ -935,6 +940,7 @@ namespace clover::core
             _master_clocks = static_cast<master_clock_delta_t>(
                 _master_clocks + _cpu.advance_execution(k_cpu_bus_cycle_clocks, _dma, _interrupts, _ppu_step_result)
             );
+            _interrupts.clear_irq_lock();
             _cpu.alu_edge();
         }
 

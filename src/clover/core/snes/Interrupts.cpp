@@ -112,13 +112,16 @@ namespace clover::core
         if (_state.irq_lock)
             return;
 
-        if (_state.nmi_transition && _nmi_transition_clock <= observation_clock)
+        // A transition raised on the instruction's last-cycle observation
+        // edge is too late for that instruction's interrupt pipeline slot.
+        // It becomes visible at the following opcode edge instead.
+        if (_state.nmi_transition && _nmi_transition_clock < observation_clock)
         {
             _state.nmi_pending = true;
             _state.nmi_transition = false;
         }
 
-        if (_state.irq_transition && _irq_transition_clock <= observation_clock)
+        if (_state.irq_transition && _irq_transition_clock < observation_clock)
         {
             if (!irq_disabled)
                 _state.irq_pending = true;

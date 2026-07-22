@@ -78,8 +78,8 @@ namespace clover::frontend
                 / static_cast<double>(timing.master_clocks_per_frame())
         };
         return {
-            .framebuffer_width = core::framebuffer_t::k_width,
-            .framebuffer_height = core::framebuffer_t::k_height,
+            .framebuffer_width = core::framebuffer_t::k_max_width,
+            .framebuffer_height = core::framebuffer_t::k_max_height,
             .pixel_aspect_ratio = timing.standard == core::video_standard_t::pal
                 ? 55.f / 43.f
                 : 8.f / 7.f,
@@ -103,9 +103,9 @@ namespace clover::frontend
     {
         return {
             .pixels = _console.framebuffer().data(),
-            .width = core::framebuffer_t::k_width,
-            .height = core::framebuffer_t::k_height,
-            .pitch_bytes = core::framebuffer_t::k_width * sizeof(uint32_t),
+            .width = _console.framebuffer().width(),
+            .height = _console.framebuffer().height(),
+            .pitch_bytes = _console.framebuffer().pitch_pixels() * sizeof(uint32_t),
             .format = pixel_format_t::argb8888
         };
     }

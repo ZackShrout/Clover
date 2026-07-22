@@ -21,6 +21,39 @@ namespace
 
     [[nodiscard]] int run_interrupt_and_dma_checks()
     {
+        if (const char* checkpoint = []() -> const char*
+            {
+                clover::core::interrupt_controller_t interrupts{};
+                interrupts.reset();
+
+                interrupts.assert_nmi_line();
+                interrupts.advance_to_observation_point(100u);
+                interrupts.observe_opcode_edge(100u, false);
+                if (interrupts.sample().nmi_pending)
+                    return "nmi_same_edge_pipeline_deferral";
+
+                interrupts.observe_opcode_edge(101u, false);
+                if (!interrupts.consume_nmi())
+                    return "nmi_following_edge_pipeline_delivery";
+
+                interrupts.assert_irq_line();
+                interrupts.advance_to_observation_point(104u);
+                interrupts.advance_to_observation_point(108u);
+                interrupts.observe_opcode_edge(108u, false);
+                if (interrupts.sample().irq_pending)
+                    return "irq_same_edge_pipeline_deferral";
+
+                interrupts.observe_opcode_edge(109u, false);
+                if (!interrupts.consume_irq())
+                    return "irq_following_edge_pipeline_delivery";
+
+                return nullptr;
+            }();
+            checkpoint != nullptr)
+        {
+            return fail(checkpoint);
+        }
+
         // A coarse host-driven poll of $4211 is no longer a reliable
         // cross-emulator assertion for first-visible HIRQ timing. The
         // authoritative coverage for this path lives in the seeded HIRQ entry

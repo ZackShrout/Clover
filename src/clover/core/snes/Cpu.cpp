@@ -795,11 +795,7 @@ namespace clover::core
             return result;
         }
 
-        if (interrupts.irq_lock())
-        {
-            interrupts.clear_irq_lock();
-        }
-        else
+        if (!interrupts.irq_lock())
         {
             if (interrupts.consume_nmi())
             {

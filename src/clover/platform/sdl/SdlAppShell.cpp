@@ -817,20 +817,26 @@ namespace clover::platform
         if (_renderer == nullptr || _texture == nullptr || frame.pixels == nullptr)
             return;
         if (frame.format != frontend::pixel_format_t::argb8888
-            || frame.width != _display.framebuffer_width
-            || frame.height != _display.framebuffer_height)
+            || frame.width > _display.framebuffer_width
+            || frame.height > _display.framebuffer_height)
         {
             return;
         }
 
+        const SDL_Rect update_rect{
+            0, 0, static_cast<int>(frame.width), static_cast<int>(frame.height)
+        };
         static_cast<void>(SDL_UpdateTexture(_texture,
-                                            nullptr,
+                                            &update_rect,
                                             frame.pixels,
                                             static_cast<int>(frame.pitch_bytes)));
         static_cast<void>(SDL_SetRenderDrawColor(_renderer, 0u, 0u, 0u, SDL_ALPHA_OPAQUE));
         static_cast<void>(SDL_RenderClear(_renderer));
         const SDL_FRect destination{ presentation_rect() };
-        static_cast<void>(SDL_RenderTexture(_renderer, _texture, nullptr, &destination));
+        const SDL_FRect source{
+            0.f, 0.f, static_cast<float>(frame.width), static_cast<float>(frame.height)
+        };
+        static_cast<void>(SDL_RenderTexture(_renderer, _texture, &source, &destination));
         render_menu();
         SDL_RenderPresent(_renderer);
     }

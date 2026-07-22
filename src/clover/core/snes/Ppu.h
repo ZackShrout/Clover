@@ -380,6 +380,9 @@ namespace clover::core
         void process_scanline_range(uint16_t scanline, uint16_t start_dot, uint16_t end_dot) noexcept;
         void evaluate_object_slot(uint16_t scanline, uint8_t slot) noexcept;
         void finalize_object_fetch(uint16_t scanline) noexcept;
+        void process_object_fetch_range(uint16_t scanline,
+                                        uint16_t start_dot,
+                                        uint16_t end_dot) noexcept;
         void clear_scanline_compositor_outputs() noexcept;
         void render_pixel(uint16_t scanline, uint16_t x) noexcept;
         [[nodiscard]] ppu_pixel_candidate_t resolve_object_pixel_candidate(uint16_t x) const noexcept;
@@ -556,11 +559,11 @@ namespace clover::core
 
             uint16_t evaluation_scanline{ 0 };
             uint8_t tile_count{ 0 };
-            std::array<uint16_t, 34> offset_hoffset{};
-            std::array<uint16_t, 34> offset_voffset{};
-            std::array<ppu_pixel_candidate_t, framebuffer_t::k_width> samples{};
-            std::array<tile_candidate_t, 34> tiles{};
-            std::array<tile_candidate_t, 34> render_tiles{};
+            std::array<uint16_t, 66> offset_hoffset{};
+            std::array<uint16_t, 66> offset_voffset{};
+            std::array<ppu_pixel_candidate_t, framebuffer_t::k_max_width> samples{};
+            std::array<tile_candidate_t, 66> tiles{};
+            std::array<tile_candidate_t, 66> render_tiles{};
             uint8_t rendering_index{ 0 };
             uint8_t pixel_counter{ 0 };
             uint16_t mosaic_hcounter{ 1 };
@@ -603,28 +606,28 @@ namespace clover::core
         {
             ppu_pixel_candidate_t above{};
             ppu_pixel_candidate_t below{};
-            std::array<ppu_pixel_candidate_t, framebuffer_t::k_width> above_samples{};
-            std::array<ppu_pixel_candidate_t, framebuffer_t::k_width> below_samples{};
+            std::array<ppu_pixel_candidate_t, framebuffer_t::k_max_width> above_samples{};
+            std::array<ppu_pixel_candidate_t, framebuffer_t::k_max_width> below_samples{};
         };
 
         struct ppu_compositor_state_t
         {
             ppu_pixel_candidate_t above{};
             ppu_pixel_candidate_t below{};
-            std::array<ppu_pixel_candidate_t, framebuffer_t::k_width> above_samples{};
-            std::array<ppu_pixel_candidate_t, framebuffer_t::k_width> below_samples{};
-            std::array<bool, framebuffer_t::k_width> color_enable_above{};
-            std::array<bool, framebuffer_t::k_width> color_enable_below{};
-            std::array<bool, framebuffer_t::k_width> math_enable{};
-            std::array<bool, framebuffer_t::k_width> math_uses_subscreen{};
-            std::array<bool, framebuffer_t::k_width> math_uses_fixed_color{};
-            std::array<bool, framebuffer_t::k_width> color_halve_active{};
-            std::array<bool, framebuffer_t::k_width> above_transparent{};
-            std::array<bool, framebuffer_t::k_width> below_transparent{};
-            std::array<uint16_t, framebuffer_t::k_width> above_color{};
-            std::array<uint16_t, framebuffer_t::k_width> below_color{};
-            std::array<uint16_t, framebuffer_t::k_width> math_rhs_color{};
-            std::array<uint16_t, framebuffer_t::k_width> output_color{};
+            std::array<ppu_pixel_candidate_t, framebuffer_t::k_max_width> above_samples{};
+            std::array<ppu_pixel_candidate_t, framebuffer_t::k_max_width> below_samples{};
+            std::array<bool, framebuffer_t::k_max_width> color_enable_above{};
+            std::array<bool, framebuffer_t::k_max_width> color_enable_below{};
+            std::array<bool, framebuffer_t::k_max_width> math_enable{};
+            std::array<bool, framebuffer_t::k_max_width> math_uses_subscreen{};
+            std::array<bool, framebuffer_t::k_max_width> math_uses_fixed_color{};
+            std::array<bool, framebuffer_t::k_max_width> color_halve_active{};
+            std::array<bool, framebuffer_t::k_max_width> above_transparent{};
+            std::array<bool, framebuffer_t::k_max_width> below_transparent{};
+            std::array<uint16_t, framebuffer_t::k_max_width> above_color{};
+            std::array<uint16_t, framebuffer_t::k_max_width> below_color{};
+            std::array<uint16_t, framebuffer_t::k_max_width> math_rhs_color{};
+            std::array<uint16_t, framebuffer_t::k_max_width> output_color{};
             std::array<ppu_internal_layer_compositor_state_t, 4> backgrounds{};
             ppu_internal_layer_compositor_state_t objects{};
         };
@@ -637,7 +640,10 @@ namespace clover::core
             uint16_t next_object_evaluate_dot{ 0u };
             uint16_t next_pixel_dot{ 58u };
             uint16_t next_pixel_x{ 0u };
+            uint16_t next_object_fetch_dot{ 1080u };
+            uint8_t next_object_fetch_index{ 0u };
             bool background_fetch_state_dirty{ false };
+            bool object_fetch_started{ false };
             bool object_fetch_completed{ false };
         };
 

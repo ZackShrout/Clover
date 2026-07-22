@@ -1291,7 +1291,8 @@ namespace clover::core
         };
         const bool apply_offset_lookup{ offset_per_tile_mode && background_index < 2u };
 
-        for (uint8_t tile_slot{ 0 }; tile_slot < background.tiles.size(); ++tile_slot)
+        const uint8_t tile_slots{ static_cast<uint8_t>(_screen_state.hires ? 66u : 34u) };
+        for (uint8_t tile_slot{ 0 }; tile_slot < tile_slots; ++tile_slot)
         {
             const uint16_t screen_x{ static_cast<uint16_t>(tile_slot << 3u) };
             const uint16_t hires_hoffset{
@@ -1364,7 +1365,7 @@ namespace clover::core
             tile.palette_base = static_cast<uint8_t>(palette_offset + (tile.palette_group << palette_size_shift));
         }
 
-        background.tile_count = static_cast<uint8_t>(background.tiles.size());
+        background.tile_count = tile_slots;
     }
 
     void ppu_t::fetch_background_tile_rows(uint8_t background_index) noexcept
@@ -1529,7 +1530,10 @@ namespace clover::core
         _pipeline_state.next_object_evaluate_dot = 0u;
         _pipeline_state.next_pixel_dot = 58u;
         _pipeline_state.next_pixel_x = 0u;
+        _pipeline_state.next_object_fetch_dot = 1080u;
+        _pipeline_state.next_object_fetch_index = 0u;
         _pipeline_state.background_fetch_state_dirty = false;
+        _pipeline_state.object_fetch_started = false;
         _pipeline_state.object_fetch_completed = false;
     }
 
@@ -1590,16 +1594,60 @@ namespace clover::core
 
     void ppu_t::finalize_object_fetch(uint16_t scanline) noexcept
     {
-        if (_pipeline_state.object_fetch_completed)
+        if (_pipeline_state.object_fetch_started)
             return;
 
-        _pipeline_state.object_fetch_completed = true;
+        _pipeline_state.object_fetch_started = true;
         if (_display.disabled || scanline >= active_visible_scanlines() - 1u)
+        {
+            _pipeline_state.object_fetch_completed = true;
             return;
+        }
 
         _object_layer_state.evaluation_count = std::min<uint8_t>(_object_layer_state.evaluation_count, 32u);
         evaluate_object_tiles();
-        fetch_object_tile_rows();
+    }
+
+    void ppu_t::process_object_fetch_range(uint16_t scanline,
+                                           uint16_t start_dot,
+                                           uint16_t end_dot) noexcept
+    {
+        if (!_pipeline_state.object_fetch_started || _pipeline_state.object_fetch_completed)
+            return;
+
+        const size_t active_buffer_index{ _object_layer_state.active_buffer ? 1u : 0u };
+        auto& active_tiles{ _object_layer_state.tile_buffers[active_buffer_index] };
+        while (_pipeline_state.next_object_fetch_dot <= end_dot
+            && _pipeline_state.next_object_fetch_index < _object_layer_state.tile_count)
+        {
+            if (_pipeline_state.next_object_fetch_dot >= start_dot)
+            {
+                auto& tile{ active_tiles[_pipeline_state.next_object_fetch_index].candidate };
+                tile.row_pair_count = 2u;
+                if (!_display.disabled)
+                {
+                    const uint16_t plane_lo{ _vram[tile.vram_address & k_vram_word_mask] };
+                    const uint16_t plane_hi{ _vram[(tile.vram_address + 8u) & k_vram_word_mask] };
+                    tile.row_data[0] = decode_bitplane_pair(plane_lo, !tile.hflip);
+                    tile.row_data[1] = decode_bitplane_pair(plane_hi, !tile.hflip);
+                    tile.data = static_cast<uint32_t>(plane_lo)
+                        | (static_cast<uint32_t>(plane_hi) << 16u);
+                }
+            }
+
+            ++_pipeline_state.next_object_fetch_index;
+            _pipeline_state.next_object_fetch_dot = static_cast<uint16_t>(
+                _pipeline_state.next_object_fetch_dot + 8u
+            );
+        }
+
+        if (_pipeline_state.next_object_fetch_index < _object_layer_state.tile_count)
+            return;
+
+        _pipeline_state.object_fetch_completed = true;
+        _object_layer_state.tiles.fill({});
+        for (uint8_t tile_index{ 0 }; tile_index < _object_layer_state.tile_count; ++tile_index)
+            _object_layer_state.tiles[tile_index] = active_tiles[tile_index].candidate;
         _object_layer_state.fetched_scanline = _object_layer_state.evaluation_scanline;
         _object_layer_state.fetched_tile_count = _object_layer_state.tile_count;
         _object_layer_state.fetched_tiles = _object_layer_state.tiles;
@@ -1608,6 +1656,7 @@ namespace clover::core
     [[nodiscard]] ppu_pixel_candidate_t ppu_t::resolve_object_pixel_candidate(uint16_t x) const noexcept
     {
         ppu_pixel_candidate_t candidate{};
+        const uint16_t object_x{ static_cast<uint16_t>(_screen_state.hires ? x >> 1u : x) };
         const size_t render_buffer_index{ _object_layer_state.active_buffer ? 0u : 1u };
         for (const auto& fetched_tile : _object_layer_state.tile_buffers[render_buffer_index])
         {
@@ -1615,7 +1664,7 @@ namespace clover::core
                 break;
 
             const auto& tile{ fetched_tile.candidate };
-            const int16_t pixel_x{ static_cast<int16_t>(x) };
+            const int16_t pixel_x{ static_cast<int16_t>(object_x) };
             const int16_t screen_x{
                 static_cast<int16_t>(
                     tile.x >= 256u
@@ -1724,7 +1773,7 @@ namespace clover::core
                                      ppu_pixel_candidate_t& above,
                                      ppu_pixel_candidate_t& below) noexcept
     {
-        const uint8_t pixel_x{ static_cast<uint8_t>(x) };
+        const uint8_t pixel_x{ static_cast<uint8_t>(_screen_state.hires ? x >> 1u : x) };
         const size_t sample_x{ static_cast<size_t>(x) };
 
         for (uint8_t background_index{ 0 }; background_index < 4u; ++background_index)
@@ -1990,8 +2039,15 @@ namespace clover::core
 
     void ppu_t::render_pixel(uint16_t scanline, uint16_t x) noexcept
     {
-        if (scanline == 0u || scanline >= active_visible_scanlines() || x >= framebuffer_t::k_width)
+        if (scanline == 0u || scanline >= active_visible_scanlines() || x >= sample_pixel_count())
             return;
+
+        const bool high_geometry{ _screen_state.hires || _screen_state.interlace || _screen_state.pseudo_hires };
+        if (high_geometry)
+        {
+            _composed_frame.set_geometry(framebuffer_t::k_max_width, framebuffer_t::k_max_height);
+            _presentation_composed_frame.set_geometry(framebuffer_t::k_max_width, framebuffer_t::k_max_height);
+        }
 
         if (_display.disabled)
         {
@@ -2004,7 +2060,17 @@ namespace clover::core
             };
             if (row_index < framebuffer_t::k_height)
             {
-                _composed_frame.data()[row_index * framebuffer_t::k_width + x] = 0xff000000u;
+                const size_t output_x{ high_geometry && !_screen_state.hires ? x * 2u : x };
+                const size_t output_y{ high_geometry ? row_index * 2u : row_index };
+                const size_t pitch{ _composed_frame.pitch_pixels() };
+                _composed_frame.data()[output_y * pitch + output_x] = 0xff000000u;
+                if (high_geometry && !_screen_state.hires)
+                    _composed_frame.data()[output_y * pitch + output_x + 1u] = 0xff000000u;
+                if (high_geometry)
+                {
+                    std::copy_n(_composed_frame.data() + output_y * pitch, pitch,
+                                _composed_frame.data() + (output_y + 1u) * pitch);
+                }
                 if (_presentation_layer_mask
                     != ppu_presentation_options_t::k_all_layers_visible)
                 {
@@ -2052,7 +2118,18 @@ namespace clover::core
         const uint32_t rgba8{
             snes_color_to_rgba8(_compositor_state.output_color[sample_x], _display.brightness)
         };
-        _composed_frame.data()[row_index * framebuffer_t::k_width + sample_x] = rgba8;
+        const size_t output_x{ high_geometry && !_screen_state.hires ? sample_x * 2u : sample_x };
+        const size_t output_y{ high_geometry ? row_index * 2u : row_index };
+        const size_t pitch{ _composed_frame.pitch_pixels() };
+        _composed_frame.data()[output_y * pitch + output_x] = rgba8;
+        if (high_geometry && !_screen_state.hires)
+            _composed_frame.data()[output_y * pitch + output_x + 1u] = rgba8;
+        if (high_geometry)
+        {
+            _composed_frame.data()[(output_y + 1u) * pitch + output_x] = rgba8;
+            if (!_screen_state.hires)
+                _composed_frame.data()[(output_y + 1u) * pitch + output_x + 1u] = rgba8;
+        }
         if (_presentation_layer_mask != ppu_presentation_options_t::k_all_layers_visible)
         {
             _presentation_composed_frame.data()[row_index * framebuffer_t::k_width + sample_x]
@@ -2105,13 +2182,13 @@ namespace clover::core
 
     void ppu_t::process_scanline_range(uint16_t scanline, uint16_t start_dot, uint16_t end_dot) noexcept
     {
-        if (_pipeline_state.background_fetch_state_dirty && end_dot >= 56u)
+        if (_pipeline_state.background_fetch_state_dirty && end_dot > 56u)
         {
             prepare_background_scanline(scanline);
             _pipeline_state.background_fetch_state_dirty = false;
         }
 
-        while (_pipeline_state.next_object_evaluate_dot <= end_dot
+        while (_pipeline_state.next_object_evaluate_dot < end_dot
             && _pipeline_state.next_object_evaluate_dot <= 1016u)
         {
             if (_pipeline_state.next_object_evaluate_dot >= start_dot
@@ -2126,21 +2203,23 @@ namespace clover::core
 
         if (!_pipeline_state.object_fetch_completed
             && start_dot <= 1080u
-            && end_dot >= 1080u)
+            && end_dot > 1080u)
         {
             finalize_object_fetch(scanline);
         }
+        process_object_fetch_range(scanline, start_dot, end_dot);
 
-        while (_pipeline_state.next_pixel_dot <= end_dot
+        while (_pipeline_state.next_pixel_dot < end_dot
             && _pipeline_state.next_pixel_dot <= 1078u
-            && _pipeline_state.next_pixel_x < framebuffer_t::k_width)
+            && _pipeline_state.next_pixel_x < sample_pixel_count())
         {
             if (_pipeline_state.next_pixel_dot >= start_dot)
                 render_pixel(scanline, _pipeline_state.next_pixel_x);
 
             ++_pipeline_state.next_pixel_x;
-            _pipeline_state.next_pixel_dot =
-                static_cast<uint16_t>(_pipeline_state.next_pixel_dot + 4u);
+            _pipeline_state.next_pixel_dot = static_cast<uint16_t>(
+                _pipeline_state.next_pixel_dot + (_screen_state.hires ? 2u : 4u)
+            );
         }
     }
 
@@ -2741,7 +2820,7 @@ namespace clover::core
 
     size_t ppu_t::sample_pixel_count() const noexcept
     {
-        return framebuffer_t::k_width;
+        return _screen_state.hires ? framebuffer_t::k_max_width : framebuffer_t::k_width;
     }
 
     void ppu_t::render_scanline(uint16_t scanline) noexcept
@@ -2998,7 +3077,8 @@ namespace clover::core
 
         const timing_snapshot_t write_timing{ timing() };
         const bool changes_background_fetch_state{
-            (address >= 0x2105u && address <= 0x2114u)
+            address == 0x2100u
+            || (address >= 0x2105u && address <= 0x2114u)
             || (address >= 0x211au && address <= 0x2120u)
         };
         if (changes_background_fetch_state
@@ -3022,6 +3102,7 @@ namespace clover::core
             return;
         case 0x2100u:
         {
+            const bool display_was_disabled{ _display.disabled };
             if (_display.disabled && timing().raster.scanline == active_visible_scanlines())
                 reset_oam_address();
 
@@ -3063,6 +3144,20 @@ namespace clover::core
 
             _display.brightness = static_cast<uint8_t>(value & 0x0fu);
             _display.disabled = (value & 0x80u) != 0;
+            // The initial OBJ evaluation phase is still recoverable when
+            // forced blank is released in the first eight master clocks of a
+            // scanline.  Catch up the slots whose evaluation edge coincided
+            // with the CPU-side INIDISP write.
+            const timing_snapshot_t display_write_timing{ timing() };
+            if (display_was_disabled
+                && !_display.disabled
+                && display_write_timing.raster.dot <= 8u
+                && display_write_timing.raster.scanline < active_visible_scanlines() - 1u
+                && _pipeline_state.initialized_scanline == display_write_timing.raster.scanline)
+            {
+                for (uint8_t slot{ 0u }; slot < _object_layer_state.evaluation_progress; ++slot)
+                    evaluate_object_slot(display_write_timing.raster.scanline, slot);
+            }
             return;
         }
         case 0x2102u:
@@ -3380,6 +3475,10 @@ namespace clover::core
             if (_completed_frame_queue_enabled)
                 _completed_frames.push_back(_presented_frame);
             render_placeholder_frame();
+            const bool high_geometry{ _screen_state.hires || _screen_state.interlace || _screen_state.pseudo_hires };
+            _composed_frame.set_geometry(high_geometry ? framebuffer_t::k_max_width : framebuffer_t::k_width,
+                                         high_geometry ? framebuffer_t::k_max_height : framebuffer_t::k_height);
+            _presentation_composed_frame.set_geometry(_composed_frame.width(), _composed_frame.height());
             result.frame_complete = true;
             result.frames_completed = 1;
         }
@@ -3655,8 +3754,9 @@ namespace clover::core
                 ? (filtered ? _presentation_composed_frame : _composed_frame)
                 : (filtered ? _presentation_presented_frame : _presented_frame)
         };
+        framebuffer.set_geometry(source.width(), source.height(), source.pitch_pixels());
         std::copy(source.data(),
-                  source.data() + framebuffer_t::k_pixel_count,
+                  source.data() + source.pixel_count(),
                   framebuffer.data());
     }
 

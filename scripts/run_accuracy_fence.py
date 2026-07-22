@@ -32,6 +32,7 @@ class scenario_t:
     rom: Path
     sha256: str
     input_script: Path | None
+    input_script2: Path | None
     save_ram: Path | None
     save_ram_sha256: str | None
     bsnes_input_frame_offset: int
@@ -90,6 +91,8 @@ def load_manifest(path: Path, workspace: Path) -> list[scenario_t]:
 
         input_script_raw = item.get("input_script")
         input_script = workspace / str(input_script_raw) if input_script_raw else None
+        input_script2_raw = item.get("input_script2")
+        input_script2 = workspace / str(input_script2_raw) if input_script2_raw else None
         save_ram_raw = item.get("save_ram")
         save_ram_sha256_raw = item.get("save_ram_sha256")
         if bool(save_ram_raw) != bool(save_ram_sha256_raw):
@@ -107,6 +110,7 @@ def load_manifest(path: Path, workspace: Path) -> list[scenario_t]:
                 rom=rom,
                 sha256=sha256,
                 input_script=input_script,
+                input_script2=input_script2,
                 save_ram=save_ram,
                 save_ram_sha256=save_ram_sha256,
                 bsnes_input_frame_offset=bsnes_input_frame_offset,
@@ -262,6 +266,9 @@ def run_scenario(
     if scenario.input_script is not None and not scenario.input_script.exists():
         print(f"Missing input script: {scenario.input_script}", file=sys.stderr)
         return False
+    if scenario.input_script2 is not None and not scenario.input_script2.exists():
+        print(f"Missing controller 2 input script: {scenario.input_script2}", file=sys.stderr)
+        return False
     if scenario.save_ram is not None:
         if not scenario.save_ram.exists():
             print(f"Missing save RAM: {scenario.save_ram}", file=sys.stderr)
@@ -313,6 +320,11 @@ def run_scenario(
                 f"Input: {scenario.input_script} "
                 f"(bsnes frame offset {scenario.bsnes_input_frame_offset:+d})"
             )
+        if scenario.input_script2 is not None:
+            print(
+                f"Input 2: {scenario.input_script2} "
+                f"(bsnes frame offset {scenario.bsnes_input_frame_offset:+d})"
+            )
         if scenario.save_ram is not None:
             print(f"Save RAM: {scenario.save_ram} ({scenario.save_ram_sha256})")
         for command in (bsnes_command, clover_command, compare_command):
@@ -345,6 +357,22 @@ def run_scenario(
                 print(f"Unable to prepare bsnes input script: {error}", file=sys.stderr)
                 return False
         bsnes_env["CLOVER_JOYPAD1_SCRIPT_FILE"] = str(bsnes_input_script)
+    if scenario.input_script2 is not None:
+        clover_env["CLOVER_JOYPAD2_SCRIPT_FILE"] = str(scenario.input_script2)
+        if scenario.bsnes_input_frame_offset == 0:
+            bsnes_input_script2 = scenario.input_script2
+        else:
+            bsnes_input_script2 = scenario_dir / "bsnes.joypad2.script"
+            try:
+                write_shifted_input_script(
+                    scenario.input_script2,
+                    bsnes_input_script2,
+                    scenario.bsnes_input_frame_offset,
+                )
+            except (OSError, ValueError) as error:
+                print(f"Unable to prepare bsnes controller 2 input script: {error}", file=sys.stderr)
+                return False
+        bsnes_env["CLOVER_JOYPAD2_SCRIPT_FILE"] = str(bsnes_input_script2)
 
     return_code, output = run_logged(
         bsnes_command, workspace, bsnes_env, scenario_dir / "bsnes.log"

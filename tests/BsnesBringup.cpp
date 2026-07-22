@@ -156,7 +156,7 @@ namespace
     };
 
     libretro_state_t* g_state{ nullptr };
-    clover::test::joypad_input_script_t g_input_script{};
+    std::array<clover::test::joypad_input_script_t, 2> g_input_scripts{};
     uint64_t g_input_frame{ 0 };
     bool g_capture_audio{ false };
     std::vector<int16_t> g_audio_samples{};
@@ -1012,10 +1012,10 @@ namespace
     int16_t input_state_callback(unsigned port, unsigned device, unsigned index, unsigned id)
     {
         constexpr unsigned k_retro_device_joypad{ 1u };
-        if (port != 0u || device != k_retro_device_joypad || index != 0u || id > 11u)
+        if (port >= g_input_scripts.size() || device != k_retro_device_joypad || index != 0u || id > 11u)
             return 0;
 
-        const uint16_t state{ g_input_script.state_for_frame(g_input_frame) };
+        const uint16_t state{ g_input_scripts[port].state_for_frame(g_input_frame) };
         return static_cast<int16_t>((state >> (15u - id)) & 0x01u);
     }
 }
@@ -1176,11 +1176,14 @@ int main(int argc, char** argv)
     }
 
     retro_reset();
-    g_input_script = clover::test::joypad_input_script_t::from_environment();
-    if (!g_input_script.valid())
+    g_input_scripts[0] = clover::test::joypad_input_script_t::from_environment(
+        "CLOVER_JOYPAD1_SCRIPT", "CLOVER_JOYPAD1_SCRIPT_FILE");
+    g_input_scripts[1] = clover::test::joypad_input_script_t::from_environment(
+        "CLOVER_JOYPAD2_SCRIPT", "CLOVER_JOYPAD2_SCRIPT_FILE");
+    if (!g_input_scripts[0].valid() || !g_input_scripts[1].valid())
     {
         std::fprintf(stderr,
-                     "Invalid CLOVER_JOYPAD1_SCRIPT or CLOVER_JOYPAD1_SCRIPT_FILE; "
+                     "Invalid CLOVER_JOYPADn_SCRIPT or CLOVER_JOYPADn_SCRIPT_FILE; "
                      "expected start-end=hhhh[,start-end=hhhh...]\n");
         retro_unload_game();
         retro_deinit();

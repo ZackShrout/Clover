@@ -32,6 +32,25 @@ namespace clover::core
             return (value & 0x00800000u) != 0u ? static_cast<int32_t>(value | 0xff000000u)
                                                : static_cast<int32_t>(value);
         }
+
+        [[nodiscard]] constexpr uint8_t register_write_mask(uint8_t address) noexcept
+        {
+            switch (address)
+            {
+            case 0x48u:
+            case 0x51u:
+            case 0x52u:
+                return 0x01u;
+            case 0x4cu:
+                return 0x03u;
+            case 0x4eu:
+                return 0x7fu;
+            case 0x50u:
+                return 0x77u;
+            default:
+                return 0xffu;
+            }
+        }
     }
 
     void cx4_t::power_on(std::span<const uint8_t> program_rom) noexcept
@@ -45,25 +64,37 @@ namespace clover::core
     uint8_t cx4_t::read(uint32_t address, uint8_t open_bus) const noexcept
     {
         const uint16_t local{static_cast<uint16_t>(address & 0x1fffu)};
-        if (local < 0x0c00u)
-            return _ram[local];
-        if (local >= 0x1f00u)
-            return _registers[local & 0xffu];
-        return open_bus;
+        if (local < 0x0c00u || (local >= 0x1000u && local < 0x1c00u))
+            return _ram[local & 0x0fffu];
+        if (local < 0x1f40u)
+            return open_bus;
+
+        uint8_t reg{static_cast<uint8_t>(local)};
+        if (reg >= 0xc0u && reg <= 0xefu)
+            reg = static_cast<uint8_t>(reg - 0x40u);
+        if ((reg >= 0xb0u && reg <= 0xbfu) || reg >= 0xf0u)
+            return 0u;
+        return _registers[reg];
     }
 
     void cx4_t::write(uint32_t address, uint8_t value) noexcept
     {
         const uint16_t local{static_cast<uint16_t>(address & 0x1fffu)};
-        if (local < 0x0c00u)
+        if (local < 0x0c00u || (local >= 0x1000u && local < 0x1c00u))
         {
-            _ram[local] = value;
+            _ram[local & 0x0fffu] = value;
             return;
         }
-        if (local < 0x1f00u)
+        if (local < 0x1f40u)
             return;
 
-        _registers[local & 0xffu] = value;
+        uint8_t reg{static_cast<uint8_t>(local)};
+        if (reg >= 0xc0u && reg <= 0xefu)
+            reg = static_cast<uint8_t>(reg - 0x40u);
+        if ((reg >= 0xb0u && reg <= 0xbfu) || reg >= 0xf0u)
+            return;
+
+        _registers[reg] = static_cast<uint8_t>(value & register_write_mask(reg));
         if (local == 0x1f47u)
             transfer_data();
         else if (local == 0x1f4fu)

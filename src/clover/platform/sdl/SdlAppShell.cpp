@@ -252,7 +252,7 @@ namespace clover::platform
                 }
 
                 write_wav_header(0u);
-                _frames << "frame,joypad1,first_audio_sample,sample_count,discontinuity,marker,"
+                _frames << "frame,joypad1,joypad2,first_audio_sample,sample_count,discontinuity,marker,"
                            "host_interval_ns,audio_queued_before_bytes,audio_queued_after_bytes,"
                            "audio_started,core_run_ns,present_ns,audio_queue_ns\n";
                 _active = true;
@@ -260,7 +260,8 @@ namespace clover::platform
             }
 
             void record_frame(uint64_t frame,
-                              uint16_t joypad_state,
+                              uint16_t joypad_state_1,
+                              uint16_t joypad_state_2,
                               const frontend::audio_frame_view_t& audio,
                               const frontend::video_frame_view_t& video,
                               bool marker,
@@ -275,7 +276,8 @@ namespace clover::platform
                 if (!_active)
                     return;
 
-                _joypad_states.push_back(joypad_state);
+                _joypad_states[0].push_back(joypad_state_1);
+                _joypad_states[1].push_back(joypad_state_2);
                 const uint64_t first_audio_sample{ _audio_sample_frames };
                 const uint64_t sample_values{ audio.interleaved_samples.size() };
                 const uint64_t sample_frames{
@@ -291,7 +293,9 @@ namespace clover::platform
                 _discontinuities += audio.discontinuity ? 1u : 0u;
 
                 _frames << frame << ','
-                        << std::hex << std::setw(4) << std::setfill('0') << joypad_state << std::dec << ','
+                        << std::hex << std::setw(4) << std::setfill('0') << joypad_state_1 << ','
+                        << std::setw(4) << std::setfill('0') << joypad_state_2
+                        << std::dec << ','
                         << first_audio_sample << ',' << sample_frames << ','
                         << (audio.discontinuity ? 1 : 0) << ',' << (marker ? 1 : 0) << ','
                         << host_interval_ns << ',' << audio_queued_before_bytes << ','
@@ -320,7 +324,8 @@ namespace clover::platform
                 }
                 _audio.close();
                 _frames.close();
-                write_input_script();
+                write_input_script("joypad1.script", _joypad_states[0]);
+                write_input_script("joypad2.script", _joypad_states[1]);
                 write_manifest();
             }
 
@@ -343,16 +348,17 @@ namespace clover::platform
                 write_u32_le(_audio, data_bytes);
             }
 
-            void write_input_script() const
+            void write_input_script(std::string_view name,
+                                    const std::vector<uint16_t>& states) const
             {
-                std::ofstream output{ _directory / "joypad1.script", std::ios::binary | std::ios::trunc };
+                std::ofstream output{ _directory / name, std::ios::binary | std::ios::trunc };
                 bool first_entry{ true };
                 size_t index{ 0 };
-                while (index < _joypad_states.size())
+                while (index < states.size())
                 {
-                    const uint16_t state{ _joypad_states[index] };
+                    const uint16_t state{ states[index] };
                     size_t end{ index };
-                    while (end + 1u < _joypad_states.size() && _joypad_states[end + 1u] == state)
+                    while (end + 1u < states.size() && states[end + 1u] == state)
                         ++end;
                     if (state != 0u)
                     {
@@ -370,7 +376,7 @@ namespace clover::platform
             void write_manifest() const
             {
                 std::ofstream output{ _directory / "manifest.txt", std::ios::binary | std::ios::trunc };
-                output << "format=clover-capture-v4\n"
+                output << "format=clover-capture-v5\n"
                        << "system=snes\n"
                        << "frame_numbering=first-run-frame-is-1\n"
                        << "joypad_encoding=snes-serial-16-msb-first\n"
@@ -381,7 +387,7 @@ namespace clover::platform
                        << "initial_save_ram_size=" << _save_ram_size << '\n'
                        << "initial_save_ram_crc32=" << std::hex << std::setw(8) << std::setfill('0')
                        << _save_ram_crc32 << std::dec << '\n'
-                       << "frames=" << _joypad_states.size() << '\n'
+                       << "frames=" << _joypad_states[0].size() << '\n'
                        << "sample_rate=" << _sample_rate << '\n'
                        << "channels=" << static_cast<unsigned>(_channels) << '\n'
                        << "audio_sample_frames=" << _audio_sample_frames << '\n'
@@ -429,7 +435,7 @@ namespace clover::platform
             std::string _rom_path{};
             std::ofstream _audio{};
             std::ofstream _frames{};
-            std::vector<uint16_t> _joypad_states{};
+            std::array<std::vector<uint16_t>, 2> _joypad_states{};
             std::vector<uint64_t> _markers{};
             size_t _rom_size{ 0 };
             uint32_t _rom_crc32{ 0 };
@@ -586,7 +592,8 @@ namespace clover::platform
 
     void sdl_presentation_t::shutdown() noexcept
     {
-        close_gamepad();
+        for (size_t port{ 0 }; port < _gamepads.size(); ++port)
+            close_gamepad(port);
         if (_audio_stream != nullptr)
         {
             SDL_DestroyAudioStream(_audio_stream);
@@ -796,14 +803,17 @@ namespace clover::platform
             _hovered_menu_item = k_menu_hit_none;
             break;
         case SDL_EVENT_GAMEPAD_ADDED:
-            if (_gamepad == nullptr)
-                static_cast<void>(open_gamepad(event.gdevice.which));
+            open_first_available_gamepad();
             break;
         case SDL_EVENT_GAMEPAD_REMOVED:
-            if (_gamepad != nullptr && event.gdevice.which == _gamepad_id)
+            for (size_t port{ 0 }; port < _gamepads.size(); ++port)
             {
-                close_gamepad();
-                open_first_available_gamepad();
+                if (_gamepads[port] != nullptr && event.gdevice.which == _gamepad_ids[port])
+                {
+                    close_gamepad(port);
+                    open_first_available_gamepad();
+                    break;
+                }
             }
             break;
         default:
@@ -1082,9 +1092,9 @@ namespace clover::platform
         _audio_queued_bytes_after_put = -1;
     }
 
-    const frontend::gamepad_state_t& sdl_presentation_t::gamepad_state() const noexcept
+    const frontend::gamepad_state_t& sdl_presentation_t::gamepad_state(size_t port) const noexcept
     {
-        return _input;
+        return _inputs[port < _inputs.size() ? port : 0u];
     }
 
     bool sdl_presentation_t::consume_capture_marker() noexcept
@@ -1235,57 +1245,67 @@ namespace clover::platform
             && _key_states[static_cast<size_t>(scancode)];
     }
 
-    bool sdl_presentation_t::physical_control_pressed(frontend::gamepad_button_t button) const noexcept
+    bool sdl_presentation_t::physical_control_pressed(frontend::gamepad_button_t button, size_t port) const noexcept
     {
         using button_t = frontend::gamepad_button_t;
         switch (button)
         {
         case button_t::dpad_up:
-            return key_pressed(SDL_SCANCODE_UP)
-                || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_DPAD_UP)
-                || gamepad_axis_pressed(SDL_GAMEPAD_AXIS_LEFTY, false);
+            return (port == 0u && key_pressed(SDL_SCANCODE_UP))
+                || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_DPAD_UP, port)
+                || gamepad_axis_pressed(SDL_GAMEPAD_AXIS_LEFTY, false, port);
         case button_t::dpad_down:
-            return key_pressed(SDL_SCANCODE_DOWN)
-                || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_DPAD_DOWN)
-                || gamepad_axis_pressed(SDL_GAMEPAD_AXIS_LEFTY, true);
+            return (port == 0u && key_pressed(SDL_SCANCODE_DOWN))
+                || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_DPAD_DOWN, port)
+                || gamepad_axis_pressed(SDL_GAMEPAD_AXIS_LEFTY, true, port);
         case button_t::dpad_left:
-            return key_pressed(SDL_SCANCODE_LEFT)
-                || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_DPAD_LEFT)
-                || gamepad_axis_pressed(SDL_GAMEPAD_AXIS_LEFTX, false);
+            return (port == 0u && key_pressed(SDL_SCANCODE_LEFT))
+                || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_DPAD_LEFT, port)
+                || gamepad_axis_pressed(SDL_GAMEPAD_AXIS_LEFTX, false, port);
         case button_t::dpad_right:
-            return key_pressed(SDL_SCANCODE_RIGHT)
-                || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_DPAD_RIGHT)
-                || gamepad_axis_pressed(SDL_GAMEPAD_AXIS_LEFTX, true);
+            return (port == 0u && key_pressed(SDL_SCANCODE_RIGHT))
+                || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_DPAD_RIGHT, port)
+                || gamepad_axis_pressed(SDL_GAMEPAD_AXIS_LEFTX, true, port);
         case button_t::face_south:
-            return key_pressed(SDL_SCANCODE_X) || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_SOUTH);
+            return (port == 0u && key_pressed(SDL_SCANCODE_X))
+                || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_SOUTH, port);
         case button_t::face_east:
-            return key_pressed(SDL_SCANCODE_Z) || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_EAST);
+            return (port == 0u && key_pressed(SDL_SCANCODE_Z))
+                || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_EAST, port);
         case button_t::face_west:
-            return key_pressed(SDL_SCANCODE_A) || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_WEST);
+            return (port == 0u && key_pressed(SDL_SCANCODE_A))
+                || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_WEST, port);
         case button_t::face_north:
-            return key_pressed(SDL_SCANCODE_S) || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_NORTH);
+            return (port == 0u && key_pressed(SDL_SCANCODE_S))
+                || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_NORTH, port);
         case button_t::left_shoulder:
-            return key_pressed(SDL_SCANCODE_Q) || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
+            return (port == 0u && key_pressed(SDL_SCANCODE_Q))
+                || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, port);
         case button_t::right_shoulder:
-            return key_pressed(SDL_SCANCODE_W) || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
+            return (port == 0u && key_pressed(SDL_SCANCODE_W))
+                || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, port);
         case button_t::back:
-            return key_pressed(SDL_SCANCODE_RSHIFT) || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_BACK);
+            return (port == 0u && key_pressed(SDL_SCANCODE_RSHIFT))
+                || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_BACK, port);
         case button_t::start:
-            return key_pressed(SDL_SCANCODE_RETURN) || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_START);
+            return (port == 0u && key_pressed(SDL_SCANCODE_RETURN))
+                || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_START, port);
         }
         return false;
     }
 
-    bool sdl_presentation_t::gamepad_button_pressed(SDL_GamepadButton button) const noexcept
+    bool sdl_presentation_t::gamepad_button_pressed(SDL_GamepadButton button, size_t port) const noexcept
     {
-        return _gamepad != nullptr && SDL_GetGamepadButton(_gamepad, button);
+        return port < _gamepads.size()
+            && _gamepads[port] != nullptr
+            && SDL_GetGamepadButton(_gamepads[port], button);
     }
 
-    bool sdl_presentation_t::gamepad_axis_pressed(SDL_GamepadAxis axis, bool positive) const noexcept
+    bool sdl_presentation_t::gamepad_axis_pressed(SDL_GamepadAxis axis, bool positive, size_t port) const noexcept
     {
-        if (_gamepad == nullptr)
+        if (port >= _gamepads.size() || _gamepads[port] == nullptr)
             return false;
-        const int16_t value{ SDL_GetGamepadAxis(_gamepad, axis) };
+        const int16_t value{ SDL_GetGamepadAxis(_gamepads[port], axis) };
         return positive ? value >= k_axis_press_threshold : value <= -k_axis_press_threshold;
     }
 
@@ -1317,53 +1337,66 @@ namespace clover::platform
         };
     }
 
-    bool sdl_presentation_t::open_gamepad(SDL_JoystickID joystick_id) noexcept
+    bool sdl_presentation_t::open_gamepad(SDL_JoystickID joystick_id, size_t port) noexcept
     {
-        if (!SDL_IsGamepad(joystick_id))
+        if (port >= _gamepads.size() || _gamepads[port] != nullptr || !SDL_IsGamepad(joystick_id))
             return false;
         SDL_Gamepad* const gamepad{ SDL_OpenGamepad(joystick_id) };
         if (gamepad == nullptr)
             return false;
 
-        close_gamepad();
-        _gamepad = gamepad;
-        _gamepad_id = joystick_id;
+        _gamepads[port] = gamepad;
+        _gamepad_ids[port] = joystick_id;
         return true;
     }
 
     void sdl_presentation_t::open_first_available_gamepad() noexcept
     {
-        if (_gamepad != nullptr)
-            return;
-
         int gamepad_count{ 0 };
         SDL_JoystickID* const gamepad_ids{ SDL_GetGamepads(&gamepad_count) };
         if (gamepad_ids == nullptr)
             return;
-        for (int index{ 0 }; index < gamepad_count; ++index)
+        for (size_t port{ 0 }; port < _gamepads.size(); ++port)
         {
-            if (open_gamepad(gamepad_ids[index]))
-                break;
+            if (_gamepads[port] != nullptr)
+                continue;
+            for (int index{ 0 }; index < gamepad_count; ++index)
+            {
+                const SDL_JoystickID candidate{ gamepad_ids[index] };
+                bool already_open{ false };
+                for (size_t open_port{ 0 }; open_port < _gamepads.size(); ++open_port)
+                {
+                    already_open = already_open
+                        || (_gamepads[open_port] != nullptr && _gamepad_ids[open_port] == candidate);
+                }
+                if (!already_open && open_gamepad(candidate, port))
+                    break;
+            }
         }
         SDL_free(gamepad_ids);
     }
 
-    void sdl_presentation_t::close_gamepad() noexcept
+    void sdl_presentation_t::close_gamepad(size_t port) noexcept
     {
-        if (_gamepad != nullptr)
+        if (port >= _gamepads.size())
+            return;
+        if (_gamepads[port] != nullptr)
         {
-            SDL_CloseGamepad(_gamepad);
-            _gamepad = nullptr;
+            SDL_CloseGamepad(_gamepads[port]);
+            _gamepads[port] = nullptr;
         }
-        _gamepad_id = 0;
+        _gamepad_ids[port] = 0;
     }
 
     void sdl_presentation_t::refresh_gamepad_state() noexcept
     {
-        for (uint8_t raw{ 0 }; raw <= static_cast<uint8_t>(frontend::gamepad_button_t::start); ++raw)
+        for (size_t port{ 0 }; port < _inputs.size(); ++port)
         {
-            const auto button{ static_cast<frontend::gamepad_button_t>(raw) };
-            _input.set(button, physical_control_pressed(button));
+            for (uint8_t raw{ 0 }; raw <= static_cast<uint8_t>(frontend::gamepad_button_t::start); ++raw)
+            {
+                const auto button{ static_cast<frontend::gamepad_button_t>(raw) };
+                _inputs[port].set(button, physical_control_pressed(button, port));
+            }
         }
     }
 
@@ -1918,9 +1951,11 @@ namespace clover::platform
 
             const bool advancing_paused_frame{ paused && frame_advance_pending };
             frame_advance_pending = false;
-            const frontend::gamepad_state_t gamepad_state{ presentation.gamepad_state() };
+            const frontend::gamepad_state_t gamepad_state{ presentation.gamepad_state(0u) };
+            const frontend::gamepad_state_t gamepad_state_2{ presentation.gamepad_state(1u) };
             const bool capture_marker{ presentation.consume_capture_marker() };
             core->set_gamepad_state(0u, gamepad_state);
+            core->set_gamepad_state(1u, gamepad_state_2);
             static constexpr std::array<size_t, 5> frames_per_presentation{ 1u, 1u, 2u, 4u, 8u };
             const size_t batch_size{
                 advancing_paused_frame ? 1u : frames_per_presentation[speed_selection]
@@ -1952,6 +1987,7 @@ namespace clover::platform
                 {
                     capture.record_frame(frames_run,
                                          frontend::snes_joypad_state(gamepad_state),
+                                         frontend::snes_joypad_state(gamepad_state_2),
                                          audio,
                                          core->video_frame(),
                                          capture_marker,

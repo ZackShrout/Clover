@@ -34,7 +34,7 @@ namespace clover::platform
         void present_test_pattern() noexcept;
         void queue_audio(const frontend::audio_frame_view_t& audio) noexcept;
         void reset_audio() noexcept;
-        [[nodiscard]] const frontend::gamepad_state_t& gamepad_state() const noexcept;
+        [[nodiscard]] const frontend::gamepad_state_t& gamepad_state(size_t port) const noexcept;
         [[nodiscard]] bool consume_capture_marker() noexcept;
         [[nodiscard]] bool consume_reset_request() noexcept;
         [[nodiscard]] bool consume_import_rom_request() noexcept;
@@ -58,25 +58,25 @@ namespace clover::platform
 
     private:
         [[nodiscard]] bool key_pressed(SDL_Scancode scancode) const noexcept;
-        [[nodiscard]] bool physical_control_pressed(frontend::gamepad_button_t button) const noexcept;
-        [[nodiscard]] bool gamepad_button_pressed(SDL_GamepadButton button) const noexcept;
-        [[nodiscard]] bool gamepad_axis_pressed(SDL_GamepadAxis axis, bool positive) const noexcept;
+        [[nodiscard]] bool physical_control_pressed(frontend::gamepad_button_t button, size_t port) const noexcept;
+        [[nodiscard]] bool gamepad_button_pressed(SDL_GamepadButton button, size_t port) const noexcept;
+        [[nodiscard]] bool gamepad_axis_pressed(SDL_GamepadAxis axis, bool positive, size_t port) const noexcept;
         [[nodiscard]] SDL_FRect presentation_rect() const noexcept;
         void render_menu() noexcept;
-        [[nodiscard]] bool open_gamepad(SDL_JoystickID joystick_id) noexcept;
+        [[nodiscard]] bool open_gamepad(SDL_JoystickID joystick_id, size_t port) noexcept;
         void open_first_available_gamepad() noexcept;
-        void close_gamepad() noexcept;
+        void close_gamepad(size_t port) noexcept;
         void refresh_gamepad_state() noexcept;
 
         SDL_Window* _window{ nullptr };
         SDL_Renderer* _renderer{ nullptr };
         SDL_Texture* _texture{ nullptr };
         SDL_AudioStream* _audio_stream{ nullptr };
-        SDL_Gamepad* _gamepad{ nullptr };
-        SDL_JoystickID _gamepad_id{ 0 };
+        std::array<SDL_Gamepad*, 2> _gamepads{};
+        std::array<SDL_JoystickID, 2> _gamepad_ids{};
         frontend::display_info_t _display{};
         std::vector<uint32_t> _test_pattern{};
-        frontend::gamepad_state_t _input{};
+        std::array<frontend::gamepad_state_t, 2> _inputs{};
         std::array<bool, SDL_SCANCODE_COUNT> _key_states{};
         bool _audio_started{ false };
         bool _capture_marker_requested{ false };

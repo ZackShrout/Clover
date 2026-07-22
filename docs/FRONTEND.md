@@ -149,7 +149,7 @@ timing, or modifying the canonical all-layers framebuffer path.
 
 F8 marks the next emulated frame only while a capture is active.
 
-## Version-3 Capture Format
+## Version-5 Capture Format
 
 `--capture` creates a new investigation directory from power-on. Refusing an
 existing directory prevents accidental overwrite.
@@ -158,7 +158,8 @@ Files:
 
 - `manifest.txt` records format version, ROM path/size/CRC32, frame numbering,
   audio format, total audio samples, discontinuities, and marker frames.
-- `joypad1.script` stores nonzero controller spans as inclusive frame ranges.
+- `joypad1.script` and `joypad2.script` store nonzero controller spans as
+  inclusive frame ranges for each logical port.
 - `initial_save_ram.srm` preserves battery RAM exactly as it existed before the
   first captured frame, allowing save-based paths to replay reproducibly.
 - `audio.wav` stores signed 16-bit stereo core output.
@@ -177,6 +178,7 @@ The controller movie is accepted by both headless runners through:
 
 ```bash
 CLOVER_JOYPAD1_SCRIPT_FILE=/path/to/joypad1.script
+CLOVER_JOYPAD2_SCRIPT_FILE=/path/to/joypad2.script
 ```
 
 That makes an input-gated path repeatable under Clover and bsnes while the WAV
@@ -184,10 +186,10 @@ and CSV preserve audio and host-performance evidence.
 
 ## Deliberate Limitations
 
-The current frontend has one active core, one presented logical controller,
-fixed keyboard bindings, muted non-1× audio, and no save-state UI, remapping
-UI, rumble, mouse, multitap, or light-gun support. Battery-backed cartridge
-saves are supported; save states are a different, unimplemented capability.
+The current frontend has one active core, two presented logical controllers,
+fixed keyboard bindings on port 1, muted non-1× audio, and no save-state UI,
+remapping UI, rumble, mouse, multitap, or light-gun support. Battery-backed
+cartridge saves are supported; save states are a different, unimplemented capability.
 These are frontend capabilities, not reasons to mix platform concepts into the
 emulator core.
 

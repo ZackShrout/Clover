@@ -89,12 +89,15 @@ namespace clover::test
     class joypad_input_script_t
     {
     public:
-        [[nodiscard]] static joypad_input_script_t from_environment() noexcept
+        [[nodiscard]] static joypad_input_script_t from_environment(
+            const char* script_name = "CLOVER_JOYPAD1_SCRIPT",
+            const char* script_file_name = "CLOVER_JOYPAD1_SCRIPT_FILE") noexcept
         {
             joypad_input_script_t result{};
             std::string file_contents{};
-            const char* raw{ std::getenv("CLOVER_JOYPAD1_SCRIPT") };
-            if (const char* const path = std::getenv("CLOVER_JOYPAD1_SCRIPT_FILE"); path != nullptr)
+            const char* raw{ std::getenv(script_name) };
+            if (const char* const path = std::getenv(script_file_name);
+                path != nullptr && *path != '\0')
             {
                 std::ifstream input{ path, std::ios::binary };
                 if (!input)

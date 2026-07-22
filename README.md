@@ -131,9 +131,10 @@ The destination must not already exist. Press F8 near a visible or audible
 problem; the next emulated frame is marked. Exact human reflex timing is not
 required because the bundle records the surrounding continuous run.
 
-A version-4 capture contains:
+A version-5 capture contains:
 
 - `joypad1.script` — run-length-compressed SNES controller input
+- `joypad2.script` — the same input movie for controller port 2
 - `initial_save_ram.srm` — immutable battery RAM as it existed before frame 1,
   when the cartridge provides persistent memory
 - `audio.wav` — raw 16-bit stereo core audio
@@ -147,6 +148,7 @@ Replay the controller movie headlessly with a comfortably high step limit:
 
 ```bash
 CLOVER_JOYPAD1_SCRIPT_FILE=/path/to/capture/joypad1.script \
+  CLOVER_JOYPAD2_SCRIPT_FILE=/path/to/capture/joypad2.script \
   CLOVER_SAVE_RAM_FILE=/path/to/capture/initial_save_ram.srm \
   ./build/clover_rom_bringup "/path/to/game.sfc" 1000 2000000000
 ```
@@ -158,8 +160,9 @@ same input sequence to be compared against bsnes.
 
 The primary regression ratchet is manifest-driven. Its default `full` suite
 runs CTest, captures every frame through frame 2000 for the five milestone ROMs,
-replays the 800-frame post-milestone Mega Man X2 CX4 lane,
-under Clover and bsnes, replays the validated save-RAM-backed Final Fantasy III
+replays the 800-frame Mega Man X2 CX4 lane, runs Mega Man X3's eight-part CX4
+self-test through controller port 2, compares both under Clover and bsnes, and
+replays the validated save-RAM-backed Final Fantasy III
 world-map path, enforces the bringup guardrails, and compares all requested
 frames exactly:
 

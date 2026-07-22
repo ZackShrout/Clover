@@ -2093,13 +2093,18 @@ int main(int argc, char** argv)
     }
 
     console.power_on();
-    const clover::test::joypad_input_script_t input_script{
-        clover::test::joypad_input_script_t::from_environment()
+    const clover::test::joypad_input_script_t input_script_1{
+        clover::test::joypad_input_script_t::from_environment(
+            "CLOVER_JOYPAD1_SCRIPT", "CLOVER_JOYPAD1_SCRIPT_FILE")
     };
-    if (!input_script.valid())
+    const clover::test::joypad_input_script_t input_script_2{
+        clover::test::joypad_input_script_t::from_environment(
+            "CLOVER_JOYPAD2_SCRIPT", "CLOVER_JOYPAD2_SCRIPT_FILE")
+    };
+    if (!input_script_1.valid() || !input_script_2.valid())
     {
         std::fprintf(stderr,
-                     "Invalid CLOVER_JOYPAD1_SCRIPT or CLOVER_JOYPAD1_SCRIPT_FILE; "
+                     "Invalid CLOVER_JOYPADn_SCRIPT or CLOVER_JOYPADn_SCRIPT_FILE; "
                      "expected start-end=hhhh[,start-end=hhhh...]\n");
         return 1;
     }
@@ -2121,7 +2126,8 @@ int main(int argc, char** argv)
         {
             if (reset_script.contains(frame))
                 console.reset();
-            console.set_controller_state(0u, input_script.state_for_frame(frame));
+            console.set_controller_state(0u, input_script_1.state_for_frame(frame));
+            console.set_controller_state(1u, input_script_2.state_for_frame(frame));
             console.run_frame();
             if (console.audio_output_overflowed())
             {
@@ -2221,7 +2227,8 @@ int main(int argc, char** argv)
         }
         const clover::core::cpu_state_t current_cpu{ console.cpu_state() };
         const uint8_t current_opcode{ console.read_u8((static_cast<uint32_t>(current_cpu.pb) << 16u) | current_cpu.pc) };
-        console.set_controller_state(0u, input_script.state_for_frame(active_frame));
+        console.set_controller_state(0u, input_script_1.state_for_frame(active_frame));
+        console.set_controller_state(1u, input_script_2.state_for_frame(active_frame));
         const clover::core::hardware_timing_snapshot_t timing_snapshot{ console.capture_timing_snapshot() };
         if (should_emit_generic_trace(generic_trace_filter, current_cpu, timing_snapshot, active_frame))
         {

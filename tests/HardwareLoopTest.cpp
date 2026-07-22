@@ -1198,9 +1198,40 @@ int main()
 
                     cx4_console.write_u8(0x006123u, 0x5au);
                     if (cx4_console.read_u8(0x006123u) != 0x5au
-                        || cx4_console.read_u8(0x806123u) != 0x5au)
+                        || cx4_console.read_u8(0x806123u) != 0x5au
+                        || cx4_console.read_u8(0x007123u) != 0x5au)
                     {
                         return fail("cx4_ram_window_and_mirror");
+                    }
+                    cx4_console.write_u8(0x007a55u, 0xa5u);
+                    if (cx4_console.read_u8(0x006a55u) != 0xa5u)
+                        return fail("cx4_second_ram_window");
+
+                    cx4_console.write_u8(0x007f48u, 0xffu);
+                    cx4_console.write_u8(0x007f4cu, 0xffu);
+                    cx4_console.write_u8(0x007f4eu, 0xffu);
+                    cx4_console.write_u8(0x007f50u, 0xffu);
+                    cx4_console.write_u8(0x007f51u, 0xffu);
+                    cx4_console.write_u8(0x007f52u, 0xffu);
+                    if (cx4_console.read_u8(0x007f48u) != 0x01u
+                        || cx4_console.read_u8(0x007f4cu) != 0x03u
+                        || cx4_console.read_u8(0x007f4eu) != 0x7fu
+                        || cx4_console.read_u8(0x007f50u) != 0x77u
+                        || cx4_console.read_u8(0x007f51u) != 0x01u
+                        || cx4_console.read_u8(0x007f52u) != 0x01u)
+                    {
+                        return fail("cx4_interface_register_masks");
+                    }
+
+                    cx4_console.write_u8(0x007f80u, 0x5au);
+                    if (cx4_console.read_u8(0x007fc0u) != 0x5au)
+                        return fail("cx4_register_file_mirror");
+                    cx4_console.write_u8(0x007fb0u, 0xffu);
+                    cx4_console.write_u8(0x007ff0u, 0xffu);
+                    if (cx4_console.read_u8(0x007fb0u) != 0u
+                        || cx4_console.read_u8(0x007ff0u) != 0u)
+                    {
+                        return fail("cx4_register_file_holes");
                     }
 
                     // CX4 command $89 exposes its identifying constants.

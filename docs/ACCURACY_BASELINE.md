@@ -59,6 +59,11 @@ masked output is diagnostic only and cannot establish pixel perfection.
 
 ## Automated Milestone Set
 
+This retail fence forms one part of the July 22, 2026 base-console milestone.
+The complete evidence statement, including the conformance laboratory and
+remaining capability boundaries, is recorded in
+[`SNES_BASE_ACCURACY_MILESTONE.md`](SNES_BASE_ACCURACY_MILESTONE.md).
+
 The established deterministic no-input milestone set is:
 
 - Super Mario World (USA)

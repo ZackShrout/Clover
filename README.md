@@ -26,6 +26,13 @@ common hardware edge cases remain active work; see
 The normative late 3-chip target and revision policy are defined in
 [`docs/SNES_HARDWARE_MODEL.md`](docs/SNES_HARDWARE_MODEL.md).
 
+The first base-console accuracy milestone was established on July 22, 2026.
+The complete curated validation battery is green for the canonical NTSC late
+3-chip profile, including the 65C816 and SPC700 conformance lanes, the five-ROM
+2000-frame accuracy fence, deterministic interactive regressions, and the
+hires/interlace closure set. Its exact scope and non-claims are recorded in
+[`docs/SNES_BASE_ACCURACY_MILESTONE.md`](docs/SNES_BASE_ACCURACY_MILESTONE.md).
+
 ## Repository Layout
 
 - `src/clover/core/` — emulation, hardware state, and timing

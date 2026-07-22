@@ -178,6 +178,33 @@ boundary differences and remains a timing investigation lead.
 These counts are differential triage, not claims of 95 hardware-verified
 passes. The real-hardware-reference lane remains the authority.
 
+## Base-Console Accuracy Milestone (2026-07-22)
+
+The remaining actionable canonical-profile failures were closed and the full
+curated battery reached its first green baseline. The final PPU work corrected
+progressive background fetch timing, Mode 6 offset-per-tile addressing,
+CPU-to-PPU register-write visibility, WAI/IRQ phase behavior, and the alternating
+262/263-line interlace fields.
+
+The previously red high-resolution observations now match bsnes exactly at
+their declared frame 300 observation points:
+
+- Mode 6 offset-per-tile big map
+- PPU bus activity
+- split-screen mid-frame timing
+- Mode 5 interlace `twoship`
+
+This milestone also retains the five-ROM 2000-frame exact retail fence, the
+stable self-reporting CPU/SPC/APU results, deterministic controller/reset
+procedures, and the save-RAM-backed Final Fantasy III interactive regression.
+The milestone is named `snes-base-accuracy-v1` and its complete evidence scope
+is defined in [`SNES_BASE_ACCURACY_MILESTONE.md`](SNES_BASE_ACCURACY_MILESTONE.md).
+
+Green means that every applicable automated scenario now produces its accepted
+profile-scoped verdict or characterization. It does not promote bsnes
+comparisons to physical-hardware verification, erase revision-specific
+characterization, or claim support for enhancement chips and peripherals.
+
 ## Adding Real-Hardware Evidence
 
 Place approved frames below `validation/hardware/references/` using one directory

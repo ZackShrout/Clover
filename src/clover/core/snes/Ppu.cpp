@@ -2786,7 +2786,17 @@ namespace clover::core
     {
         if (_pipeline_state.background_fetch_state_dirty && end_dot > 56u)
         {
+            const uint16_t replay_fetch_end{
+                std::min<uint16_t>(_pipeline_state.next_background_fetch_dot, 56u)
+            };
             prepare_background_scanline(scanline);
+            // Register writes before the visible fetch boundary belong to the
+            // new scanline setup. Rebuild fetches already visited during that
+            // setup so tile names and character rows cannot come from opposite
+            // sides of an early-line BG register update.
+            for (uint16_t dot{ 0u }; dot < replay_fetch_end;
+                 dot = static_cast<uint16_t>(dot + 4u))
+                cycle_background_fetch(scanline, dot);
             _pipeline_state.background_fetch_state_dirty = false;
         }
 
@@ -3786,7 +3796,6 @@ namespace clover::core
             || (address >= 0x211au && address <= 0x2120u)
         };
         if (changes_background_fetch_state
-            && !changes_background_pipeline_state
             && _pipeline_state.initialized_scanline == write_timing.raster.scanline
             && write_timing.raster.dot < 56u)
         {

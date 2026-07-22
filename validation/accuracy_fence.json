@@ -67,13 +67,15 @@
     },
     {
       "id": "ff3-combat-interface",
-      "suite": "investigation",
+      "suite": "interactive",
       "rom": "roms/local/Final Fantasy 3 (USA).smc",
       "sha256": "7796786bc6dd2af20872de9d6a115f6d8c89fc249f5ebbd55ec6b0eae9fdcaab",
-      "input_script": "validation/input/ff3-rendering.joypad1.script",
+      "input_script": "validation/input/ff3-combat-interface.joypad1.script",
+      "save_ram": "validation/input/ff3-combat-interface.initial.srm",
+      "save_ram_sha256": "adb3daffd89bf4c01d500a648d24b79b53b8f398bad01254805fdeba7ee08751",
       "bsnes_input_frame_offset": 1,
-      "start_frame": 10870,
-      "end_frame": 10920
+      "start_frame": 2241,
+      "end_frame": 2241
     },
     {
       "id": "ff3-world-map-color-math",

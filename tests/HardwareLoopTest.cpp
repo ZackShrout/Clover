@@ -1285,6 +1285,87 @@ int main()
 
             if (const int result = []() -> int
                 {
+                    std::array<std::byte, 0x10000> dsp1_image{};
+                    dsp1_image[0xffd5u] = std::byte{ 0x21 }; // HiROM DSP port layout
+                    dsp1_image[0xffd6u] = std::byte{ 0x03 }; // DSP-family cartridge
+                    dsp1_image[0xfffcu] = std::byte{ 0x00 };
+                    dsp1_image[0xfffdu] = std::byte{ 0x80 };
+
+                    static clover::core::console_t dsp1_console{};
+                    dsp1_console.power_on();
+                    if (!dsp1_console.load_cartridge(dsp1_image))
+                        return fail("dsp1_cartridge_load");
+
+                    // The 16-bit status register presents its unused low byte first.
+                    if (dsp1_console.read_u8(0x007000u) != 0u
+                        || dsp1_console.read_u8(0x807000u) != 0x84u)
+                    {
+                        return fail("dsp1_status_port_and_mirror");
+                    }
+
+                    // Op00: 0.5 * 0.5 = 0.25 in signed Q15.
+                    dsp1_console.write_u8(0x006000u, 0x00u);
+                    dsp1_console.write_u8(0x006000u, 0x00u);
+                    dsp1_console.write_u8(0x006000u, 0x40u);
+                    dsp1_console.write_u8(0x806000u, 0x00u);
+                    dsp1_console.write_u8(0x806000u, 0x40u);
+                    if (dsp1_console.read_u8(0x006000u) != 0x00u
+                        || dsp1_console.read_u8(0x006000u) != 0x20u)
+                    {
+                        return fail("dsp1_multiply_protocol");
+                    }
+
+                    // Op2F reports the DSP-1B data-ROM size as 0x0100.
+                    dsp1_console.write_u8(0x006000u, 0x2fu);
+                    dsp1_console.write_u8(0x006000u, 0x00u);
+                    dsp1_console.write_u8(0x006000u, 0x00u);
+                    if (dsp1_console.read_u8(0x006000u) != 0x00u
+                        || dsp1_console.read_u8(0x006000u) != 0x01u)
+                    {
+                        return fail("dsp1_memory_size");
+                    }
+
+                    // The physical DSP data register advances on every access. A read while
+                    // parameters are expected therefore supplies the register's current word.
+                    dsp1_console.write_u8(0x006000u, 0x00u);
+                    static_cast<void>(dsp1_console.read_u8(0x006000u));
+                    static_cast<void>(dsp1_console.read_u8(0x006000u));
+                    dsp1_console.write_u8(0x006000u, 0x00u);
+                    dsp1_console.write_u8(0x006000u, 0x40u);
+                    static_cast<void>(dsp1_console.read_u8(0x006000u));
+                    static_cast<void>(dsp1_console.read_u8(0x006000u));
+                    if (dsp1_console.read_u8(0x007000u) != 0u
+                        || dsp1_console.read_u8(0x007000u) != 0x84u)
+                    {
+                        return fail("dsp1_bidirectional_data_register");
+                    }
+
+                    // A read of the idle register is an invalid $80 command and leaves it idle.
+                    if (dsp1_console.read_u8(0x006000u) != 0x80u)
+                        return fail("dsp1_idle_data_register");
+
+                    std::array<std::byte, 0x8000> dsp1_lorom{};
+                    dsp1_lorom[0x7fd5u] = std::byte{ 0x20 };
+                    dsp1_lorom[0x7fd6u] = std::byte{ 0x03 };
+                    dsp1_lorom[0x7ffcu] = std::byte{ 0x00 };
+                    dsp1_lorom[0x7ffdu] = std::byte{ 0x80 };
+                    if (!dsp1_console.load_cartridge(dsp1_lorom))
+                        return fail("dsp1_lorom_load");
+                    if (dsp1_console.read_u8(0x30c000u) != 0u
+                        || dsp1_console.read_u8(0xb0c000u) != 0x84u)
+                    {
+                        return fail("dsp1_lorom_status_map");
+                    }
+
+                    return 0;
+                }();
+                result != 0)
+            {
+                return result;
+            }
+
+            if (const int result = []() -> int
+                {
                     std::array<std::byte, 0x10000> hirom_image{};
                     hirom_image[0x2100] = std::byte{ 0x21 };
                     hirom_image[0x2140] = std::byte{ 0x40 };

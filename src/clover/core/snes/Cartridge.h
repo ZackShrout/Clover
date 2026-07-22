@@ -9,10 +9,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <memory>
 #include <vector>
 
 #include "clover/core/snes/Timing.h"
 #include "clover/core/snes/Cx4.h"
+#include "clover/core/snes/Dsp1.h"
 
 namespace clover::core
 {
@@ -27,7 +29,11 @@ namespace clover::core
     enum class cartridge_hardware_t : uint8_t
     {
         base,
-        cx4
+        cx4,
+        dsp1,
+        dsp2,
+        dsp3,
+        dsp4
     };
 
     struct cartridge_header_t
@@ -82,6 +88,8 @@ namespace clover::core
         [[nodiscard]] static bool is_lorom_address(uint32_t address) noexcept;
         [[nodiscard]] static bool is_hirom_address(uint32_t address) noexcept;
         [[nodiscard]] static bool is_cx4_address(uint32_t address) noexcept;
+        [[nodiscard]] bool is_dsp1_data_address(uint32_t address) const noexcept;
+        [[nodiscard]] bool is_dsp1_status_address(uint32_t address) const noexcept;
         [[nodiscard]] static header_candidate_t score_lorom_header(std::span<const uint8_t> rom_data) noexcept;
         [[nodiscard]] static header_candidate_t score_hirom_header(std::span<const uint8_t> rom_data) noexcept;
         [[nodiscard]] static int score_header_candidate(std::span<const uint8_t> rom_data,
@@ -98,6 +106,7 @@ namespace clover::core
         cartridge_mapping_mode_t _mapping_mode{ cartridge_mapping_mode_t::bootstrap };
         cartridge_hardware_t _hardware{ cartridge_hardware_t::base };
         cx4_t _cx4{};
+        mutable std::unique_ptr<dsp1_t> _dsp1{};
         bool _loaded{ false };
         bool _ram_dirty{ false };
     };

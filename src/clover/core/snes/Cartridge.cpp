@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <span>
+#include <string_view>
 
 namespace clover::core
 {
@@ -16,6 +17,8 @@ namespace clover::core
             std::fill(_bootstrap_program_rom.begin(), _bootstrap_program_rom.end(), 0);
         else if (_hardware == cartridge_hardware_t::cx4)
             _cx4.power_on(_rom_data);
+        else if (_hardware == cartridge_hardware_t::dsp1)
+            _dsp1->power_on();
     }
 
     bool cartridge_t::load(std::span<const std::byte> rom_data) noexcept
@@ -51,6 +54,13 @@ namespace clover::core
         {
             if (_hardware == cartridge_hardware_t::cx4 && is_cx4_address(address))
                 return _cx4.read(address, open_bus);
+            if (_hardware == cartridge_hardware_t::dsp1)
+            {
+                if (is_dsp1_data_address(address))
+                    return _dsp1->read_data();
+                if (is_dsp1_status_address(address))
+                    return _dsp1->read_status();
+            }
             if (!_ram_data.empty())
             {
                 if (_mapping_mode == cartridge_mapping_mode_t::lorom
@@ -93,6 +103,11 @@ namespace clover::core
             if (_hardware == cartridge_hardware_t::cx4 && is_cx4_address(address))
             {
                 _cx4.write(address, value);
+                return;
+            }
+            if (_hardware == cartridge_hardware_t::dsp1 && is_dsp1_data_address(address))
+            {
+                _dsp1->write_data(value);
                 return;
             }
             if (!_ram_data.empty())
@@ -270,6 +285,24 @@ namespace clover::core
             && offset >= 0x6000u && offset <= 0x7fffu;
     }
 
+    bool cartridge_t::is_dsp1_data_address(uint32_t address) const noexcept
+    {
+        const uint8_t bank{ static_cast<uint8_t>((address >> 16u) & 0x7fu) };
+        const uint16_t offset{ static_cast<uint16_t>(address) };
+        if ((_header.raw_map_mode & 0x0fu) == 0x01u)
+            return bank <= 0x0fu && offset >= 0x6000u && offset <= 0x6fffu;
+        return bank >= 0x30u && bank <= 0x3fu && offset >= 0x8000u && offset <= 0xbfffu;
+    }
+
+    bool cartridge_t::is_dsp1_status_address(uint32_t address) const noexcept
+    {
+        const uint8_t bank{ static_cast<uint8_t>((address >> 16u) & 0x7fu) };
+        const uint16_t offset{ static_cast<uint16_t>(address) };
+        if ((_header.raw_map_mode & 0x0fu) == 0x01u)
+            return bank <= 0x0fu && offset >= 0x7000u && offset <= 0x7fffu;
+        return bank >= 0x30u && bank <= 0x3fu && offset >= 0xc000u;
+    }
+
     cartridge_t::header_candidate_t cartridge_t::score_lorom_header(
         std::span<const uint8_t> rom_data
     ) noexcept
@@ -373,9 +406,32 @@ namespace clover::core
         _header.raw_ram_size = winner.raw_ram_size;
         _header.destination_code = winner.destination_code;
         _header.reset_vector = winner.reset_vector;
-        _hardware = winner.raw_cartridge_type == 0xf3u
-            ? cartridge_hardware_t::cx4
-            : cartridge_hardware_t::base;
+        _hardware = cartridge_hardware_t::base;
+        if (winner.raw_cartridge_type == 0xf3u)
+            _hardware = cartridge_hardware_t::cx4;
+        else if ((winner.raw_cartridge_type & 0xf0u) == 0u
+                 && (winner.raw_cartridge_type & 0x0fu) >= 3u
+                 && (winner.raw_cartridge_type & 0x0fu) <= 6u)
+        {
+            const size_t header_offset{ winner.mapping_mode == cartridge_mapping_mode_t::hirom
+                ? 0xffc0u : 0x7fc0u };
+            const std::string_view title{
+                reinterpret_cast<const char*>(_rom_data.data() + header_offset), 21u
+            };
+            if (title.starts_with("DUNGEON MASTER"))
+                _hardware = cartridge_hardware_t::dsp2;
+            else if (title.starts_with("SD") && title.find("GX") != std::string_view::npos)
+                _hardware = cartridge_hardware_t::dsp3;
+            else if (title.starts_with("PLANETS CHAMP TG3000") || title.starts_with("TOP GEAR 3000"))
+                _hardware = cartridge_hardware_t::dsp4;
+            else
+                _hardware = cartridge_hardware_t::dsp1;
+        }
+        if (_hardware == cartridge_hardware_t::dsp1)
+        {
+            _dsp1 = std::make_unique<dsp1_t>();
+            _dsp1->power_on();
+        }
         if (winner.raw_ram_size != 0u && winner.raw_ram_size < 16u)
             _ram_data.assign(static_cast<size_t>(1024u) << winner.raw_ram_size, 0u);
         _ram_dirty = false;
@@ -390,6 +446,7 @@ namespace clover::core
         _mapping_mode = cartridge_mapping_mode_t::bootstrap;
         _hardware = cartridge_hardware_t::base;
         _loaded = false;
+        _dsp1.reset();
         _ram_dirty = false;
     }
 }

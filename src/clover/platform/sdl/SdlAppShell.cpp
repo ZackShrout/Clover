@@ -33,7 +33,7 @@ namespace clover::platform
         constexpr float k_menu_bar_height{ 28.f };
         constexpr SDL_FRect k_file_menu_button{ 0.f, 0.f, 56.f, k_menu_bar_height };
         constexpr SDL_FRect k_emulation_menu_button{ 56.f, 0.f, 96.f, k_menu_bar_height };
-        constexpr SDL_FRect k_video_menu_button{ 152.f, 0.f, 56.f, k_menu_bar_height };
+        constexpr SDL_FRect k_video_menu_button{ 152.f, 0.f, 68.f, k_menu_bar_height };
         constexpr float k_file_menu_width{ 240.f };
         constexpr SDL_FRect k_import_rom_menu_item{
             0.f, k_menu_bar_height, k_file_menu_width, 28.f

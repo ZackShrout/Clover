@@ -213,6 +213,7 @@ namespace clover::platform
             [[nodiscard]] bool initialize(const std::filesystem::path& directory,
                                           std::string_view rom_path,
                                           std::span<const std::byte> rom,
+                                          std::span<const std::byte> initial_save_ram,
                                           const frontend::audio_frame_view_t& audio_format) noexcept
             {
                 std::error_code error{};
@@ -225,6 +226,8 @@ namespace clover::platform
                 _rom_path = rom_path;
                 _rom_size = rom.size();
                 _rom_crc32 = crc32(rom);
+                _save_ram_size = initial_save_ram.size();
+                _save_ram_crc32 = crc32(initial_save_ram);
                 _sample_rate = audio_format.sample_rate_hz;
                 _channels = audio_format.channels;
                 if (_sample_rate == 0u || _channels == 0u)
@@ -234,6 +237,19 @@ namespace clover::platform
                 _frames.open(_directory / "frames.csv", std::ios::binary | std::ios::trunc);
                 if (!_audio || !_frames)
                     return false;
+
+                if (!initial_save_ram.empty())
+                {
+                    std::ofstream save_output{
+                        _directory / "initial_save_ram.srm", std::ios::binary | std::ios::trunc
+                    };
+                    if (!save_output)
+                        return false;
+                    save_output.write(reinterpret_cast<const char*>(initial_save_ram.data()),
+                                      static_cast<std::streamsize>(initial_save_ram.size_bytes()));
+                    if (!save_output)
+                        return false;
+                }
 
                 write_wav_header(0u);
                 _frames << "frame,joypad1,first_audio_sample,sample_count,discontinuity,marker,"
@@ -354,13 +370,17 @@ namespace clover::platform
             void write_manifest() const
             {
                 std::ofstream output{ _directory / "manifest.txt", std::ios::binary | std::ios::trunc };
-                output << "format=clover-capture-v3\n"
+                output << "format=clover-capture-v4\n"
                        << "system=snes\n"
                        << "frame_numbering=first-run-frame-is-1\n"
                        << "joypad_encoding=snes-serial-16-msb-first\n"
                        << "rom_path=" << _rom_path << '\n'
                        << "rom_size=" << _rom_size << '\n'
                        << "rom_crc32=" << std::hex << std::setw(8) << std::setfill('0') << _rom_crc32 << std::dec << '\n'
+                       << "initial_save_ram=" << (_save_ram_size == 0u ? "none" : "initial_save_ram.srm") << '\n'
+                       << "initial_save_ram_size=" << _save_ram_size << '\n'
+                       << "initial_save_ram_crc32=" << std::hex << std::setw(8) << std::setfill('0')
+                       << _save_ram_crc32 << std::dec << '\n'
                        << "frames=" << _joypad_states.size() << '\n'
                        << "sample_rate=" << _sample_rate << '\n'
                        << "channels=" << static_cast<unsigned>(_channels) << '\n'
@@ -413,6 +433,8 @@ namespace clover::platform
             std::vector<uint64_t> _markers{};
             size_t _rom_size{ 0 };
             uint32_t _rom_crc32{ 0 };
+            size_t _save_ram_size{ 0 };
+            uint32_t _save_ram_crc32{ 0 };
             uint32_t _sample_rate{ 0 };
             uint16_t _channels{ 0 };
             uint64_t _audio_data_bytes{ 0 };
@@ -1475,6 +1497,7 @@ namespace clover::platform
             && !capture.initialize(std::filesystem::path{ command_line.capture_path },
                                    rom_path.string(),
                                    media,
+                                   core->persistent_memory(),
                                    core->audio_frame()))
         {
             std::fprintf(stderr,

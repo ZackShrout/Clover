@@ -32,6 +32,8 @@ class scenario_t:
     rom: Path
     sha256: str
     input_script: Path | None
+    save_ram: Path | None
+    save_ram_sha256: str | None
     bsnes_input_frame_offset: int
     start_frame: int
     end_frame: int
@@ -88,6 +90,16 @@ def load_manifest(path: Path, workspace: Path) -> list[scenario_t]:
 
         input_script_raw = item.get("input_script")
         input_script = workspace / str(input_script_raw) if input_script_raw else None
+        save_ram_raw = item.get("save_ram")
+        save_ram_sha256_raw = item.get("save_ram_sha256")
+        if bool(save_ram_raw) != bool(save_ram_sha256_raw):
+            raise ValueError(
+                f"scenario {scenario_id} must specify save_ram and save_ram_sha256 together"
+            )
+        save_ram = workspace / str(save_ram_raw) if save_ram_raw else None
+        save_ram_sha256 = str(save_ram_sha256_raw).lower() if save_ram_sha256_raw else None
+        if save_ram_sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", save_ram_sha256):
+            raise ValueError(f"scenario {scenario_id} has invalid save RAM SHA-256")
         scenarios.append(
             scenario_t(
                 id=scenario_id,
@@ -95,6 +107,8 @@ def load_manifest(path: Path, workspace: Path) -> list[scenario_t]:
                 rom=rom,
                 sha256=sha256,
                 input_script=input_script,
+                save_ram=save_ram,
+                save_ram_sha256=save_ram_sha256,
                 bsnes_input_frame_offset=bsnes_input_frame_offset,
                 start_frame=start_frame,
                 end_frame=end_frame,
@@ -248,6 +262,18 @@ def run_scenario(
     if scenario.input_script is not None and not scenario.input_script.exists():
         print(f"Missing input script: {scenario.input_script}", file=sys.stderr)
         return False
+    if scenario.save_ram is not None:
+        if not scenario.save_ram.exists():
+            print(f"Missing save RAM: {scenario.save_ram}", file=sys.stderr)
+            return False
+        actual_save_sha256 = sha256_file(scenario.save_ram)
+        if actual_save_sha256 != scenario.save_ram_sha256:
+            print(
+                f"Save RAM identity mismatch: {scenario.save_ram}\n"
+                f"  expected {scenario.save_ram_sha256}\n  actual   {actual_save_sha256}",
+                file=sys.stderr,
+            )
+            return False
 
     scenario_dir = output_root / scenario.id
     bsnes_dir = scenario_dir / "bsnes"
@@ -287,6 +313,8 @@ def run_scenario(
                 f"Input: {scenario.input_script} "
                 f"(bsnes frame offset {scenario.bsnes_input_frame_offset:+d})"
             )
+        if scenario.save_ram is not None:
+            print(f"Save RAM: {scenario.save_ram} ({scenario.save_ram_sha256})")
         for command in (bsnes_command, clover_command, compare_command):
             print(f"$ {command_text(command)}")
         return True
@@ -298,6 +326,9 @@ def run_scenario(
     clover_env["CLOVER_STARTUP_ENTROPY"] = "none"
     clover_env["CLOVER_BRINGUP_VERBOSE"] = "0"
     clover_env["CLOVER_DUMP_FRAMES_ONLY"] = "1"
+    if scenario.save_ram is not None:
+        clover_env["CLOVER_SAVE_RAM_FILE"] = str(scenario.save_ram)
+        bsnes_env["CLOVER_SAVE_RAM_FILE"] = str(scenario.save_ram)
     if scenario.input_script is not None:
         clover_env["CLOVER_JOYPAD1_SCRIPT_FILE"] = str(scenario.input_script)
         if scenario.bsnes_input_frame_offset == 0:

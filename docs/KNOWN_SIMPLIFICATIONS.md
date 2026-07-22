@@ -55,7 +55,11 @@ hardware tests.
 
 ## Video Standard and Input Devices
 
-- NTSC is the only active timing profile; PAL timing is not implemented.
+- NTSC has substantially deeper retail regression evidence than PAL. PAL timing,
+  region reporting, and automatic cartridge selection are active, but uncommon
+  PAL raster/interlace edge cases still need hardware characterization.
+- Early 3-chip, S-CPU-A, and 1CHIP behavior is cataloged but not selectable until
+  each profile's observable differences are implemented and validated.
 - The core/frontend seam currently models standard gamepad state on two logical
   ports.
 - The SDL app presents one keyboard/gamepad-controlled port. Mouse, multitap,
@@ -66,7 +70,7 @@ hardware tests.
 Deterministic Clover-versus-bsnes comparison is the default regression mode.
 Entropy mode exists for undefined cold-boot-state investigations.
 
-The four-ROM 1000-frame exact baseline and later interactive captures cover
+The five-ROM 2000-frame exact baseline and later interactive captures cover
 only the paths executed. They do not imply universal compatibility. Exact
 pixels, audio evidence, hardware state, and equivalent observation points are
 required according to the fault being investigated; a game merely reaching a

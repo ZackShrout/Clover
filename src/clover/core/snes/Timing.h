@@ -58,6 +58,27 @@ namespace clover::core
     };
 
     constexpr video_timing_t k_ntsc_video_timing{};
+    constexpr video_timing_t k_pal_video_timing{
+        .standard = video_standard_t::pal,
+        .master_clocks_per_scanline = 1364,
+        .scanlines_per_frame = 312,
+        .visible_scanlines = 225,
+        .overscan_visible_scanlines = 240,
+        .short_scanline = 0,
+        .short_scanline_clocks = 1364,
+        .hblank_start_dot = 1096,
+        .hdma_trigger_dot = 1104,
+    };
+
+    [[nodiscard]] constexpr const video_timing_t& video_timing_for(video_standard_t standard) noexcept
+    {
+        return standard == video_standard_t::pal ? k_pal_video_timing : k_ntsc_video_timing;
+    }
+
+    [[nodiscard]] constexpr uint32_t master_clock_frequency_hz(video_standard_t standard) noexcept
+    {
+        return standard == video_standard_t::pal ? 21'281'370u : 21'477'272u;
+    }
     constexpr master_clock_delta_t k_cpu_dram_refresh_stall_clocks{ 40 };
 
     [[nodiscard]] constexpr uint16_t dma_phase_from_master_clock(master_clock_count_t master_clock) noexcept
@@ -206,6 +227,7 @@ namespace clover::core
         uint16_t visible_scanlines{ 225 };
         bool interlace{ false };
         bool frame_complete{ false };
+        uint32_t frames_completed{ 0 };
         bool entered_scanline{ false };
         bool entered_frame_start{ false };
         bool entered_hblank{ false };

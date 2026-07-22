@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -76,6 +77,7 @@ namespace
         RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE = 17,
         RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME = 18,
         RETRO_ENVIRONMENT_GET_LOG_INTERFACE = 27,
+        RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY = 31,
         RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY = 9,
         RETRO_ENVIRONMENT_SET_SUBSYSTEM_INFO = 34,
         RETRO_ENVIRONMENT_SET_CONTROLLER_INFO = 35,
@@ -146,6 +148,8 @@ namespace
         };
         std::filesystem::path system_directory{ std::filesystem::current_path() };
         std::string system_directory_string{ system_directory.string() };
+        std::filesystem::path save_directory{};
+        std::string save_directory_string{};
         frame_capture_t latest_frame{};
         retro_system_av_info geometry{};
         unsigned pixel_format{ RETRO_PIXEL_FORMAT_XRGB8888 };
@@ -156,6 +160,61 @@ namespace
     uint64_t g_input_frame{ 0 };
     bool g_capture_audio{ false };
     std::vector<int16_t> g_audio_samples{};
+
+    struct temporary_directory_t
+    {
+        std::filesystem::path path{};
+
+        ~temporary_directory_t()
+        {
+            if (path.empty())
+                return;
+            std::error_code ignored{};
+            std::filesystem::remove_all(path, ignored);
+        }
+    };
+
+    [[nodiscard]] bool stage_save_ram(const std::filesystem::path& source,
+                                      const std::filesystem::path& rom_path,
+                                      temporary_directory_t& stage,
+                                      std::string& error_message)
+    {
+        if (!std::filesystem::is_regular_file(source))
+        {
+            error_message = "Save RAM file not found: " + source.string();
+            return false;
+        }
+
+        const auto nonce{ std::chrono::steady_clock::now().time_since_epoch().count() };
+        for (uint32_t attempt{ 0 }; attempt < 100u && stage.path.empty(); ++attempt)
+        {
+            const std::filesystem::path candidate{
+                std::filesystem::temp_directory_path()
+                    / ("clover-bsnes-save-" + std::to_string(nonce) + "-" + std::to_string(attempt))
+            };
+            std::error_code directory_error{};
+            if (std::filesystem::create_directory(candidate, directory_error))
+                stage.path = candidate;
+        }
+        if (stage.path.empty())
+        {
+            error_message = "Unable to create a private bsnes save directory";
+            return false;
+        }
+
+        const std::filesystem::path destination{ stage.path / (rom_path.stem().string() + ".srm") };
+        std::error_code copy_error{};
+        std::filesystem::copy_file(source,
+                                   destination,
+                                   std::filesystem::copy_options::none,
+                                   copy_error);
+        if (copy_error)
+        {
+            error_message = "Unable to stage save RAM: " + copy_error.message();
+            return false;
+        }
+        return true;
+    }
 
     void print_usage(const char* executable)
     {
@@ -885,6 +944,11 @@ namespace
         case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
             *static_cast<const char**>(data) = g_state->system_directory_string.c_str();
             return true;
+        case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
+            if (g_state->save_directory_string.empty())
+                return false;
+            *static_cast<const char**>(data) = g_state->save_directory_string.c_str();
+            return true;
         case RETRO_ENVIRONMENT_SET_GEOMETRY:
             g_state->geometry = *static_cast<const retro_system_av_info*>(data);
             return true;
@@ -1006,6 +1070,19 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    temporary_directory_t save_stage{};
+    if (const char* const save_ram_path{ std::getenv("CLOVER_SAVE_RAM_FILE") };
+        save_ram_path != nullptr && *save_ram_path != '\0')
+    {
+        std::string save_error{};
+        if (!stage_save_ram(save_ram_path, rom_path, save_stage, save_error))
+        {
+            std::fprintf(stderr, "%s\n", save_error.c_str());
+            return 1;
+        }
+        std::printf("Staged save RAM for bsnes: %s\n", save_ram_path);
+    }
+
     const bool dump_frames{ !dump_directory.empty() && dump_count > 0 };
     if (dump_frames)
     {
@@ -1029,6 +1106,11 @@ int main(int argc, char** argv)
     }
 
     libretro_state_t state{};
+    if (!save_stage.path.empty())
+    {
+        state.save_directory = save_stage.path;
+        state.save_directory_string = state.save_directory.string();
+    }
     configure_reference_entropy(state);
     g_state = &state;
 
@@ -1105,6 +1187,18 @@ int main(int argc, char** argv)
         dlclose(handle);
         return 1;
     }
+    const clover::test::frame_event_script_t reset_script{
+        clover::test::frame_event_script_t::from_environment("CLOVER_RESET_FRAMES")
+    };
+    if (!reset_script.valid())
+    {
+        std::fprintf(stderr,
+                     "Invalid CLOVER_RESET_FRAMES; expected frame[,frame...]\n");
+        retro_unload_game();
+        retro_deinit();
+        dlclose(handle);
+        return 1;
+    }
     const bool dump_state_diff_enabled{ std::getenv("CLOVER_BSNES_STATE_DIFF") != nullptr };
     std::vector<uint8_t> state_before{};
     if (dump_state_diff_enabled)
@@ -1125,6 +1219,8 @@ int main(int argc, char** argv)
     for (uint64_t frame{ 0 }; frame < target_frames; ++frame)
     {
         g_input_frame = frame + 1u;
+        if (reset_script.contains(g_input_frame))
+            retro_reset();
         retro_run();
         const uint64_t frame_number{ frame + 1 };
         if (dump_frames && frame_number >= dump_start_frame && dumped_frames < dump_count)

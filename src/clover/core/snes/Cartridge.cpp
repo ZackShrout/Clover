@@ -133,6 +133,16 @@ namespace clover::core
         return _header;
     }
 
+    video_standard_t cartridge_t::declared_video_standard() const noexcept
+    {
+        // Nintendo destination codes $02-$0c and $11 designate 50 Hz markets.
+        // Brazil ($10) is PAL-M encoding on 60 Hz console timing.
+        const uint8_t destination{ _header.destination_code };
+        return (destination >= 0x02u && destination <= 0x0cu) || destination == 0x11u
+            ? video_standard_t::pal
+            : video_standard_t::ntsc;
+    }
+
     std::span<const std::byte> cartridge_t::persistent_memory() const noexcept
     {
         return std::as_bytes(std::span<const uint8_t>{ _ram_data });
@@ -250,6 +260,7 @@ namespace clover::core
         const size_t header_offset{ 0x7fc0u };
         candidate.raw_map_mode = rom_data[header_offset + 0x15u];
         candidate.raw_ram_size = rom_data[header_offset + 0x18u];
+        candidate.destination_code = rom_data[header_offset + 0x19u];
         candidate.reset_vector = static_cast<uint16_t>(
             rom_data[header_offset + 0x3cu] | (rom_data[header_offset + 0x3du] << 8u)
         );
@@ -271,6 +282,7 @@ namespace clover::core
         const size_t header_offset{ 0xffc0u };
         candidate.raw_map_mode = rom_data[header_offset + 0x15u];
         candidate.raw_ram_size = rom_data[header_offset + 0x18u];
+        candidate.destination_code = rom_data[header_offset + 0x19u];
         candidate.reset_vector = static_cast<uint16_t>(
             rom_data[header_offset + 0x3cu] | (rom_data[header_offset + 0x3du] << 8u)
         );
@@ -334,6 +346,7 @@ namespace clover::core
         _header.mapping_mode = winner.mapping_mode;
         _header.raw_map_mode = winner.raw_map_mode;
         _header.raw_ram_size = winner.raw_ram_size;
+        _header.destination_code = winner.destination_code;
         _header.reset_vector = winner.reset_vector;
         if (winner.raw_ram_size != 0u && winner.raw_ram_size < 16u)
             _ram_data.assign(static_cast<size_t>(1024u) << winner.raw_ram_size, 0u);

@@ -12,6 +12,7 @@
 #include "clover/core/snes/Dma.h"
 #include "clover/core/FrameBuffer.h"
 #include "clover/core/snes/Interrupts.h"
+#include "clover/core/snes/HardwareProfile.h"
 #include "clover/core/snes/Ppu.h"
 #include "clover/core/snes/Scheduler.h"
 
@@ -37,6 +38,9 @@ namespace clover::core
     public:
         void power_on() noexcept;
         void reset() noexcept;
+        [[nodiscard]] bool set_hardware_configuration(snes_hardware_configuration_t configuration) noexcept;
+        [[nodiscard]] snes_hardware_configuration_t hardware_configuration() const noexcept;
+        [[nodiscard]] snes_hardware_identity_t hardware_identity() const noexcept;
         void set_startup_entropy_mode(startup_entropy_mode_t mode) noexcept;
         [[nodiscard]] startup_entropy_mode_t startup_entropy_mode() const noexcept;
         void set_startup_entropy_seed(uint32_t seed, uint32_t sequence = 0u) noexcept;
@@ -68,6 +72,8 @@ namespace clover::core
         [[nodiscard]] master_clock_delta_t cpu_interrupt_poll_phase_for_testing() const noexcept;
         [[nodiscard]] master_clock_delta_t current_scanline_clocks() const noexcept;
         void refresh_framebuffer(const ppu_presentation_options_t& options = {}) noexcept;
+        void set_completed_frame_queue_enabled(bool enabled) noexcept;
+        [[nodiscard]] bool pop_completed_frame(framebuffer_t& framebuffer) noexcept;
         void set_presentation_layer_mask(uint8_t visible_layer_mask) noexcept;
         [[nodiscard]] hardware_timing_snapshot_t capture_timing_snapshot() const noexcept;
         [[nodiscard]] ppu_render_state_snapshot_t ppu_render_state() const noexcept;
@@ -113,6 +119,8 @@ namespace clover::core
         [[nodiscard]] const std::array<bus_t::apu_port_trace_t, bus_t::k_apu_port_trace_capacity>& apu_port_trace() const noexcept;
 
     private:
+        void apply_hardware_configuration() noexcept;
+
         scheduler_t _scheduler{};
         bus_t _bus{};
         cartridge_t _cartridge{};
@@ -123,5 +131,7 @@ namespace clover::core
         apu_t _apu{};
         framebuffer_t _framebuffer{};
         bool _powered_on{ false };
+        snes_hardware_configuration_t _hardware_configuration{};
+        snes_hardware_identity_t _hardware_identity{};
     };
 }

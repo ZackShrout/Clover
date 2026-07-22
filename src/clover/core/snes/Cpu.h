@@ -75,6 +75,7 @@ namespace clover::core
         void attach_bus(bus_t& bus) noexcept;
         void attach_interrupt_controller(interrupt_controller_t& interrupts) noexcept;
         void attach_ppu(ppu_t& ppu) noexcept;
+        void configure_hardware(const video_timing_t& video_timing, uint8_t cpu_version) noexcept;
         void power_on() noexcept;
         void reset() noexcept;
         [[nodiscard]] uint8_t dma_phase(master_clock_delta_t elapsed_master_clocks = 0) const noexcept;
@@ -143,6 +144,8 @@ namespace clover::core
         bool _wait_wake_idle_pending{ false };
         bool _stopped{ false };
         uint16_t _visible_scanlines{ k_ntsc_video_timing.visible_scanlines };
+        video_timing_t _video_timing{ k_ntsc_video_timing };
+        uint8_t _cpu_version{ 2 };
         bool _interlace{ false };
         uint16_t _dram_refresh_dot{ dram_refresh_dot_v2(0) };
         bool _dram_refresh_pending{ true };

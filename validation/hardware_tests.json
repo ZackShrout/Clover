@@ -1,0 +1,501 @@
+{
+  "version": 1,
+  "provenance": {
+    "blargg": "https://snes.nesdev.org/wiki/Emulator_tests",
+    "undisbeliever": "https://github.com/undisbeliever/snes-test-roms",
+    "gilyon": "higan snes-test-roms archive revision 26e8aa91e0d3b90b901e7e693bc4a8244b391d7b",
+    "peterlemon": "https://github.com/PeterLemon/SNES revision 350b394e86ec5d62f600b5cbf64cdce3721bb6ef",
+    "sour": "higan snes-test-roms archive revision 26e8aa91e0d3b90b901e7e693bc4a8244b391d7b",
+    "community-ppu": "higan snes-test-roms archive revision 26e8aa91e0d3b90b901e7e693bc4a8244b391d7b and bbbradsmith/SNES_stuff revision 3143bc8cf2b56dc28c6ffad7fe42fbc0eccb8f85"
+  },
+  "hardware_model": {
+    "canonical": "late-3chip",
+    "profiles": {
+      "late-3chip": {
+        "implemented": true,
+        "cpu": "S-CPU B",
+        "cpu_version": 2,
+        "ppu_family": "discrete-3chip",
+        "ppu1_version": 1,
+        "ppu2_version": 3,
+        "apu": "late-S-APU",
+        "regions": ["ntsc", "pal"]
+      },
+      "early-3chip": { "implemented": false },
+      "scpu-a-3chip": { "implemented": false },
+      "1chip": { "implemented": false }
+    }
+  },
+  "defaults": {
+    "suites": ["full"],
+    "method": "characterization",
+    "frame": 300,
+    "step_limit": 500000000
+  },
+  "tests": [
+    {
+      "id": "gilyon-cpu-opcode-conformance", "collection": "gilyon",
+      "suites": ["smoke", "full", "cpu", "cpu-conformance"],
+      "category": "cpu-opcodes", "method": "self-report",
+      "rom": "roms/local/hardware-tests/gilyon/cputest.sfc",
+      "sha256": "f61de78d346a68c166d67472a414e5d207368889d37b977d1338f9221ca6400e",
+      "frame": 1600, "hardware_profiles": ["late-3chip"],
+      "notes": "Comprehensive 65C816 opcode, addressing-mode, flag, and wrapping tests; excludes WAI/STP and instruction timing."
+    },
+    {
+      "id": "gilyon-spc700-opcode-conformance", "collection": "gilyon",
+      "suites": ["smoke", "full", "apu", "spc-conformance"],
+      "category": "spc-opcodes", "method": "self-report",
+      "rom": "roms/local/hardware-tests/gilyon/spctest.sfc",
+      "sha256": "ed6aa8fa247007cdf683f243454d1dff31a25e1977c25fc9d7e1a96e3d031e92",
+      "frame": 1200, "hardware_profiles": ["late-3chip"],
+      "notes": "Comprehensive SPC700 opcode, addressing-mode, and flag tests; excludes SLEEP/STOP, MMIO, DSP, and timing."
+    },
+    {
+      "id": "sour-cpu-opcode-timing-v2", "collection": "sour",
+      "suites": ["smoke", "full", "cpu", "cpu-timing"],
+      "category": "cpu-timing", "method": "characterization",
+      "rom": "roms/local/hardware-tests/sour/op_timing_test_v2.sfc",
+      "sha256": "6881f66d7f833fbb062aba173b3946e204c7f43fc42acbf8278c705a01964b12",
+      "frame": 1200, "hardware_profiles": ["late-3chip"],
+      "notes": "Checks almost all CPU instruction cycle counts in every M/X width combination."
+    },
+    {
+      "id": "sour-dma-interrupt-boundary", "collection": "sour",
+      "suites": ["smoke", "full", "cpu", "cpu-timing", "dma"],
+      "category": "dma-interrupt", "method": "characterization",
+      "rom": "roms/local/hardware-tests/sour/dma_irq_test.sfc",
+      "sha256": "a16d684055caa1d2b2e37b312437164ef7088fd28847e88044ee129eeaee054a",
+      "frame": 1200, "hardware_profiles": ["late-3chip"],
+      "notes": "Checks the instruction executed after DMA when IRQ or NMI becomes pending during the transfer."
+    },
+    {
+      "id": "ppu-opt-mode2-big-map", "collection": "community-ppu", "suites": ["full", "ppu", "offset-per-tile"],
+      "category": "ppu-offset-per-tile", "rom": "roms/local/hardware-tests/ppu/opt-mode2-big-map.sfc",
+      "sha256": "439e0ee236baeac60412cadd5afd662ef6fcb7ac0fb46ea35933b3c0bc19ff8c", "frame": 300,
+      "hardware_profiles": ["late-3chip"], "notes": "Mode 2 offset-per-tile big-map behavior based on observations from real hardware."
+    },
+    {
+      "id": "ppu-opt-mode6-big-map", "collection": "community-ppu", "suites": ["full", "ppu", "offset-per-tile"],
+      "category": "ppu-offset-per-tile", "rom": "roms/local/hardware-tests/ppu/opt-mode6-big-map.sfc",
+      "sha256": "3b0d50d17a80b198c06d8e6cc8ea6230669987470b037974aa89fc9906eae170", "frame": 300,
+      "hardware_profiles": ["late-3chip"], "notes": "Mode 6 offset-per-tile big-map behavior based on observations from real hardware."
+    },
+    {
+      "id": "ppu-actualmix-blendtest", "collection": "community-ppu", "suites": ["full", "ppu", "color-math"],
+      "category": "ppu-color-math", "rom": "roms/local/hardware-tests/ppu/actualmix-blendtest.sfc",
+      "sha256": "437fef3d9a7b880269c82676781f4626d7182765d314f891822dbf5903a6c6c8", "frame": 300,
+      "hardware_profiles": ["late-3chip"], "notes": "Interactive Actual Mix screen/color-math visual characterization."
+    },
+    {
+      "id": "ppu-gradient-cgwsel", "collection": "community-ppu", "suites": ["full", "ppu", "color-math"],
+      "category": "ppu-color-math", "rom": "roms/local/hardware-tests/ppu/gradient-test.sfc",
+      "sha256": "d3e25886fecf11d4aa1696000a37f65eeeae4563c46c21c428baaa5f7a4d7efb", "frame": 300,
+      "hardware_profiles": ["late-3chip"], "notes": "CGWSEL and fixed-color gradient characterization."
+    },
+    {
+      "id": "ppu-mode7-extbg", "collection": "community-ppu", "suites": ["full", "ppu", "mode7"],
+      "category": "ppu-mode7", "rom": "roms/local/hardware-tests/ppu/extbgtest.sfc",
+      "sha256": "2aaaddc42e417f8549807a11dcea5799dedeb214fbe0083b6fa355e36525874b", "frame": 300,
+      "hardware_profiles": ["late-3chip"], "notes": "Mode 7 EXTBG priority and rendering characterization."
+    },
+    {
+      "id": "ppu-mode5-interlace-twoship", "collection": "community-ppu", "suites": ["full", "ppu", "hires", "interlace"],
+      "category": "ppu-hires-interlace", "rom": "roms/local/hardware-tests/ppu/twoship.sfc",
+      "sha256": "98ff5b7b500fe4a93a481bcca510437597eef35fec49d4ec9dd9e8a6f5596076", "frame": 300,
+      "hardware_profiles": ["late-3chip"], "notes": "Mode 5 high-resolution and interlace visual characterization."
+    },
+    {
+      "id": "ppu-mode3-elasticity", "collection": "community-ppu", "suites": ["full", "ppu", "mode3"],
+      "category": "ppu-mode3", "rom": "roms/local/hardware-tests/ppu/elasticity.sfc",
+      "sha256": "f9e40cd958706f268f95e8f1d333154f0c3060a8efd2bfb5518500d07f09df25", "frame": 300,
+      "hardware_profiles": ["late-3chip"], "notes": "Mode 3 high-color scrolling visual characterization."
+    },
+    {
+      "id": "ppu-bus-activity", "collection": "community-ppu", "suites": ["full", "ppu", "ppu-bus"],
+      "category": "ppu-bus", "rom": "roms/local/hardware-tests/ppu/ppubusact.sfc",
+      "sha256": "08fdb7580b7d7d9a6d07ddf9ec46e426ac940f581e41f84890aebf2d5d38887c", "frame": 300,
+      "hardware_profiles": ["late-3chip"], "notes": "PPU bus-activity stimulus ROM; raw Sigrok and cooked CSV captures are retained as source evidence outside the executable lane."
+    },
+    {
+      "id": "ppu-hblank-vram-dma", "collection": "community-ppu", "suites": ["full", "ppu", "dma"],
+      "category": "ppu-hblank-dma", "rom": "roms/local/hardware-tests/ppu/hvdma.sfc",
+      "sha256": "8dfeece984c292682cce6a8b02e07a32d2f304737c538fe7882a87a5ac005bfc", "frame": 300,
+      "hardware_profiles": ["late-3chip"], "notes": "HBlank DMA-to-VRAM behavior."
+    },
+    {
+      "id": "ppu-hblank-vram-dma-maximum", "collection": "community-ppu", "suites": ["full", "ppu", "dma"],
+      "category": "ppu-hblank-dma", "rom": "roms/local/hardware-tests/ppu/hvdma_max.sfc",
+      "sha256": "9f279b369d13dcd467abd370d063c3b341826ea88f2dde087f805920ddb63f46", "frame": 300,
+      "hardware_profiles": ["late-3chip"], "notes": "Maximum HBlank DMA-to-VRAM stress case."
+    },
+    {
+      "id": "ppu-hblank-emulation", "collection": "community-ppu", "suites": ["full", "ppu", "hblank"],
+      "category": "ppu-hblank", "rom": "roms/local/hardware-tests/ppu/HblankEmuTest.sfc",
+      "sha256": "80706521642cc6183f406f74249d18f0ff3a501e574dd5acae67fe0c04bf0fc7", "frame": 300,
+      "hardware_profiles": ["late-3chip"], "notes": "Motive HBlank timing visual test."
+    },
+    {
+      "id": "ppu-split-screen", "collection": "community-ppu", "suites": ["full", "ppu", "irq"],
+      "category": "ppu-split-screen", "rom": "roms/local/hardware-tests/ppu/SplitScreen.sfc",
+      "sha256": "ec00dcc09b1ddb0c5b29511c54ed289d4f64a54ec9eb0e52db8e56585cec2a78", "frame": 300,
+      "hardware_profiles": ["late-3chip"], "notes": "Motive mid-frame split-screen timing test."
+    },
+    {
+      "id": "ppu-ladida-midframe-hdma", "collection": "community-ppu", "suites": ["full", "ppu", "hdma"],
+      "category": "ppu-hdma", "rom": "roms/local/hardware-tests/timing/Ladida_lol.sfc",
+      "sha256": "e573d37168bd30f43ce758204d163d72a2638bfc3069eb8fac5e06bac746dbaf", "frame": 300,
+      "hardware_profiles": ["late-3chip"], "notes": "Mid-frame HDMA behavior characterization."
+    },
+    { "id": "peterlemon-cpu-adc", "collection": "peterlemon", "suites": ["full", "cpu", "cpu-conformance"], "category": "cpu-opcodes", "rom": "roms/local/hardware-tests/peterlemon/cpu/CPUADC.sfc", "sha256": "d6c4f5a284ce7842b8a3944b2bc51c8cde2f5932305f9b561334f4b7f49b5b4c", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-cpu-and", "collection": "peterlemon", "suites": ["full", "cpu", "cpu-conformance"], "category": "cpu-opcodes", "rom": "roms/local/hardware-tests/peterlemon/cpu/CPUAND.sfc", "sha256": "b7438031625af35e86f2c1725a7157358525ffc83ef1f15c02e3654e52ac61c6", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-cpu-asl", "collection": "peterlemon", "suites": ["full", "cpu", "cpu-conformance"], "category": "cpu-opcodes", "rom": "roms/local/hardware-tests/peterlemon/cpu/CPUASL.sfc", "sha256": "0abb736aaaf683a183355e712ccb98d170bb25e1e13db456b2c21d8be4de480f", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-cpu-bit", "collection": "peterlemon", "suites": ["full", "cpu", "cpu-conformance"], "category": "cpu-opcodes", "rom": "roms/local/hardware-tests/peterlemon/cpu/CPUBIT.sfc", "sha256": "fdfc621bcd1f9dfcc0800b331d540af69ca70dd7e075632b144b46d9583fa15e", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-cpu-branch", "collection": "peterlemon", "suites": ["full", "cpu", "cpu-conformance"], "category": "cpu-branch", "rom": "roms/local/hardware-tests/peterlemon/cpu/CPUBRA.sfc", "sha256": "1101903669864e5917f6d1f427ee24ca95c481fd4566125576e0f5a247f0cb25", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-cpu-compare", "collection": "peterlemon", "suites": ["full", "cpu", "cpu-conformance"], "category": "cpu-opcodes", "rom": "roms/local/hardware-tests/peterlemon/cpu/CPUCMP.sfc", "sha256": "b24c5e15301a0b68806157af642b39d4d38c5dfdc335eb44ddcec0d9e0222672", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-cpu-decrement", "collection": "peterlemon", "suites": ["full", "cpu", "cpu-conformance"], "category": "cpu-opcodes", "rom": "roms/local/hardware-tests/peterlemon/cpu/CPUDEC.sfc", "sha256": "d0d50a863b2b3dc6d5c14aad134c1b47dbd29bdc9af37ce34d68b552f3a3dee9", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-cpu-eor", "collection": "peterlemon", "suites": ["full", "cpu", "cpu-conformance"], "category": "cpu-opcodes", "rom": "roms/local/hardware-tests/peterlemon/cpu/CPUEOR.sfc", "sha256": "4db10b39d39125dcb83cddd5f8ad329c95653eb1d3e266db7a58a1ad1c97a2bd", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-cpu-increment", "collection": "peterlemon", "suites": ["full", "cpu", "cpu-conformance"], "category": "cpu-opcodes", "rom": "roms/local/hardware-tests/peterlemon/cpu/CPUINC.sfc", "sha256": "d32d4a8128d07970e4d652d907b2fcb51ea2d79d311d5f4a452c357644167b18", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-cpu-jump", "collection": "peterlemon", "suites": ["full", "cpu", "cpu-conformance"], "category": "cpu-control-flow", "rom": "roms/local/hardware-tests/peterlemon/cpu/CPUJMP.sfc", "sha256": "8be0c153f166e11d7d384cffffe5ae27ea9c1a57eb4a1b36a85759bab2fe59a3", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-cpu-load", "collection": "peterlemon", "suites": ["full", "cpu", "cpu-conformance"], "category": "cpu-memory", "rom": "roms/local/hardware-tests/peterlemon/cpu/CPULDR.sfc", "sha256": "4598006dd6ec9ce03fa6622e18178ef25a6d471926ca40abb8748c10006e92da", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-cpu-lsr", "collection": "peterlemon", "suites": ["full", "cpu", "cpu-conformance"], "category": "cpu-opcodes", "rom": "roms/local/hardware-tests/peterlemon/cpu/CPULSR.sfc", "sha256": "01517b0bd134d93fe858d536f76ea36691b23b10462b19caef693c8b67c6b60d", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-cpu-move", "collection": "peterlemon", "suites": ["full", "cpu", "cpu-conformance"], "category": "cpu-block-move", "rom": "roms/local/hardware-tests/peterlemon/cpu/CPUMOV.sfc", "sha256": "98ae96bdc5035fe9074e5b7c2dc0a8da67cb94f3d9c5668f26f936d9f99b6ab5", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-cpu-misc", "collection": "peterlemon", "suites": ["full", "cpu", "cpu-conformance"], "category": "cpu-system", "rom": "roms/local/hardware-tests/peterlemon/cpu/CPUMSC.sfc", "sha256": "00fa9244fe5a086042c4ca8e9f425892dbf115b135d7a14630c88dee3fd18490", "frame": 300, "hardware_profiles": ["late-3chip"], "notes": "Independent coverage including WAI, STP, and reset behavior omitted by gilyon's opcode ROM." },
+    { "id": "peterlemon-cpu-ora", "collection": "peterlemon", "suites": ["full", "cpu", "cpu-conformance"], "category": "cpu-opcodes", "rom": "roms/local/hardware-tests/peterlemon/cpu/CPUORA.sfc", "sha256": "e9e4fdd107faa16ec43c13756a465b02f72a576b79e6b00869931535e3922379", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-cpu-push-pull", "collection": "peterlemon", "suites": ["full", "cpu", "cpu-conformance"], "category": "cpu-stack", "rom": "roms/local/hardware-tests/peterlemon/cpu/CPUPHL.sfc", "sha256": "27bb4a9e21d1e1021a7287cd48c612c87888ca83b4e30323c22d24ccb0764f76", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-cpu-status", "collection": "peterlemon", "suites": ["full", "cpu", "cpu-conformance"], "category": "cpu-status", "rom": "roms/local/hardware-tests/peterlemon/cpu/CPUPSR.sfc", "sha256": "bd85187c7da1006b7c7111a8921b9b13cc73043a89eb7353f3d4fff207273067", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-cpu-return", "collection": "peterlemon", "suites": ["full", "cpu", "cpu-conformance"], "category": "cpu-control-flow", "rom": "roms/local/hardware-tests/peterlemon/cpu/CPURET.sfc", "sha256": "0f65834dae85684202643e648166c37c8ea7364a295992c92e99506d65c7247e", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-cpu-rol", "collection": "peterlemon", "suites": ["full", "cpu", "cpu-conformance"], "category": "cpu-opcodes", "rom": "roms/local/hardware-tests/peterlemon/cpu/CPUROL.sfc", "sha256": "2b9c67c63befa2d0419c9a9f9b7fe2963fbe3cf84a0663f0bd36107c5aa0b255", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-cpu-ror", "collection": "peterlemon", "suites": ["full", "cpu", "cpu-conformance"], "category": "cpu-opcodes", "rom": "roms/local/hardware-tests/peterlemon/cpu/CPUROR.sfc", "sha256": "ff73f1dd8c2dd8605f8fbc09ff4fda8312741cd382258ec09518763056792fec", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-cpu-sbc", "collection": "peterlemon", "suites": ["full", "cpu", "cpu-conformance"], "category": "cpu-opcodes", "rom": "roms/local/hardware-tests/peterlemon/cpu/CPUSBC.sfc", "sha256": "b9a688dcfcf9316227de98c305a260af35c80d0a0fd48bd227a21051159634a1", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-cpu-store", "collection": "peterlemon", "suites": ["full", "cpu", "cpu-conformance"], "category": "cpu-memory", "rom": "roms/local/hardware-tests/peterlemon/cpu/CPUSTR.sfc", "sha256": "f8bd66164c369d956145c747d71ce59c252693a735cc644a34521a599cf6847a", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-cpu-transfer", "collection": "peterlemon", "suites": ["full", "cpu", "cpu-conformance"], "category": "cpu-transfer", "rom": "roms/local/hardware-tests/peterlemon/cpu/CPUTRN.sfc", "sha256": "60776a7bfbdf3f1f0e57885e885c66b9c0ebfa7866f18fece8f8cefd82221ad1", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-spc700-adc", "collection": "peterlemon", "suites": ["full", "apu", "spc-conformance"], "category": "spc-opcodes", "rom": "roms/local/hardware-tests/peterlemon/spc700/SPC700ADC.sfc", "sha256": "4fa785418a109c0ef052cb9b71f55d37ee56834fca170fe1a0da784ee3df0e2e", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-spc700-and", "collection": "peterlemon", "suites": ["full", "apu", "spc-conformance"], "category": "spc-opcodes", "rom": "roms/local/hardware-tests/peterlemon/spc700/SPC700AND.sfc", "sha256": "a4e7a9d6a926f5b575b2c3006b301bf837ed36072c9617776aab527706c3242d", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-spc700-decrement", "collection": "peterlemon", "suites": ["full", "apu", "spc-conformance"], "category": "spc-opcodes", "rom": "roms/local/hardware-tests/peterlemon/spc700/SPC700DEC.sfc", "sha256": "fe9254720e62b2aa953a42f50827facc12f7549ad8ca3775c89a5b65f4b55fdf", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-spc700-eor", "collection": "peterlemon", "suites": ["full", "apu", "spc-conformance"], "category": "spc-opcodes", "rom": "roms/local/hardware-tests/peterlemon/spc700/SPC700EOR.sfc", "sha256": "061572e2ba5599f78c3573be3b538ba2ab67703529f7518eee8e8ce3e41372f1", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-spc700-increment", "collection": "peterlemon", "suites": ["full", "apu", "spc-conformance"], "category": "spc-opcodes", "rom": "roms/local/hardware-tests/peterlemon/spc700/SPC700INC.sfc", "sha256": "467376b5ab3cf83197553ec598f91645beef628dadbd43932b6e96d2fa17776b", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-spc700-ora", "collection": "peterlemon", "suites": ["full", "apu", "spc-conformance"], "category": "spc-opcodes", "rom": "roms/local/hardware-tests/peterlemon/spc700/SPC700ORA.sfc", "sha256": "aefb416d0f681eed0975cfbee70fd3048f59154cd5502f550e48e80f789a0ab2", "frame": 300, "hardware_profiles": ["late-3chip"] },
+    { "id": "peterlemon-spc700-sbc", "collection": "peterlemon", "suites": ["full", "apu", "spc-conformance"], "category": "spc-opcodes", "rom": "roms/local/hardware-tests/peterlemon/spc700/SPC700SBC.sfc", "sha256": "fcc6017db0560ce12ae029fa97947eedbd8eaf35dd32200c445281ca94cbae9b", "frame": 300, "hardware_profiles": ["late-3chip"] },
+
+    {
+      "id": "blargg-controller-strobe-behavior",
+      "collection": "blargg",
+      "suites": ["full", "input"],
+      "category": "controller-io",
+      "method": "self-report",
+      "rom": "roms/local/blargg_testroms/controller strobebehavior.smc",
+      "sha256": "8f8b835ae15339d3532ad534c41f96c1050e3e9711217edaf583373caf4acd1e",
+      "automation": "controller-script",
+      "input_script": "validation/input/controller-strobe.joypad1.script",
+      "frame": 600,
+      "hardware_profiles": ["late-3chip"],
+      "notes": "Hold SNES B through frame 300, release it, and capture the stable result at frame 600."
+    },
+    {
+      "id": "blargg-spc-dsp6", "collection": "blargg", "suites": ["full", "apu"],
+      "category": "spc-dsp", "method": "self-report",
+      "rom": "roms/local/blargg_testroms/spc_dsp6.sfc",
+      "sha256": "b12038f865536a33003c9887e6f86fcbcb526b7f1766526ab30cb74b7380aa9a",
+      "frame": 12000, "hardware_profiles": ["late-3chip"],
+      "notes": "The complete DSP suite is long-running and reaches its stable PASSED TESTS screen by frame 12000."
+    },
+    {
+      "id": "blargg-spc-memory-access-times", "collection": "blargg", "suites": ["full", "apu"],
+      "category": "spc-timing", "method": "self-report",
+      "rom": "roms/local/blargg_testroms/spc_mem_access_times.sfc",
+      "sha256": "53dc8005959d54ccfc95b8d4222e1d51d21e3d9f3491058320f105edc1a4454a",
+      "frame": 1200, "hardware_profiles": ["late-3chip"]
+    },
+    {
+      "id": "blargg-spc-smp", "collection": "blargg", "suites": ["smoke", "full", "apu"],
+      "category": "spc-cpu", "method": "self-report",
+      "rom": "roms/local/blargg_testroms/spc_smp.sfc",
+      "sha256": "2ed302c5b989675d4ab6b40001fd5166ac4c6e0188a6b1b6df878e4608999c03",
+      "frame": 5000, "hardware_profiles": ["late-3chip"]
+    },
+    {
+      "id": "blargg-spc-timer", "collection": "blargg", "suites": ["full", "apu"],
+      "category": "spc-timer", "method": "self-report",
+      "rom": "roms/local/blargg_testroms/spc_timer.sfc",
+      "sha256": "f4799b994a91d78689073f4e31c3668ae46c100abd78177b9f4813506d6c9629",
+      "frame": 1200, "hardware_profiles": ["late-3chip"]
+    },
+    {
+      "id": "blargg-speed-2-freezes-2", "collection": "blargg", "suites": ["full", "apu"],
+      "category": "spc-test-register", "method": "characterization",
+      "rom": "roms/local/blargg_testroms/speed_2_freezes2.smc",
+      "sha256": "11d1367bda49a3953af73ae5ff5f6e81243d92d700f9c03162098f78f58e08d2",
+      "hardware_profiles": ["late-3chip", "early-3chip", "scpu-a-3chip", "1chip"],
+      "notes": "Characterizes the SMP TEST register's unstable wait-divider settings. Its Passed/Failed text assumes deterministic lockup behavior that varies across real consoles and is not a universal conformance verdict."
+    },
+    {
+      "id": "blargg-disable-ipl-rom", "collection": "blargg", "suites": ["full", "apu"],
+      "category": "spc-memory", "method": "self-report",
+      "rom": "roms/local/blargg_testroms/test_ram_disable_ipl.smc",
+      "sha256": "4e7189e94a412962f22a640bac837c497f584691486cbfb92d880f4a10037108",
+      "hardware_profiles": ["late-3chip"]
+    },
+    {
+      "id": "blargg-test-speed", "collection": "blargg", "suites": ["full", "cpu-timing"],
+      "category": "cpu-timing", "method": "characterization",
+      "rom": "roms/local/blargg_testroms/test_speed.smc",
+      "sha256": "19613668744d9f79ecf47222bf6a89dc4aa47bedaf469241e12d973792fa9cbd",
+      "hardware_profiles": ["late-3chip", "early-3chip", "scpu-a-3chip", "1chip"],
+      "notes": "Prints measured timing values and Done; compare against matching real hardware."
+    },
+    {
+      "id": "blargg-timer-speed", "collection": "blargg", "suites": ["smoke", "full", "apu"],
+      "category": "spc-timer", "method": "self-report",
+      "rom": "roms/local/blargg_testroms/test_timer_speed.smc",
+      "sha256": "02fea30020515dc6f63d2fe9ab12d3be48a33868eb64241185a1c20d350627ba",
+      "hardware_profiles": ["late-3chip"]
+    },
+    {
+      "id": "blargg-timer-speed-2", "collection": "blargg", "suites": ["full", "apu"],
+      "category": "spc-timer", "method": "self-report",
+      "rom": "roms/local/blargg_testroms/test_timer_speed2.smc",
+      "sha256": "a753b76c6326160c550bde55668163f6f69a04bd44ac62ddd00d984dcdcf923a",
+      "hardware_profiles": ["late-3chip"]
+    },
+    {
+      "id": "blargg-timer-speed-3", "collection": "blargg", "suites": ["full", "apu"],
+      "category": "spc-timer", "method": "characterization",
+      "rom": "roms/local/blargg_testroms/test_timer_speed3.smc",
+      "sha256": "ebe67dda3379eb930957211ca304a435a9e9aec95d8a9d361036015cd8f01312",
+      "hardware_profiles": ["late-3chip"],
+      "notes": "Prints a numeric timer-speed table followed by Done; the table is characterization evidence, not a binary self-report verdict."
+    },
+    {
+      "id": "blargg-timer-speed-2-alt", "collection": "blargg", "suites": ["full", "apu"],
+      "category": "spc-timer", "method": "self-report",
+      "rom": "roms/local/blargg_testroms/test_timer_speed_2.smc",
+      "sha256": "4f61098378ceeec70c12db6016b869ea92bb2a4fb4bc07c4051a8f4d57555ae1",
+      "hardware_profiles": ["late-3chip"]
+    },
+    {
+      "id": "blargg-timer-stop", "collection": "blargg", "suites": ["full", "apu"],
+      "category": "spc-timer", "method": "self-report",
+      "rom": "roms/local/blargg_testroms/test_timer_stop.smc",
+      "sha256": "2801ab17a870d9c682f112b494b8652d26cb930f581a576530979cd456f1c850",
+      "hardware_profiles": ["late-3chip"]
+    },
+    {
+      "id": "blargg-timer-stop-2", "collection": "blargg", "suites": ["full", "apu"],
+      "category": "spc-timer", "method": "self-report",
+      "rom": "roms/local/blargg_testroms/test_timer_stop2.smc",
+      "sha256": "1d90ccd65ef43f442f90f99be5c9f42eed5848932587dea005f76913862cdebf",
+      "hardware_profiles": ["late-3chip"]
+    },
+    {
+      "id": "blargg-timer-at-power-reset", "collection": "blargg", "suites": ["full", "ppu"],
+      "category": "ppu-counter-reset", "method": "self-report",
+      "rom": "roms/local/blargg_testroms/timer_at_power_reset.smc",
+      "sha256": "49941c852bec0137f8c9924db29546961058b4d2a7fb4fd262e8b2f9b42bc241",
+      "automation": "reset-script", "reset_frames": [301], "frame": 600,
+      "hardware_profiles": ["late-3chip"],
+      "notes": "Run through frame 300 after power-on, issue a warm reset before frame 301, and capture the post-reset result at frame 600. Despite its filename, this ROM observes the PPU H/V latch around power and reset; it does not test the SPC timers."
+    },
+    {
+      "id": "blargg-exec-from-io-1", "collection": "blargg", "suites": ["full", "cpu-io"],
+      "category": "cpu-io", "method": "self-report",
+      "archive": "roms/local/blargg_testroms/exec_io_tests.zip", "member": "exec_io_tests/1-test_exec_from_io.smc",
+      "sha256": "61aaa41c76940178e0b2980fc7a4ee37ef33a2deb0aa362a48369a83427977ef",
+      "frame": 600, "hardware_profiles": ["late-3chip"],
+      "notes": "The Passed screen is visible at frame 600 and is cleared again later; capture the terminal observation rather than an arbitrary later frame."
+    },
+    {
+      "id": "blargg-exec-from-io-2", "collection": "blargg", "suites": ["full", "cpu-io"],
+      "category": "cpu-io", "method": "self-report",
+      "archive": "roms/local/blargg_testroms/exec_io_tests.zip", "member": "exec_io_tests/2-test_single_instr.smc",
+      "sha256": "9e20cfd50987a8c21d180f29525f96bfc0cedb684e637e3adc0eabdf765c7829", "hardware_profiles": ["late-3chip"]
+    },
+    {
+      "id": "blargg-exec-from-io-3", "collection": "blargg", "suites": ["full", "cpu-io"],
+      "category": "cpu-io", "method": "self-report",
+      "archive": "roms/local/blargg_testroms/exec_io_tests.zip", "member": "exec_io_tests/3-test_write_disable.smc",
+      "sha256": "24c19157646826ab1a6cd656049613a854b94faec868d5eefe9a2a99215c6719", "hardware_profiles": ["late-3chip"]
+    },
+    {
+      "id": "blargg-exec-from-io-4", "collection": "blargg", "suites": ["full", "cpu-io"],
+      "category": "cpu-io", "method": "self-report",
+      "archive": "roms/local/blargg_testroms/exec_io_tests.zip", "member": "exec_io_tests/4-test_ram_disable.smc",
+      "sha256": "268af19da6637dd1fe033034bc75be99ebfe6718d1144682b659d7f92ea40d74", "hardware_profiles": ["late-3chip"]
+    },
+
+    {
+      "id": "undisbeliever-hdma-2100-glitch-2ch-0a", "collection": "undisbeliever", "suites": ["full", "hdma"],
+      "category": "hdma-ppu", "rom": "roms/local/snes-test-roms/hdma-2100-glitch-2ch-0a.sfc",
+      "sha256": "f017025218801ca4bd1ee4369c88921a48678130ef3bf54e15788bd2814f1074", "frame": 180,
+      "hardware_profiles": ["late-3chip", "early-3chip", "scpu-a-3chip", "1chip"]
+    },
+    {
+      "id": "undisbeliever-hdma-2100-glitch-2ch-81", "collection": "undisbeliever", "suites": ["full", "hdma"],
+      "category": "hdma-ppu", "rom": "roms/local/snes-test-roms/hdma-2100-glitch-2ch-81.sfc",
+      "sha256": "3c9636f8443b4754488487bf60bd209240268d7d9450b7644170ac150fc3bc52", "frame": 180,
+      "hardware_profiles": ["late-3chip", "early-3chip", "scpu-a-3chip", "1chip"]
+    },
+    {
+      "id": "undisbeliever-hdma-2100-glitch", "collection": "undisbeliever", "suites": ["full", "hdma"],
+      "category": "hdma-ppu", "rom": "roms/local/snes-test-roms/hdma-2100-glitch.sfc",
+      "sha256": "f9d889e52607a6eddddb1b8507e255cea076a212dbb826ebdf9ca4df492260d1", "frame": 180,
+      "hardware_profiles": ["late-3chip", "early-3chip", "scpu-a-3chip", "1chip"]
+    },
+    {
+      "id": "undisbeliever-hdma-21ff-2100-0f-glitch", "collection": "undisbeliever", "suites": ["full", "hdma"],
+      "category": "hdma-ppu", "rom": "roms/local/snes-test-roms/hdma-21ff-2100-0f-glitch.sfc",
+      "sha256": "bed2af8e64d12a0b93cca396515612f8a9ef46cb24a13b01dad144937d45e0ca", "frame": 180,
+      "hardware_profiles": ["late-3chip", "early-3chip", "scpu-a-3chip", "1chip"]
+    },
+    {
+      "id": "undisbeliever-hdma-21ff-2100-glitch", "collection": "undisbeliever", "suites": ["full", "hdma"],
+      "category": "hdma-ppu", "rom": "roms/local/snes-test-roms/hdma-21ff-2100-glitch.sfc",
+      "sha256": "ecc9d7aa558cbf34989698179d28cad4510e17905324fed5e27e673253f4d69e", "frame": 180,
+      "hardware_profiles": ["late-3chip", "early-3chip", "scpu-a-3chip", "1chip"]
+    },
+    {
+      "id": "undisbeliever-hdma-21ff-glitch", "collection": "undisbeliever", "suites": ["full", "hdma"],
+      "category": "hdma-ppu", "rom": "roms/local/snes-test-roms/hdma-21ff-glitch.sfc",
+      "sha256": "d9b6111d66e7ad5b6475417d203240b47fc14248f0a16c51d472426aff8e787a", "frame": 180,
+      "hardware_profiles": ["late-3chip", "early-3chip", "scpu-a-3chip", "1chip"]
+    },
+    {
+      "id": "undisbeliever-hdmaen-latch", "collection": "undisbeliever", "suites": ["smoke", "full", "hdma"],
+      "category": "hdma-latch", "rom": "roms/local/snes-test-roms/hdmaen_latch_test.sfc",
+      "sha256": "196a9ba7885073c9ce7210bc3de35fc82c824554c94742ff6c66816e5ff9ee2b", "frame": 180,
+      "hardware_profiles": ["late-3chip", "early-3chip", "scpu-a-3chip", "1chip"]
+    },
+    {
+      "id": "undisbeliever-hdmaen-latch-2", "collection": "undisbeliever", "suites": ["full", "hdma"],
+      "category": "hdma-latch", "rom": "roms/local/snes-test-roms/hdmaen_latch_test_2.sfc",
+      "sha256": "047cda002127b3770a3915ebd7c1779ea0b68365d4afc0d555ca533674b73121", "frame": 180,
+      "hardware_profiles": ["late-3chip", "early-3chip", "scpu-a-3chip", "1chip"]
+    },
+    {
+      "id": "undisbeliever-inidisp-brightness-delay", "collection": "undisbeliever", "suites": ["full", "ppu", "inidisp"],
+      "category": "ppu-inidisp", "rom": "roms/local/snes-test-roms/inidisp_brightness_delay.sfc",
+      "sha256": "3b396f4979f01ac68ffc9ea24c7417fdbd9406b49fccc6d35bf95353fc587a55", "frame": 180,
+      "hardware_profiles": ["late-3chip", "early-3chip", "scpu-a-3chip", "1chip"]
+    },
+    {
+      "id": "undisbeliever-inidisp-d7-glitch", "collection": "undisbeliever", "suites": ["full", "ppu", "inidisp"],
+      "category": "ppu-inidisp", "rom": "roms/local/snes-test-roms/inidisp_d7_glitch_test.sfc",
+      "sha256": "bfa2eab7ac8d7bb9792028f6a4b4520f668944ec35dd9f7940df6fc37fb77766", "frame": 180,
+      "hardware_profiles": ["late-3chip", "early-3chip", "scpu-a-3chip", "1chip"]
+    },
+    {
+      "id": "undisbeliever-inidisp-enable-mid-frame", "collection": "undisbeliever", "suites": ["full", "ppu", "inidisp"],
+      "category": "ppu-inidisp", "rom": "roms/local/snes-test-roms/inidisp_enable_display_mid_frame.sfc",
+      "sha256": "c8568e7f7ac13f94503cf0b3d67f623fbc216f7ae9c25c6169ee56219bc1e747", "frame": 180,
+      "hardware_profiles": ["late-3chip", "early-3chip", "scpu-a-3chip", "1chip"]
+    },
+    {
+      "id": "undisbeliever-inidisp-force-blank", "collection": "undisbeliever", "suites": ["full", "ppu", "inidisp"],
+      "category": "ppu-inidisp", "rom": "roms/local/snes-test-roms/inidisp_forgot_to_force_blank.sfc",
+      "sha256": "140223df9a1ea7558cadafbd1d4ca48acefc1112b82998624f681c82b33d55d0", "frame": 180,
+      "hardware_profiles": ["late-3chip", "early-3chip", "scpu-a-3chip", "1chip"]
+    },
+    {
+      "id": "undisbeliever-inidisp-hammer-0f", "collection": "undisbeliever", "suites": ["full", "ppu", "inidisp"],
+      "category": "ppu-inidisp", "rom": "roms/local/snes-test-roms/inidisp_hammer_0f.sfc",
+      "sha256": "10991b6449606140d1715443c3d6d388d98a137723b0267a696c188710ed4e89", "frame": 180,
+      "hardware_profiles": ["late-3chip", "early-3chip", "scpu-a-3chip", "1chip"]
+    },
+    {
+      "id": "undisbeliever-inidisp-hammer-0f00", "collection": "undisbeliever", "suites": ["full", "ppu", "inidisp"],
+      "category": "ppu-inidisp", "rom": "roms/local/snes-test-roms/inidisp_hammer_0f00.sfc",
+      "sha256": "316745d7fc1474b32f4e0eab7e85f4ca1d35b357df6d24356365ab00d5de3f6b", "frame": 180,
+      "hardware_profiles": ["late-3chip", "early-3chip", "scpu-a-3chip", "1chip"]
+    },
+    {
+      "id": "undisbeliever-inidisp-hammer-0f0f", "collection": "undisbeliever", "suites": ["full", "ppu", "inidisp"],
+      "category": "ppu-inidisp", "rom": "roms/local/snes-test-roms/inidisp_hammer_0f0f.sfc",
+      "sha256": "8a997ac38bf43273d4794901aa1c9799dd5bce8021db242356884b02a37bb7f8", "frame": 180,
+      "hardware_profiles": ["late-3chip", "early-3chip", "scpu-a-3chip", "1chip"]
+    },
+    {
+      "id": "undisbeliever-inidisp-hammer-0f8f", "collection": "undisbeliever", "suites": ["smoke", "full", "ppu", "inidisp"],
+      "category": "ppu-inidisp", "rom": "roms/local/snes-test-roms/inidisp_hammer_0f8f.sfc",
+      "sha256": "42b2307b15271bb581cc8bc8926db1f0d3b71f07517304a61d2fda7450d46911", "frame": 180,
+      "hardware_profiles": ["late-3chip", "early-3chip", "scpu-a-3chip", "1chip"]
+    },
+    {
+      "id": "undisbeliever-inidisp-hammer-0f8f-fast", "collection": "undisbeliever", "suites": ["full", "ppu", "inidisp"],
+      "category": "ppu-inidisp", "rom": "roms/local/snes-test-roms/inidisp_hammer_0f8f_fast.sfc",
+      "sha256": "7a11766b4023eb9531c728dffd68e7a452d9962c5bdb33339c6b68778d45f4b4", "frame": 180,
+      "hardware_profiles": ["late-3chip", "early-3chip", "scpu-a-3chip", "1chip"]
+    },
+    {
+      "id": "undisbeliever-inidisp-hammer-0f-long", "collection": "undisbeliever", "suites": ["full", "ppu", "inidisp"],
+      "category": "ppu-inidisp", "rom": "roms/local/snes-test-roms/inidisp_hammer_0f_long.sfc",
+      "sha256": "41b4cecbdb5e08cd55dad26343029edd815c49a9a8cec792ecbab3ae2cc715a8", "frame": 180,
+      "hardware_profiles": ["late-3chip", "early-3chip", "scpu-a-3chip", "1chip"]
+    },
+    {
+      "id": "undisbeliever-inidisp-hammer-8f0f", "collection": "undisbeliever", "suites": ["full", "ppu", "inidisp"],
+      "category": "ppu-inidisp", "rom": "roms/local/snes-test-roms/inidisp_hammer_8f0f.sfc",
+      "sha256": "1c5c3c43aa6677c9163249b7df12ee665186eb53732b9d49c4814ea8b63bdd2b", "frame": 180,
+      "hardware_profiles": ["late-3chip", "early-3chip", "scpu-a-3chip", "1chip"]
+    },
+    {
+      "id": "undisbeliever-scpu-a-dma-bug-1", "collection": "undisbeliever", "suites": ["smoke", "full", "dma"],
+      "category": "scpu-a-dma", "rom": "roms/local/snes-test-roms/scpu-a-dma-bug-1.sfc",
+      "sha256": "e9ca995e598625fdb3183969e260b048663b080d9fc3eeafeae83da244e507ba", "frame": 180,
+      "hardware_profiles": ["scpu-a-3chip"]
+    },
+    {
+      "id": "undisbeliever-scpu-a-dma-bug-2", "collection": "undisbeliever", "suites": ["full", "dma"],
+      "category": "scpu-a-dma", "rom": "roms/local/snes-test-roms/scpu-a-dma-bug-2.sfc",
+      "sha256": "e8a1a38239219f3dc2f93b9f30d08da0afd8bd8f4436d9c7e784d5ee8a3fe57f", "frame": 180,
+      "hardware_profiles": ["scpu-a-3chip"]
+    },
+    {
+      "id": "undisbeliever-scpu-a-dma-bug-3", "collection": "undisbeliever", "suites": ["full", "dma"],
+      "category": "scpu-a-dma", "rom": "roms/local/snes-test-roms/scpu-a-dma-bug-3.sfc",
+      "sha256": "77b6bf4c0b227a3de847c9f3894352ab34833226cbee0164989b87f1e66f3981", "frame": 180,
+      "hardware_profiles": ["scpu-a-3chip"]
+    },
+    {
+      "id": "undisbeliever-scpu-a-dma-bug-5", "collection": "undisbeliever", "suites": ["full", "dma"],
+      "category": "scpu-a-dma", "rom": "roms/local/snes-test-roms/scpu-a-dma-bug-5.sfc",
+      "sha256": "c98e282371a4f8f511f2da7acb1439cc665549d70e3d48c62252c6748a18738a", "frame": 180,
+      "hardware_profiles": ["scpu-a-3chip"]
+    },
+    {
+      "id": "undisbeliever-scpu-a-dma-bug-ch0", "collection": "undisbeliever", "suites": ["full", "dma"],
+      "category": "scpu-a-dma", "rom": "roms/local/snes-test-roms/scpu-a-dma-bug-ch0.sfc",
+      "sha256": "021ba6ca3ce3fafa0971f5be53a3aa101e980774a6cabfcf922ce357eea9c4c3", "frame": 180,
+      "hardware_profiles": ["scpu-a-3chip"]
+    },
+    {
+      "id": "undisbeliever-scpu-a-dma-bug-fix", "collection": "undisbeliever", "suites": ["full", "dma"],
+      "category": "scpu-a-dma", "rom": "roms/local/snes-test-roms/scpu-a-dma-bug-fix.sfc",
+      "sha256": "5f0d455f3eb949b7f346a7982a2a8f6b70fdc86c0d2c79d6a6b32c5725cdcb8a", "frame": 180,
+      "hardware_profiles": ["scpu-a-3chip"]
+    },
+    {
+      "id": "undisbeliever-scpu-a-dma-bug-fix2", "collection": "undisbeliever", "suites": ["full", "dma"],
+      "category": "scpu-a-dma", "rom": "roms/local/snes-test-roms/scpu-a-dma-bug-fix2.sfc",
+      "sha256": "c96d21f22189527cfe44bdf6d0c1f26813044cab359a30f69396997775e78d26", "frame": 180,
+      "hardware_profiles": ["scpu-a-3chip"]
+    },
+    {
+      "id": "undisbeliever-scpu-a-dma-bug-r2", "collection": "undisbeliever", "suites": ["full", "dma"],
+      "category": "scpu-a-dma", "rom": "roms/local/snes-test-roms/scpu-a-dma-bug-r2.sfc",
+      "sha256": "d40e29d683524e90fbb49681665216cced3b8acf684886998fe906def5d86523", "frame": 180,
+      "hardware_profiles": ["scpu-a-3chip"]
+    },
+    {
+      "id": "undisbeliever-scpu-a-dma-bug-strange", "collection": "undisbeliever", "suites": ["full", "dma"],
+      "category": "scpu-a-dma", "rom": "roms/local/snes-test-roms/scpu-a-dma-bug-strange.sfc",
+      "sha256": "a11117c99363f5fec3339bce225340d5441a901bdcb2252fa2ede94c810f675e", "frame": 180,
+      "hardware_profiles": ["scpu-a-3chip"]
+    },
+    {
+      "id": "undisbeliever-scpu-a-dma-bug-two-regs", "collection": "undisbeliever", "suites": ["full", "dma"],
+      "category": "scpu-a-dma", "rom": "roms/local/snes-test-roms/scpu-a-dma-bug-two-regs.sfc",
+      "sha256": "4d1968cfd14acf253e24114b857ca0855749f493e1ebe2169ac04f528f1082eb", "frame": 180,
+      "hardware_profiles": ["scpu-a-3chip"]
+    }
+  ]
+}

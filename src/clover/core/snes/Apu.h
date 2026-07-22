@@ -32,6 +32,7 @@ namespace clover::core
             uint8_t psw{ 0 };
             uint8_t timer0_stage2{ 0 };
             uint8_t timer0_stage3{ 0 };
+            uint8_t access_count{ 0 };
             uint8_t port0{ 0 };
             uint8_t port1{ 0 };
             uint8_t port2{ 0 };
@@ -95,6 +96,7 @@ namespace clover::core
 
         void power_on() noexcept;
         void reset() noexcept;
+        void configure_master_clock(uint32_t master_clock_frequency_hz) noexcept;
         void step(master_clock_delta_t master_clocks) noexcept;
         void synchronize_cpu_thread() noexcept;
         void begin_cpu_io_window(bus_t& bus, master_clock_delta_t target_clocks) noexcept;
@@ -166,7 +168,6 @@ namespace clover::core
         // wait-state values {2,4,10,20} are already expressed in that divided
         // SMP clock domain, so we convert master clocks to SMP clocks using the
         // same frequency ratio instead of multiplying each wait unit by 21.
-        static constexpr int64_t k_master_clock_frequency_hz{ 21477272 };
         static constexpr int64_t k_smp_clock_frequency_hz{ k_audio_sample_rate_hz * 64 };
         static constexpr int64_t k_scheduler_zero_credit{ 0 };
         static constexpr int64_t k_force_cpu_sync_credit{
@@ -321,10 +322,12 @@ namespace clover::core
         void request_cpu_sync() noexcept;
         void halt_on_unimplemented_opcode(uint8_t opcode) noexcept;
         void trace_instruction(uint16_t pc, uint8_t opcode) noexcept;
+        void complete_instruction_trace(uint16_t pc) noexcept;
         void trace_io_access(uint16_t address, uint8_t value, bool is_write) noexcept;
 
         master_clock_count_t _master_clock{ 0 };
         int64_t _smp_clock_credit{ 0 };
+        int64_t _master_clock_frequency_hz{ 21'477'272 };
         spc700_registers_t _registers{};
         bool _ipl_rom_enabled{ true };
         bool _halted{ false };

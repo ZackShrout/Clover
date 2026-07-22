@@ -44,8 +44,12 @@ namespace clover::core
         case 0x09u: // OR dp(1),dp(0)
         {
             const uint8_t source_address{ spc_fetch_u8() };
+            // The source read occurs before the destination operand fetch.
+            const uint8_t source{ spc_load_direct(source_address) };
             const uint8_t target_address{ spc_fetch_u8() };
-            const uint8_t value{ static_cast<uint8_t>(spc_load_direct(target_address) | spc_load_direct(source_address)) };
+            const uint8_t value{
+                static_cast<uint8_t>(spc_load_direct(target_address) | source)
+            };
             spc_store_direct(target_address, value);
             set_nz_flags(value);
             return true;
@@ -190,8 +194,11 @@ namespace clover::core
         case 0x29u: // AND dp(1),dp(0)
         {
             const uint8_t source_address{ spc_fetch_u8() };
+            const uint8_t source{ spc_load_direct(source_address) };
             const uint8_t target_address{ spc_fetch_u8() };
-            const uint8_t value{ static_cast<uint8_t>(spc_load_direct(target_address) & spc_load_direct(source_address)) };
+            const uint8_t value{
+                static_cast<uint8_t>(spc_load_direct(target_address) & source)
+            };
             spc_store_direct(target_address, value);
             set_nz_flags(value);
             return true;
@@ -261,8 +268,11 @@ namespace clover::core
         case 0x49u: // EOR dp(1),dp(0)
         {
             const uint8_t source_address{ spc_fetch_u8() };
+            const uint8_t source{ spc_load_direct(source_address) };
             const uint8_t target_address{ spc_fetch_u8() };
-            const uint8_t value{ static_cast<uint8_t>(spc_load_direct(target_address) ^ spc_load_direct(source_address)) };
+            const uint8_t value{
+                static_cast<uint8_t>(spc_load_direct(target_address) ^ source)
+            };
             spc_store_direct(target_address, value);
             set_nz_flags(value);
             return true;
@@ -293,12 +303,12 @@ namespace clover::core
             const uint16_t ya{
                 static_cast<uint16_t>(_registers.a | (static_cast<uint16_t>(_registers.y) << 8u))
             };
+            const uint8_t low{ spc_load_direct(direct_address) };
+            const uint8_t high{
+                spc_load_direct(static_cast<uint8_t>(direct_address + 1u))
+            };
             const uint16_t value{
-                static_cast<uint16_t>(
-                    spc_load_direct(direct_address)
-                    | (static_cast<uint16_t>(
-                           spc_load_direct(static_cast<uint8_t>(direct_address + 1u)))
-                       << 8u))
+                static_cast<uint16_t>(low | (static_cast<uint16_t>(high) << 8u))
             };
             const uint16_t result{ static_cast<uint16_t>(ya - value) };
 
@@ -354,8 +364,9 @@ namespace clover::core
         case 0x69u: // CMP dp(1),dp(0)
         {
             const uint8_t source_address{ spc_fetch_u8() };
+            const uint8_t source{ spc_load_direct(source_address) };
             const uint8_t target_address{ spc_fetch_u8() };
-            set_compare_flags(spc_load_direct(target_address), spc_load_direct(source_address));
+            set_compare_flags(spc_load_direct(target_address), source);
             spc_idle();
             return true;
         }
@@ -399,10 +410,13 @@ namespace clover::core
         }
 
         case 0x79u: // CMP (X),(Y)
+        {
             (void)spc_read_u8(_registers.pc);
-            set_compare_flags(spc_load_direct(_registers.x), spc_load_direct(_registers.y));
+            const uint8_t source{ spc_load_direct(_registers.y) };
+            set_compare_flags(spc_load_direct(_registers.x), source);
             spc_idle();
             return true;
+        }
 
         case 0x7au: // ADDW YA,dp
         {

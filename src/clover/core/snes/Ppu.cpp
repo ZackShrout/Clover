@@ -13,10 +13,26 @@
 
 namespace
 {
-    constexpr uint8_t k_ppu1_version{ 0x01u };
-    constexpr uint8_t k_ppu2_version{ 0x03u };
     constexpr std::array<uint8_t, 4> k_vram_increment_sizes{ 1, 32, 128, 128 };
     constexpr uint16_t k_vram_word_mask{ 0x7fffu };
+
+    [[nodiscard]] constexpr uint16_t horizontal_dot_from_master_clock(
+        uint16_t master_clock,
+        clover::core::master_clock_delta_t scanline_clocks) noexcept
+    {
+        // Most dots are four master clocks wide.  On a normal 1364-clock
+        // scanline dots 323 and 327 are stretched to six clocks; the short
+        // 1360-clock scanline omits both stretches.
+        if (scanline_clocks == 1360u)
+            return static_cast<uint16_t>(master_clock >> 2u);
+
+        const uint16_t adjusted_clock{
+            static_cast<uint16_t>(master_clock
+                - (master_clock > 1292u ? 2u : 0u)
+                - (master_clock > 1310u ? 2u : 0u))
+        };
+        return static_cast<uint16_t>(adjusted_clock >> 2u);
+    }
 
     struct presentation_lut_t
     {
@@ -614,6 +630,15 @@ namespace clover::core
         render_placeholder_frame();
     }
 
+    void ppu_t::configure_hardware(const video_timing_t& video_timing,
+                                   uint8_t ppu1_version,
+                                   uint8_t ppu2_version) noexcept
+    {
+        _video_timing = video_timing;
+        _ppu1_version = static_cast<uint8_t>(ppu1_version & 0x0fu);
+        _ppu2_version = static_cast<uint8_t>(ppu2_version & 0x0fu);
+    }
+
     void ppu_t::reset() noexcept
     {
         initialize(true);
@@ -622,13 +647,17 @@ namespace clover::core
     void ppu_t::initialize(bool warm_reset) noexcept
     {
         const std::array<uint16_t, 32 * 1024> preserved_vram{
-            warm_reset && _entropy_mode != ppu_entropy_mode_t::none ? _vram : std::array<uint16_t, 32 * 1024>{}
+            warm_reset ? _vram : std::array<uint16_t, 32 * 1024>{}
+        };
+        const std::array<uint16_t, 256> preserved_cgram{
+            warm_reset ? _cgram : std::array<uint16_t, 256>{}
         };
 
         _composed_frame.clear();
         _presented_frame.clear();
         _presentation_composed_frame.clear();
         _presentation_presented_frame.clear();
+        _completed_frames.clear();
         std::fill(_registers.begin(), _registers.end(), 0);
         std::fill(_vram.begin(), _vram.end(), 0);
         std::fill(_oam.begin(), _oam.end(), 0);
@@ -669,8 +698,11 @@ namespace clover::core
         _ppu2_mdr = 0;
         _oam_state.latched_address = 0;
 
-        if (warm_reset && _entropy_mode != ppu_entropy_mode_t::none)
+        if (warm_reset)
+        {
             _vram = preserved_vram;
+            _cgram = preserved_cgram;
+        }
 
         apply_startup_entropy(warm_reset);
     }
@@ -762,6 +794,7 @@ namespace clover::core
         _screen_state.pseudo_hires = entropy.random_bool();
         _screen_state.overscan = false;
         _screen_state.interlace = false;
+        _screen_state.mode7_extbg = entropy.random_bool();
         _screen_state.mode7_repeat = static_cast<uint8_t>(entropy.random_u8() & 0x03u);
         _screen_state.mode7_hflip = entropy.random_bool();
         _screen_state.mode7_vflip = entropy.random_bool();
@@ -800,6 +833,23 @@ namespace clover::core
     void ppu_t::set_frame_capture_enabled(bool enabled) noexcept
     {
         _frame_capture_enabled = enabled;
+    }
+
+    void ppu_t::set_completed_frame_queue_enabled(bool enabled) noexcept
+    {
+        _completed_frame_queue_enabled = enabled;
+        if (!enabled)
+            _completed_frames.clear();
+    }
+
+    bool ppu_t::pop_completed_frame(framebuffer_t& framebuffer) noexcept
+    {
+        if (_completed_frames.empty())
+            return false;
+
+        framebuffer = std::move(_completed_frames.front());
+        _completed_frames.pop_front();
+        return true;
     }
 
     void ppu_t::set_cgram_write_trace_start_frame(uint64_t frame_index) noexcept
@@ -1144,39 +1194,59 @@ namespace clover::core
         if (_bg_state.mode != 2u && _bg_state.mode != 4u && _bg_state.mode != 6u)
             return;
 
-        auto& background{ _background_layer_state[2] };
-        const background_geometry_t geometry{
+        const background_geometry_t offset_geometry{
             .hires = _screen_state.hires,
             .large_tiles = _bg_state.large_tiles[2],
             .screen_size = _bg_state.screen_size[2],
             .screen_address = _bg_state.screen_address[2]
         };
-        const background_address_window_t window{
-            build_background_address_window(geometry, true)
+        const background_address_window_t offset_window{
+            build_background_address_window(offset_geometry, true)
         };
 
-        for (uint8_t tile_slot{ 0 }; tile_slot < background.offset_hoffset.size(); ++tile_slot)
+        for (uint8_t background_index{ 0u }; background_index < 2u; ++background_index)
         {
-            const uint16_t screen_x{ static_cast<uint16_t>(tile_slot << 3u) };
-            const uint16_t hires_hoffset{
-                static_cast<uint16_t>(_bg_state.hoffset[2] << (geometry.hires ? 1u : 0u))
+            auto& background{ _background_layer_state[background_index] };
+            const uint16_t target_tile_width{
+                static_cast<uint16_t>(
+                    1u << (_screen_state.hires
+                        ? 4u
+                        : static_cast<uint8_t>(3u + (_bg_state.large_tiles[background_index] ? 1u : 0u)))
+                )
             };
-            const uint16_t horizontal_source{
-                static_cast<uint16_t>(screen_x + (hires_hoffset & ~0x0007u))
+            const uint16_t offset_hoffset{
+                static_cast<uint16_t>(
+                    (_bg_state.hoffset[2] & ~0x0007u) << (_screen_state.hires ? 1u : 0u)
+                )
             };
-            background.offset_hoffset[tile_slot] = _vram[
-                compute_background_addressing(geometry, window, horizontal_source, _bg_state.voffset[2]).tilemap_address
-            ];
-            background.offset_voffset[tile_slot] = _vram[
-                compute_background_addressing(
-                    geometry,
-                    window,
-                    horizontal_source,
-                    static_cast<uint16_t>(_bg_state.voffset[2] + 8u)).tilemap_address
-            ];
-        }
 
-        background.evaluation_scanline = scanline;
+            for (uint8_t tile_slot{ 0 }; tile_slot < background.offset_hoffset.size(); ++tile_slot)
+            {
+                const uint16_t offset_x{ static_cast<uint16_t>(tile_slot << 3u) };
+                // Offset-per-tile modes exempt the first target tile column.
+                if (offset_x < target_tile_width)
+                    continue;
+
+                const uint16_t horizontal_source{
+                    static_cast<uint16_t>(offset_x - target_tile_width + offset_hoffset)
+                };
+                background.offset_hoffset[tile_slot] = _vram[
+                    compute_background_addressing(offset_geometry,
+                                                  offset_window,
+                                                  horizontal_source,
+                                                  _bg_state.voffset[2]).tilemap_address
+                ];
+                background.offset_voffset[tile_slot] = _vram[
+                    compute_background_addressing(
+                        offset_geometry,
+                        offset_window,
+                        horizontal_source,
+                        static_cast<uint16_t>(_bg_state.voffset[2] + 8u)).tilemap_address
+                ];
+            }
+
+            background.evaluation_scanline = scanline;
+        }
     }
 
     void ppu_t::evaluate_background_tiles(uint8_t background_index) noexcept
@@ -1232,8 +1302,8 @@ namespace clover::core
 
             if (apply_offset_lookup)
             {
-                const uint16_t hlookup{ _background_layer_state[2].offset_hoffset[tile_slot] };
-                const uint16_t vlookup{ _background_layer_state[2].offset_voffset[tile_slot] };
+                const uint16_t hlookup{ background.offset_hoffset[tile_slot] };
+                const uint16_t vlookup{ background.offset_voffset[tile_slot] };
                 const uint16_t valid_mask{ static_cast<uint16_t>(1u << (13u + background_index)) };
 
                 if (_bg_state.mode == 4u)
@@ -1241,7 +1311,7 @@ namespace clover::core
                     if ((hlookup & valid_mask) != 0)
                     {
                         if ((hlookup & 0x8000u) == 0)
-                            horizontal_source = static_cast<uint16_t>(screen_x + (hlookup & ~0x0007u) + (hires_hoffset & 0x0007u));
+                            horizontal_source = static_cast<uint16_t>(screen_x + (hlookup & ~0x0007u));
                         else
                             vertical_source = static_cast<uint16_t>(base_vertical_pixel + hlookup);
                     }
@@ -1249,7 +1319,7 @@ namespace clover::core
                 else
                 {
                     if ((hlookup & valid_mask) != 0)
-                        horizontal_source = static_cast<uint16_t>(screen_x + (hlookup & ~0x0007u) + (hires_hoffset & 0x0007u));
+                        horizontal_source = static_cast<uint16_t>(screen_x + (hlookup & ~0x0007u));
                     if ((vlookup & valid_mask) != 0)
                         vertical_source = static_cast<uint16_t>(base_vertical_pixel + vlookup);
                 }
@@ -2644,7 +2714,10 @@ namespace clover::core
     void ppu_t::latch_counters() noexcept
     {
         const timing_snapshot_t snapshot{ timing() };
-        _counter_latch.hcounter = snapshot.raster.dot;
+        _counter_latch.hcounter = horizontal_dot_from_master_clock(
+            snapshot.raster.dot,
+            _counter.current_scanline_clocks(_video_timing, _timing_interlace)
+        );
         _counter_latch.vcounter = snapshot.raster.scanline;
         _counter_latch.counters_latched = true;
         _counter_latch.hcounter_high_read = false;
@@ -2774,16 +2847,19 @@ namespace clover::core
         case 7u:
             _bg_state.render_mode[0] = mode_t::mode7;
             _bg_state.active[0] = true;
-            _bg_state.priority[0] = { 3, 3 };
-            if (_bg_state.bg3_priority)
+            if (_screen_state.mode7_extbg)
             {
+                _bg_state.priority[0] = { 3, 3 };
                 _bg_state.render_mode[1] = mode_t::mode7;
                 _bg_state.active[1] = true;
                 _bg_state.priority[1] = { 1, 5 };
                 _object_layer_state.priority = { 2, 4, 6, 7 };
             }
             else
+            {
+                _bg_state.priority[0] = { 2, 2 };
                 _object_layer_state.priority = { 1, 3, 4, 5 };
+            }
             break;
         default:
             break;
@@ -2893,7 +2969,7 @@ namespace clover::core
             return _ppu2_mdr;
         case 0x213eu:
             _ppu1_mdr = static_cast<uint8_t>((_ppu1_mdr & 0x10u)
-                | k_ppu1_version
+                | _ppu1_version
                 | (_object_layer_state.range_over ? 0x40u : 0x00u)
                 | (_object_layer_state.time_over ? 0x80u : 0x00u));
             return _ppu1_mdr;
@@ -2901,7 +2977,8 @@ namespace clover::core
             _counter_latch.hcounter_high_read = false;
             _counter_latch.vcounter_high_read = false;
             _ppu2_mdr = static_cast<uint8_t>((_ppu2_mdr & 0x20u)
-                | k_ppu2_version
+                | _ppu2_version
+                | (_video_timing.standard == video_standard_t::pal ? 0x10u : 0x00u)
                 | ((!_external_latch_enabled || _counter_latch.counters_latched) ? 0x40u : 0x00u)
                 | (_counter.odd_field ? 0x80u : 0x00u));
             _counter_latch.counters_latched = false;
@@ -3272,10 +3349,12 @@ namespace clover::core
             _screen_state.interlace = (value & 0x01u) != 0;
             _screen_state.overscan = (value & 0x04u) != 0;
             _screen_state.pseudo_hires = (value & 0x08u) != 0;
+            _screen_state.mode7_extbg = (value & 0x40u) != 0;
             _timing_interlace = _screen_state.interlace;
             _object_layer_state.interlace = (value & 0x02u) != 0;
             for (auto& object : _object_layer_state.objects)
                 object.height = object_height(object.size_select);
+            decode_render_state();
             return;
         default:
             return;
@@ -3298,8 +3377,11 @@ namespace clover::core
             _presented_frame = _composed_frame;
             if (_presentation_layer_mask != ppu_presentation_options_t::k_all_layers_visible)
                 _presentation_presented_frame = _presentation_composed_frame;
+            if (_completed_frame_queue_enabled)
+                _completed_frames.push_back(_presented_frame);
             render_placeholder_frame();
             result.frame_complete = true;
+            result.frames_completed = 1;
         }
 
         process_pipeline_range(previous_timing, result.timing);
@@ -3349,6 +3431,7 @@ namespace clover::core
         snapshot.brightness = _display.brightness;
         snapshot.bg_mode = _bg_state.mode;
         snapshot.bg3_priority = _bg_state.bg3_priority;
+        snapshot.mode7_extbg = _screen_state.mode7_extbg;
         snapshot.hires = _screen_state.hires;
         snapshot.mosaic_size = _mosaic_state.size;
         for (size_t index{ 0 }; index < 4; ++index)

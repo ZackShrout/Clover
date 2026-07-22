@@ -11,6 +11,8 @@
 #include <span>
 #include <vector>
 
+#include "clover/core/snes/Timing.h"
+
 namespace clover::core
 {
     enum class cartridge_mapping_mode_t : uint8_t
@@ -26,6 +28,7 @@ namespace clover::core
         cartridge_mapping_mode_t mapping_mode{ cartridge_mapping_mode_t::none };
         uint8_t raw_map_mode{ 0 };
         uint8_t raw_ram_size{ 0 };
+        uint8_t destination_code{ 0 };
         uint16_t reset_vector{ 0 };
     };
 
@@ -41,6 +44,7 @@ namespace clover::core
         [[nodiscard]] bool loaded() const noexcept;
         [[nodiscard]] cartridge_mapping_mode_t mapping_mode() const noexcept;
         [[nodiscard]] const cartridge_header_t& header() const noexcept;
+        [[nodiscard]] video_standard_t declared_video_standard() const noexcept;
         [[nodiscard]] std::span<const std::byte> persistent_memory() const noexcept;
         [[nodiscard]] bool load_persistent_memory(std::span<const std::byte> data) noexcept;
         [[nodiscard]] bool persistent_memory_dirty() const noexcept;
@@ -52,6 +56,7 @@ namespace clover::core
             cartridge_mapping_mode_t mapping_mode{ cartridge_mapping_mode_t::none };
             uint8_t raw_map_mode{ 0 };
             uint8_t raw_ram_size{ 0 };
+            uint8_t destination_code{ 0 };
             uint16_t reset_vector{ 0 };
             int score{ -1 };
         };

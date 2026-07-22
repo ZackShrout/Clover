@@ -72,12 +72,31 @@ namespace clover::frontend
 
     display_info_t snes_emulator_core_t::display_info() const noexcept
     {
+        const core::video_timing_t& timing{ _console.video_timing() };
+        const double refresh_hz{
+            static_cast<double>(core::master_clock_frequency_hz(timing.standard))
+                / static_cast<double>(timing.master_clocks_per_frame())
+        };
         return {
             .framebuffer_width = core::framebuffer_t::k_width,
             .framebuffer_height = core::framebuffer_t::k_height,
-            .pixel_aspect_ratio = 8.f / 7.f,
-            .nominal_refresh_hz = 60.098812
+            .pixel_aspect_ratio = timing.standard == core::video_standard_t::pal
+                ? 55.f / 43.f
+                : 8.f / 7.f,
+            .nominal_refresh_hz = refresh_hz
         };
+    }
+
+    bool snes_emulator_core_t::set_hardware_configuration(
+        core::snes_hardware_configuration_t configuration
+    ) noexcept
+    {
+        return _console.set_hardware_configuration(configuration);
+    }
+
+    core::snes_hardware_identity_t snes_emulator_core_t::hardware_identity() const noexcept
+    {
+        return _console.hardware_identity();
     }
 
     video_frame_view_t snes_emulator_core_t::video_frame() const noexcept

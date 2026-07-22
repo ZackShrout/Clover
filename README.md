@@ -12,7 +12,8 @@ acceptable substitute for modeling the machine correctly.
 Clover currently includes:
 
 - a headless SNES core with 65C816 CPU, PPU, SPC700/DSP audio, DMA/HDMA,
-  interrupts, controller input, LoROM/HiROM cartridge mapping, and NTSC timing
+  interrupts, controller input, LoROM/HiROM cartridge mapping, and automatic
+  NTSC/PAL timing
 - a system-neutral frontend seam around the SNES core
 - an SDL3 desktop app with video, audio, keyboard/gamepad input, frame pacing,
   and deterministic investigation captures
@@ -22,6 +23,8 @@ Clover currently includes:
 The emulator is not yet universally compatible. Enhancement chips and less
 common hardware edge cases remain active work; see
 [`docs/KNOWN_SIMPLIFICATIONS.md`](docs/KNOWN_SIMPLIFICATIONS.md).
+The normative late 3-chip target and revision policy are defined in
+[`docs/SNES_HARDWARE_MODEL.md`](docs/SNES_HARDWARE_MODEL.md).
 
 ## Repository Layout
 
@@ -116,9 +119,11 @@ The destination must not already exist. Press F8 near a visible or audible
 problem; the next emulated frame is marked. Exact human reflex timing is not
 required because the bundle records the surrounding continuous run.
 
-A version-3 capture contains:
+A version-4 capture contains:
 
 - `joypad1.script` — run-length-compressed SNES controller input
+- `initial_save_ram.srm` — immutable battery RAM as it existed before frame 1,
+  when the cartridge provides persistent memory
 - `audio.wav` — raw 16-bit stereo core audio
 - `frames.csv` — per-frame input, audio ranges, marker state, host timing, core
   runtime, presentation time, and SDL audio-queue telemetry
@@ -130,6 +135,7 @@ Replay the controller movie headlessly with a comfortably high step limit:
 
 ```bash
 CLOVER_JOYPAD1_SCRIPT_FILE=/path/to/capture/joypad1.script \
+  CLOVER_SAVE_RAM_FILE=/path/to/capture/initial_save_ram.srm \
   ./build/clover_rom_bringup "/path/to/game.sfc" 1000 2000000000
 ```
 
@@ -139,9 +145,9 @@ same input sequence to be compared against bsnes.
 ## Accuracy Fence
 
 The primary regression ratchet is manifest-driven. Its default `full` suite
-runs CTest, captures every frame through frame 1000 for the four milestone ROMs
-under Clover and bsnes, replays the validated Final Fantasy III Mode 7 and
-combat paths, enforces the bringup guardrails, and compares all requested
+runs CTest, captures every frame through frame 2000 for the five milestone ROMs
+under Clover and bsnes, replays the validated save-RAM-backed Final Fantasy III
+world-map path, enforces the bringup guardrails, and compares all requested
 frames exactly:
 
 ```bash
@@ -169,6 +175,26 @@ new `--output-dir` when passing output should be retained intentionally.
 `scripts/run_core_validation.py` remains available as the older, faster
 three-ROM checkpoint loop. It is useful during iteration but is not the full
 accuracy fence.
+
+## Hardware Test Laboratory
+
+Self-reporting and hardware-characterization ROMs have their own manifest-driven
+runner. It inventories 95 curated scenarios from six provenance groups,
+verifies their hashes, decodes supported terminal pass/fail banners, records
+hardware-revision scope, and preserves JSON, Markdown, frame, and log artifacts:
+
+```bash
+python3 scripts/run_hardware_validation.py --suite smoke
+python3 scripts/run_hardware_validation.py --suite all
+```
+
+bsnes is retained as useful differential evidence, but agreement with it is not
+labeled hardware correctness. Only provenance-rich real-SNES references can
+produce a `VERIFIED` result. The evidence hierarchy, status vocabulary, reference
+format, and subsystem suites are documented in
+[`docs/HARDWARE_VALIDATION.md`](docs/HARDWARE_VALIDATION.md).
+Corpus selection, source revisions, and deferred hardware lanes are documented
+in [`docs/SNES_TEST_CORPUS.md`](docs/SNES_TEST_CORPUS.md).
 
 The checked-in Zelda player-selection movie is classified as an
 `investigation` scenario. It reproduces the path, but frame-indexed input does

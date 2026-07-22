@@ -102,7 +102,7 @@ namespace
         {
             const clover::core::hardware_step_result_t step{ console.step_hardware() };
             ++result.steps;
-            result.frames_completed += step.ppu.frame_complete ? 1u : 0u;
+            result.frames_completed += step.ppu.frames_completed;
 
             const clover::core::cpu_state_t& cpu{ console.cpu_state() };
             if (cpu.pb == 0x00u && cpu.pc == 0xffffu)

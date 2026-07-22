@@ -1,3 +1,8 @@
+//
+// Created by Zack Shrout on 7/20/26.
+// Copyright (c) 2026 BunnySoft. All rights reserved.
+//
+
 #pragma once
 
 #include <cstdint>
@@ -10,6 +15,70 @@
 
 namespace clover::test
 {
+    class frame_event_script_t
+    {
+    public:
+        [[nodiscard]] static frame_event_script_t from_environment(const char* name) noexcept
+        {
+            frame_event_script_t result{};
+            const char* const raw{ std::getenv(name) };
+            if (raw == nullptr || *raw == '\0')
+                return result;
+
+            std::string_view remaining{ raw };
+            while (!remaining.empty())
+            {
+                const size_t separator{ remaining.find(',') };
+                const std::string_view entry{ remaining.substr(0, separator) };
+                uint64_t frame{ 0 };
+                if (!parse_unsigned(entry, frame) || frame == 0u)
+                {
+                    result._valid = false;
+                    return result;
+                }
+                result._frames.push_back(frame);
+                if (separator == std::string_view::npos)
+                    break;
+                remaining.remove_prefix(separator + 1u);
+            }
+            return result;
+        }
+
+        [[nodiscard]] bool valid() const noexcept { return _valid; }
+
+        [[nodiscard]] bool contains(uint64_t frame) const noexcept
+        {
+            for (const uint64_t event_frame : _frames)
+            {
+                if (event_frame == frame)
+                    return true;
+            }
+            return false;
+        }
+
+    private:
+        [[nodiscard]] static bool parse_unsigned(std::string_view raw, uint64_t& result) noexcept
+        {
+            if (raw.empty())
+                return false;
+
+            result = 0;
+            for (const char character : raw)
+            {
+                if (character < '0' || character > '9')
+                    return false;
+                const uint8_t digit{ static_cast<uint8_t>(character - '0') };
+                if (result > (UINT64_MAX - digit) / 10u)
+                    return false;
+                result = result * 10u + digit;
+            }
+            return true;
+        }
+
+        std::vector<uint64_t> _frames{};
+        bool _valid{ true };
+    };
+
     struct joypad_input_range_t
     {
         uint64_t first_frame{ 0 };

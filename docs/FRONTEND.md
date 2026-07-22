@@ -29,8 +29,9 @@ factory case, not SDL dependencies in that core.
 The SNES adapter maps semantic buttons into the SNES serial joypad bit layout
 and supports ports 0 and 1. The SDL app currently drives port 0.
 
-The core reports a 256x240 framebuffer, 8:7 pixel aspect ratio, and nominal
-NTSC refresh rate of 60.098812 Hz. Audio is stereo at the core's native output
+The core reports a 256x240 framebuffer and region-correct presentation data:
+8:7 pixel aspect with approximately 60.0988 Hz for NTSC, or 55:43 with
+approximately 50.0070 Hz for PAL. Audio is stereo at the core's native output
 rate. The platform owns resampling/device negotiation and queue policy.
 A core may optionally advertise named presentation planes without making the
 base contract SNES-shaped. The SNES adapter reports BG1–BG4 and Objects; a
@@ -113,7 +114,7 @@ cleared after reset or ROM replacement.
 
 Menu reset, library browsing, importing, ROM loading, pause/frame advance,
 speed selection, and video-plane overrides are deliberately unavailable while
-a deterministic capture is active because version 3 controller movies do not
+a deterministic capture is active because version 4 controller movies do not
 encode those operations.
 
 Pause and speed are host scheduling policy: they do not alter emulated clocks.
@@ -158,6 +159,8 @@ Files:
 - `manifest.txt` records format version, ROM path/size/CRC32, frame numbering,
   audio format, total audio samples, discontinuities, and marker frames.
 - `joypad1.script` stores nonzero controller spans as inclusive frame ranges.
+- `initial_save_ram.srm` preserves battery RAM exactly as it existed before the
+  first captured frame, allowing save-based paths to replay reproducibly.
 - `audio.wav` stores signed 16-bit stereo core output.
 - `frames.csv` correlates every emulated frame with controller state, audio
   sample range, discontinuity, marker, host interval, SDL queue depth, audio

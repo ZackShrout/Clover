@@ -17,7 +17,6 @@ namespace
     constexpr uint16_t k_trace_pc_max{ 0xffe8u };
     constexpr uint16_t k_trace_pc2_min{ 0x0800u };
     constexpr uint16_t k_trace_pc2_max{ 0x08ffu };
-
     constexpr std::array<uint8_t, 64> k_ipl_rom{
         0xcdu, 0xefu, 0xbdu, 0xe8u, 0x00u, 0xc6u, 0x1du, 0xd0u,
         0xfcu, 0x8fu, 0xaau, 0xf4u, 0x8fu, 0xbbu, 0xf5u, 0x78u,
@@ -42,6 +41,11 @@ namespace clover::core
     void apu_t::power_on() noexcept
     {
         initialize(false);
+    }
+
+    void apu_t::configure_master_clock(uint32_t master_clock_frequency_hz) noexcept
+    {
+        _master_clock_frequency_hz = master_clock_frequency_hz;
     }
 
     void apu_t::reset() noexcept
@@ -98,7 +102,7 @@ namespace clover::core
         if (_smp_suspended_for_cpu)
             return;
 
-        while (!_halted && _smp_clock_credit >= k_master_clock_frequency_hz)
+        while (!_halted && _smp_clock_credit >= _master_clock_frequency_hz)
         {
             if (!execute_instruction())
                 return;
@@ -340,6 +344,7 @@ namespace clover::core
                 return false;
             }
 
+            complete_instruction_trace(pc);
             _instruction_context = {};
             return true;
         }
@@ -502,12 +507,14 @@ namespace clover::core
 
     uint8_t apu_t::spc_read_indirect_indexed(uint8_t address, uint8_t index) noexcept
     {
+        // Read-form (dp)+Y idles before fetching the pointer; the write form
+        // idles after it.  The distinction is externally visible through I/O.
+        spc_idle();
         const uint8_t low{ spc_load_direct(address) };
         const uint8_t high{ spc_load_direct(static_cast<uint8_t>(address + 1u)) };
         const uint16_t effective_address{
             static_cast<uint16_t>(low | (static_cast<uint16_t>(high) << 8u))
         };
-        spc_idle();
         return spc_read_u8(static_cast<uint16_t>(effective_address + index));
     }
 
@@ -962,7 +969,11 @@ namespace clover::core
     void apu_t::or_indirect_x_with_indirect_y() noexcept
     {
         (void)spc_read_u8(_registers.pc);
-        const uint8_t value{ static_cast<uint8_t>(spc_load_direct(_registers.x) | spc_load_direct(_registers.y)) };
+        // (Y) is the source bus read and must precede the (X) destination read.
+        const uint8_t source{ spc_load_direct(_registers.y) };
+        const uint8_t value{
+            static_cast<uint8_t>(spc_load_direct(_registers.x) | source)
+        };
         spc_store_direct(_registers.x, value);
         set_nz_flags(value);
     }
@@ -970,7 +981,10 @@ namespace clover::core
     void apu_t::and_indirect_x_with_indirect_y() noexcept
     {
         (void)spc_read_u8(_registers.pc);
-        const uint8_t value{ static_cast<uint8_t>(spc_load_direct(_registers.x) & spc_load_direct(_registers.y)) };
+        const uint8_t source{ spc_load_direct(_registers.y) };
+        const uint8_t value{
+            static_cast<uint8_t>(spc_load_direct(_registers.x) & source)
+        };
         spc_store_direct(_registers.x, value);
         set_nz_flags(value);
     }
@@ -978,7 +992,10 @@ namespace clover::core
     void apu_t::xor_indirect_x_with_indirect_y() noexcept
     {
         (void)spc_read_u8(_registers.pc);
-        const uint8_t value{ static_cast<uint8_t>(spc_load_direct(_registers.x) ^ spc_load_direct(_registers.y)) };
+        const uint8_t source{ spc_load_direct(_registers.y) };
+        const uint8_t value{
+            static_cast<uint8_t>(spc_load_direct(_registers.x) ^ source)
+        };
         spc_store_direct(_registers.x, value);
         set_nz_flags(value);
     }
@@ -1404,7 +1421,7 @@ namespace clover::core
         step_timer(_timer2, timer_clocks);
 
         const int64_t master_clocks{
-            static_cast<int64_t>(cycle_clocks) * k_master_clock_frequency_hz
+            static_cast<int64_t>(cycle_clocks) * _master_clock_frequency_hz
         };
         _cpu_io_window_consumed_master_numerator += master_clocks;
         _smp_clock_credit -= master_clocks;
@@ -1451,7 +1468,7 @@ namespace clover::core
         step_timer(_timer2, spc_cycles);
 
         const int64_t master_clocks{
-            static_cast<int64_t>(spc_cycles) * k_master_clock_frequency_hz
+            static_cast<int64_t>(spc_cycles) * _master_clock_frequency_hz
         };
         _cpu_io_window_consumed_master_numerator += master_clocks;
         _smp_clock_credit -= master_clocks;
@@ -1552,6 +1569,7 @@ namespace clover::core
             .psw = _registers.psw,
             .timer0_stage2 = _timer0.stage2,
             .timer0_stage3 = _timer0.stage3,
+            .access_count = 0,
             .port0 = _cpu_to_apu_ports[0],
             .port1 = _cpu_to_apu_ports[1],
             .port2 = _cpu_to_apu_ports[2],
@@ -1568,6 +1586,18 @@ namespace clover::core
                   std::end(_instruction_trace),
                   std::begin(_instruction_trace));
         _instruction_trace[_instruction_trace.size() - 1u] = entry;
+    }
+
+    void apu_t::complete_instruction_trace(uint16_t pc) noexcept
+    {
+        if (_instruction_trace_count == 0)
+            return;
+
+        apu_state_t::trace_entry_t& entry{
+            _instruction_trace[_instruction_trace_count - 1u]
+        };
+        if (entry.pc == pc)
+            entry.access_count = _instruction_context.access_count;
     }
 
     void apu_t::trace_io_access(uint16_t address, uint8_t value, bool is_write) noexcept

@@ -67,11 +67,12 @@ namespace clover::core
                 return;
             }
 
+            const uint16_t high_address{ direct_indexed_byte_address(state, offset, state.x, 1) };
             const uint8_t low{ executor.read_u8(address) };
-            const uint8_t high{ executor.read_u8(static_cast<uint16_t>(address + 1u)) };
+            const uint8_t high{ executor.read_u8(high_address) };
             executor.idle();
             const uint16_t result{ operation(state, static_cast<uint16_t>(low | (high << 8u)), false) };
-            executor.write_u8(static_cast<uint16_t>(address + 1u), static_cast<uint8_t>(result >> 8u));
+            executor.write_u8(high_address, static_cast<uint8_t>(result >> 8u));
             executor.write_u8(address, static_cast<uint8_t>(result & 0x00ffu));
         }
 
@@ -92,11 +93,11 @@ namespace clover::core
             }
 
             const uint8_t low{ executor.read_u8(data_base) };
-            const uint8_t high{ executor.read_u8(data_address(state, static_cast<uint16_t>(address + 1u))) };
+            const uint32_t high_address{ (data_base + 1u) & 0x00ffffffu };
+            const uint8_t high{ executor.read_u8(high_address) };
             executor.idle();
             const uint16_t result{ operation(state, static_cast<uint16_t>(low | (high << 8u)), false) };
-            executor.write_u8(data_address(state, static_cast<uint16_t>(address + 1u)),
-                              static_cast<uint8_t>(result >> 8u));
+            executor.write_u8(high_address, static_cast<uint8_t>(result >> 8u));
             executor.write_u8(data_base, static_cast<uint8_t>(result & 0x00ffu));
         }
 
@@ -108,8 +109,7 @@ namespace clover::core
         {
             const uint16_t base_address{ effective_absolute_address(executor.fetch_operand_u16(state)) };
             executor.idle();
-            const uint16_t address{ static_cast<uint16_t>(base_address + state.x) };
-            const uint32_t data_base{ data_address(state, address) };
+            const uint32_t data_base{ indexed_data_address(state, base_address, state.x) };
             if (is_8bit)
             {
                 const uint8_t value{ executor.read_u8(data_base) };
@@ -119,11 +119,11 @@ namespace clover::core
             }
 
             const uint8_t low{ executor.read_u8(data_base) };
-            const uint8_t high{ executor.read_u8(data_address(state, static_cast<uint16_t>(address + 1u))) };
+            const uint32_t high_address{ (data_base + 1u) & 0x00ffffffu };
+            const uint8_t high{ executor.read_u8(high_address) };
             executor.idle();
             const uint16_t result{ operation(state, static_cast<uint16_t>(low | (high << 8u)), false) };
-            executor.write_u8(data_address(state, static_cast<uint16_t>(address + 1u)),
-                              static_cast<uint8_t>(result >> 8u));
+            executor.write_u8(high_address, static_cast<uint8_t>(result >> 8u));
             executor.write_u8(data_base, static_cast<uint8_t>(result & 0x00ffu));
         }
 

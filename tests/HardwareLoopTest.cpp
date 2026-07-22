@@ -361,6 +361,8 @@ namespace
         cpu_dma_enable_console.write_u8(0x000003u, 0x0bu);
         cpu_dma_enable_console.write_u8(0x000004u, 0x42u);
         cpu_dma_enable_console.write_u8(0x000005u, 0xeau);
+        cpu_dma_enable_console.set_frame_capture_enabled(true);
+        cpu_dma_enable_console.set_completed_frame_queue_enabled(true);
 
         const clover::core::hardware_step_result_t cpu_dma_enable_load{
             cpu_dma_enable_console.step_hardware()
@@ -381,6 +383,17 @@ namespace
 
         if (cpu_dma_enable_console.general_dma_pending())
             return fail("cpu_dma_enable_completed_on_cpu_edge");
+
+        uint32_t queued_dma_frames{ 0 };
+        clover::core::framebuffer_t queued_dma_frame{};
+        while (cpu_dma_enable_console.pop_completed_frame(queued_dma_frame))
+            ++queued_dma_frames;
+        if (cpu_dma_enable_dma.ppu.frames_completed == 0u
+            || queued_dma_frames != cpu_dma_enable_dma.ppu.frames_completed
+            || cpu_dma_enable_console.frame_index() != cpu_dma_enable_dma.ppu.frames_completed)
+        {
+            return fail("cpu_dma_reports_all_crossed_frames");
+        }
 
         static clover::core::console_t cpu_mmio_dma_console{};
         cpu_mmio_dma_console.power_on();
@@ -649,7 +662,26 @@ namespace
         cpu_decimal_console.write_u8(0x00000au, 0x01u);
         cpu_decimal_console.write_u8(0x00000bu, 0x00u);
         cpu_decimal_console.write_u8(0x00000cu, 0xd8u);
-        cpu_decimal_console.write_u8(0x00000du, 0xeau);
+        cpu_decimal_console.write_u8(0x00000du, 0xf8u);
+        cpu_decimal_console.write_u8(0x00000eu, 0x38u);
+        cpu_decimal_console.write_u8(0x00000fu, 0xa9u);
+        cpu_decimal_console.write_u8(0x000010u, 0x66u);
+        cpu_decimal_console.write_u8(0x000011u, 0x00u);
+        cpu_decimal_console.write_u8(0x000012u, 0xe9u);
+        cpu_decimal_console.write_u8(0x000013u, 0x67u);
+        cpu_decimal_console.write_u8(0x000014u, 0x00u);
+        cpu_decimal_console.write_u8(0x000015u, 0xd8u);
+        cpu_decimal_console.write_u8(0x000016u, 0xeau);
+        cpu_decimal_console.write_u8(0x000017u, 0xf8u);
+        cpu_decimal_console.write_u8(0x000018u, 0x18u);
+        cpu_decimal_console.write_u8(0x000019u, 0xa9u);
+        cpu_decimal_console.write_u8(0x00001au, 0x50u);
+        cpu_decimal_console.write_u8(0x00001bu, 0x35u);
+        cpu_decimal_console.write_u8(0x00001cu, 0x69u);
+        cpu_decimal_console.write_u8(0x00001du, 0x70u);
+        cpu_decimal_console.write_u8(0x00001eu, 0x44u);
+        cpu_decimal_console.write_u8(0x00001fu, 0xd8u);
+        cpu_decimal_console.write_u8(0x000020u, 0xeau);
 
         for (int step_index{ 0 }; step_index < 8; ++step_index)
             static_cast<void>(cpu_decimal_console.step_hardware());
@@ -659,6 +691,24 @@ namespace
             || (cpu_decimal_console.cpu_state().p & 0x08u) != 0)
         {
             return fail("cpu_adc_decimal_16bit");
+        }
+
+        for (int step_index{ 0 }; step_index < 6; ++step_index)
+            static_cast<void>(cpu_decimal_console.step_hardware());
+
+        if (cpu_decimal_console.cpu_state().a != 0x9999u
+            || (cpu_decimal_console.cpu_state().p & 0x09u) != 0)
+        {
+            return fail("cpu_sbc_decimal_16bit");
+        }
+
+        for (int step_index{ 0 }; step_index < 4; ++step_index)
+            static_cast<void>(cpu_decimal_console.step_hardware());
+
+        if (cpu_decimal_console.cpu_state().a != 0x8020u
+            || (cpu_decimal_console.cpu_state().p & 0xc9u) != 0xc8u)
+        {
+            return fail("cpu_adc_decimal_16bit_invalid_digits");
         }
 
         return 0;
@@ -3107,6 +3157,23 @@ int main()
         return fail("startup_entropy_none_is_deterministic");
     }
 
+    ppu_entropy_none_console.write_u8(0x001234u, 0x5au);
+    ppu_entropy_none_console.write_u8(0x002115u, 0x80u);
+    ppu_entropy_none_console.write_u8(0x002116u, 0x00u);
+    ppu_entropy_none_console.write_u8(0x002117u, 0x00u);
+    ppu_entropy_none_console.write_u8(0x002118u, 0x34u);
+    ppu_entropy_none_console.write_u8(0x002119u, 0x12u);
+    ppu_entropy_none_console.write_u8(0x002121u, 0x00u);
+    ppu_entropy_none_console.write_u8(0x002122u, 0x56u);
+    ppu_entropy_none_console.write_u8(0x002122u, 0x2au);
+    ppu_entropy_none_console.reset();
+    if (ppu_entropy_none_console.read_u8(0x001234u) != 0x5au)
+        return fail("startup_entropy_none_warm_reset_preserves_wram");
+    if (ppu_entropy_none_console.ppu_vram()[0] != 0x1234u)
+        return fail("startup_entropy_none_warm_reset_preserves_vram");
+    if (ppu_entropy_none_console.ppu_cgram()[0] != 0x2a56u)
+        return fail("startup_entropy_none_warm_reset_preserves_cgram");
+
     static clover::core::console_t ppu_entropy_low_a{};
     ppu_entropy_low_a.set_startup_entropy_mode(clover::core::startup_entropy_mode_t::low);
     ppu_entropy_low_a.set_startup_entropy_seed(0x12345678u, 0x0000abcdu);
@@ -3265,7 +3332,12 @@ int main()
     if ((stat78_power_on_latch & 0x40u) == 0)
         return fail("stat78_power_on_latch");
 
-    if (power_on_latched_hcounter != power_on_latched_timing.raster.dot
+    const auto expected_latched_hcounter{ [](uint16_t master_clock) noexcept {
+        return static_cast<uint16_t>((master_clock
+            - (master_clock > 1292u ? 2u : 0u)
+            - (master_clock > 1310u ? 2u : 0u)) >> 2u);
+    } };
+    if (power_on_latched_hcounter != expected_latched_hcounter(power_on_latched_timing.raster.dot)
         || power_on_latched_vcounter != power_on_latched_timing.raster.scanline)
     {
         return fail("slhv_power_on_enabled");
@@ -3286,7 +3358,8 @@ int main()
     if ((stat78_external_latched & 0x40u) == 0)
         return fail("stat78_external_latched");
 
-    if (latched_hcounter != latched_timing.raster.dot || latched_vcounter != latched_timing.raster.scanline)
+    if (latched_hcounter != expected_latched_hcounter(latched_timing.raster.dot)
+        || latched_vcounter != latched_timing.raster.scanline)
         return fail("latched_counters");
 
     if ((ppu_register_console.read_u8(0x00213fu) & 0x40u) != 0)
@@ -3593,6 +3666,40 @@ int main()
         return fail("ppu_color_math_state");
     }
 
+    ppu_register_console.write_u8(0x002105u, 0x07u);
+    const clover::core::ppu_render_state_snapshot_t mode7_render_state{
+        ppu_register_console.ppu_render_state()
+    };
+    if (mode7_render_state.mode7_extbg
+        || !mode7_render_state.backgrounds[0].active
+        || mode7_render_state.backgrounds[1].active
+        || mode7_render_state.backgrounds[0].priority[0] != 2u
+        || mode7_render_state.objects.priority[0] != 1u
+        || mode7_render_state.objects.priority[1] != 3u
+        || mode7_render_state.objects.priority[2] != 4u
+        || mode7_render_state.objects.priority[3] != 5u)
+    {
+        return fail("ppu_mode7_priority_state");
+    }
+
+    ppu_register_console.write_u8(0x002133u, 0x4du);
+    const clover::core::ppu_render_state_snapshot_t mode7_extbg_render_state{
+        ppu_register_console.ppu_render_state()
+    };
+    if (!mode7_extbg_render_state.mode7_extbg
+        || !mode7_extbg_render_state.backgrounds[1].active
+        || mode7_extbg_render_state.backgrounds[0].priority[0] != 3u
+        || mode7_extbg_render_state.backgrounds[1].priority[0] != 1u
+        || mode7_extbg_render_state.backgrounds[1].priority[1] != 5u
+        || mode7_extbg_render_state.objects.priority[0] != 2u
+        || mode7_extbg_render_state.objects.priority[1] != 4u
+        || mode7_extbg_render_state.objects.priority[2] != 6u
+        || mode7_extbg_render_state.objects.priority[3] != 7u)
+    {
+        return fail("ppu_mode7_extbg_priority_state");
+    }
+
+    ppu_register_console.write_u8(0x002133u, 0x0du);
     ppu_register_console.write_u8(0x002105u, 0x05u);
     ppu_register_console.write_u8(0x00211au, 0xc3u);
     const clover::core::ppu_render_state_snapshot_t hires_render_state{

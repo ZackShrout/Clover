@@ -1554,7 +1554,7 @@ namespace
         for (uint16_t index{ 0 }; index < trace_count; ++index)
         {
             const auto& entry{ trace[index] };
-            std::printf("  clk=%llu PC=%04x OP=%02x A=%02x X=%02x Y=%02x SP=%02x PSW=%02x T0=%u/%u ports=%02x,%02x,%02x,%02x\n",
+            std::printf("  clk=%llu PC=%04x OP=%02x A=%02x X=%02x Y=%02x SP=%02x PSW=%02x T0=%u/%u accesses=%u ports=%02x,%02x,%02x,%02x\n",
                         static_cast<unsigned long long>(entry.master_clock),
                         entry.pc,
                         entry.opcode,
@@ -1565,6 +1565,7 @@ namespace
                         entry.psw,
                         entry.timer0_stage2,
                         entry.timer0_stage3,
+                        entry.access_count,
                         entry.port0,
                         entry.port1,
                         entry.port2,
@@ -2027,6 +2028,39 @@ int main(int argc, char** argv)
 
     const startup_entropy_config_t startup_entropy_config{ load_startup_entropy_config() };
     clover::core::console_t console{};
+    clover::core::snes_hardware_configuration_t hardware_configuration{};
+    if (const char* const profile_key{ std::getenv("CLOVER_SNES_HARDWARE_PROFILE") };
+        profile_key != nullptr && *profile_key != '\0')
+    {
+        const auto* const profile{ clover::core::find_snes_hardware_profile(profile_key) };
+        if (profile == nullptr || !profile->implemented)
+        {
+            std::fprintf(stderr, "Unsupported SNES hardware profile: %s\n", profile_key);
+            return 1;
+        }
+        hardware_configuration.model = profile->model;
+    }
+    if (const char* const region{ std::getenv("CLOVER_SNES_REGION") };
+        region != nullptr && *region != '\0')
+    {
+        const std::string_view value{ region };
+        if (value == "auto")
+            hardware_configuration.region = clover::core::snes_region_selection_t::automatic;
+        else if (value == "ntsc")
+            hardware_configuration.region = clover::core::snes_region_selection_t::ntsc;
+        else if (value == "pal")
+            hardware_configuration.region = clover::core::snes_region_selection_t::pal;
+        else
+        {
+            std::fprintf(stderr, "Unsupported SNES region override: %s\n", region);
+            return 1;
+        }
+    }
+    if (!console.set_hardware_configuration(hardware_configuration))
+    {
+        std::fprintf(stderr, "SNES hardware configuration is not implemented\n");
+        return 1;
+    }
     const char* const apu_port_trace_path{ std::getenv("CLOVER_APU_PORT_TRACE_FILE") };
     console.set_apu_port_trace_enabled(
         (apu_port_trace_path != nullptr && *apu_port_trace_path != '\0')
@@ -2041,6 +2075,20 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    if (const char* const save_ram_path{ std::getenv("CLOVER_SAVE_RAM_FILE") };
+        save_ram_path != nullptr && *save_ram_path != '\0')
+    {
+        const std::vector<std::byte> save_ram{ read_file_bytes(save_ram_path) };
+        if (save_ram.empty() || !console.load_persistent_memory(save_ram))
+        {
+            std::fprintf(stderr,
+                         "Failed to load save RAM with the cartridge's expected size: %s\n",
+                         save_ram_path);
+            return 1;
+        }
+        std::printf("Loaded save RAM: %s (%zu bytes)\n", save_ram_path, save_ram.size());
+    }
+
     console.power_on();
     const clover::test::joypad_input_script_t input_script{
         clover::test::joypad_input_script_t::from_environment()
@@ -2052,6 +2100,15 @@ int main(int argc, char** argv)
                      "expected start-end=hhhh[,start-end=hhhh...]\n");
         return 1;
     }
+    const clover::test::frame_event_script_t reset_script{
+        clover::test::frame_event_script_t::from_environment("CLOVER_RESET_FRAMES")
+    };
+    if (!reset_script.valid())
+    {
+        std::fprintf(stderr,
+                     "Invalid CLOVER_RESET_FRAMES; expected frame[,frame...]\n");
+        return 1;
+    }
     if (const char* const audio_path{ std::getenv("CLOVER_AUDIO_FILE") };
         audio_path != nullptr && *audio_path != '\0')
     {
@@ -2059,6 +2116,8 @@ int main(int argc, char** argv)
         audio_samples.reserve(static_cast<size_t>(target_frames * 1100u));
         for (uint64_t frame{ 1 }; frame <= target_frames; ++frame)
         {
+            if (reset_script.contains(frame))
+                console.reset();
             console.set_controller_state(0u, input_script.state_for_frame(frame));
             console.run_frame();
             if (console.audio_output_overflowed())
@@ -2123,6 +2182,7 @@ int main(int argc, char** argv)
             return 1;
         }
         console.set_frame_capture_enabled(true);
+        console.set_completed_frame_queue_enabled(dump_frames_only);
     }
     if (capture_cgram_trace)
         console.set_ppu_cgram_write_trace_start_frame(cgram_trace_start);
@@ -2146,11 +2206,18 @@ int main(int argc, char** argv)
     bool have_last_direct_page_watch{ false };
     bool terminal_pc_detected{ false };
     uint64_t dumped_frames{ 0 };
+    uint64_t completed_frame_capture_index{ 0 };
+    uint64_t last_reset_frame{ 0 };
     while (summary.steps < step_limit && summary.frame_completions < target_frames)
     {
+        const uint64_t active_frame{ summary.frame_completions + 1u };
+        if (active_frame != last_reset_frame && reset_script.contains(active_frame))
+        {
+            console.reset();
+            last_reset_frame = active_frame;
+        }
         const clover::core::cpu_state_t current_cpu{ console.cpu_state() };
         const uint8_t current_opcode{ console.read_u8((static_cast<uint32_t>(current_cpu.pb) << 16u) | current_cpu.pc) };
-        const uint64_t active_frame{ summary.frame_completions + 1u };
         console.set_controller_state(0u, input_script.state_for_frame(active_frame));
         const clover::core::hardware_timing_snapshot_t timing_snapshot{ console.capture_timing_snapshot() };
         if (should_emit_generic_trace(generic_trace_filter, current_cpu, timing_snapshot, active_frame))
@@ -2519,13 +2586,36 @@ int main(int argc, char** argv)
         const clover::core::hardware_step_result_t step{ console.step_hardware() };
         ++summary.steps;
         summary.dma_steps += step.slot_owner == clover::core::hardware_slot_owner_t::dma ? 1u : 0u;
-        summary.frame_completions += step.ppu.frame_complete ? 1u : 0u;
+        summary.frame_completions += step.ppu.frames_completed;
         summary.hblank_entries += step.ppu.entered_hblank ? 1u : 0u;
         summary.vblank_entries += step.ppu.entered_vblank ? 1u : 0u;
         summary.nmi_requests += step.ppu.nmi_requested ? 1u : 0u;
         summary.irq_requests += step.ppu.irq_requested ? 1u : 0u;
         summary.hdma_setup_triggers += step.ppu.hdma_setup_triggered ? 1u : 0u;
         summary.hdma_transfer_triggers += step.ppu.hdma_transfer_triggered ? 1u : 0u;
+        if (dump_frames_only)
+        {
+            clover::core::framebuffer_t completed_frame{};
+            while (console.pop_completed_frame(completed_frame))
+            {
+                ++completed_frame_capture_index;
+                if (completed_frame_capture_index < dump_start_frame
+                    || completed_frame_capture_index >= dump_start_frame + dump_count)
+                {
+                    continue;
+                }
+
+                const std::filesystem::path frame_path{
+                    dump_directory / ("frame_" + std::to_string(completed_frame_capture_index) + ".ppm")
+                };
+                if (!write_framebuffer_ppm(frame_path, completed_frame))
+                {
+                    std::fprintf(stderr, "Failed to write frame dump: %s\n", frame_path.string().c_str());
+                    return 1;
+                }
+                ++dumped_frames;
+            }
+        }
         if (ppu_probe_filter.enabled
             && active_frame == ppu_probe_filter.active_frame
             && step.ppu.timing.raster.scanline >= ppu_probe_filter.scanline_min
@@ -2545,7 +2635,7 @@ int main(int argc, char** argv)
             && active_frame >= dump_start_frame
             && active_frame < dump_start_frame + dump_count
         };
-        if (step.ppu.entered_vblank && should_dump_frame)
+        if (!dump_frames_only && step.ppu.entered_vblank && should_dump_frame)
         {
             console.refresh_framebuffer({
                 .source = dump_source

@@ -145,7 +145,10 @@ one flag.
 
 ## Timing Contract
 
-NTSC is the active timing profile. The shared vocabulary includes:
+The canonical motherboard profile is late 3-chip: S-CPU B, S-PPU1 version 1,
+S-PPU2 version 3, and late S-APU behavior. Region is an orthogonal timing axis;
+NTSC or PAL is selected from cartridge metadata unless explicitly overridden.
+The shared vocabulary includes:
 
 - master clocks
 - scanline and dot
@@ -158,14 +161,14 @@ CPU-visible counter behavior may intentionally differ from the PPU's internal
 render boundary where the hardware does. These differences are represented as
 explicit timing views and delayed samples, not broad frame-event shortcuts.
 
-PAL support, if added, should be a timing profile plus a behavior audit rather
-than scattered conditionals.
+Hardware profiles and region timing are typed configuration, not scattered
+conditionals. See [`SNES_HARDWARE_MODEL.md`](SNES_HARDWARE_MODEL.md).
 
 ## Presentation and Pacing
 
 `emulator_core_t::run_frame()` advances emulated hardware only. The current SDL
-shell normally paces completed frames at the SNES core's reported 60.098812 Hz,
-applies the 8:7 pixel aspect ratio, and manages audio queue latency. Pause,
+shell normally paces completed frames at the SNES core's reported regional
+refresh rate, applies the regional pixel aspect ratio, and manages audio queue latency. Pause,
 single-frame advancement, and alternate speeds change only when the host calls
 `run_frame()`; headless callers can run without sleeping.
 
@@ -204,7 +207,7 @@ Rules for diagnostics:
 
 ## Current Scope
 
-Clover currently implements the base NTSC SNES/SFC hardware model with LoROM
-and HiROM mapping. It does not yet implement enhancement coprocessors such as
+Clover currently implements the late 3-chip SNES/SFC hardware model with NTSC
+and PAL timing plus LoROM and HiROM mapping. It does not yet implement enhancement coprocessors such as
 CX4, Super FX, SA-1, or cartridge DSP variants. Current unresolved accuracy
 areas are tracked in [`KNOWN_SIMPLIFICATIONS.md`](KNOWN_SIMPLIFICATIONS.md).

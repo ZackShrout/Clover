@@ -65,13 +65,14 @@ The established deterministic no-input milestone set is:
 - The Legend of Zelda: A Link to the Past (USA)
 - Final Fantasy III (USA)
 - Chrono Trigger (USA)
+- Mortal Kombat (USA)
 
 The most recently completed continuous sweeps compared every rendered frame
-through frame 1000 exactly against bsnes for all four ROMs. Commercial ROM
+through frame 2000 exactly against bsnes for all five ROMs. Commercial ROM
 images and generated sweep directories are deliberately not stored in the
 repository; they must be reproduced from local ROM copies.
 
-This 1000-frame result supersedes the old three-ROM, 300-frame baseline. It is
+This 2000-frame result supersedes the old four-ROM, 1000-frame baseline. It is
 encoded in `validation/accuracy_fence.json` and reproduced by
 `scripts/run_accuracy_fence.py`. The older `run_core_validation.py` command is
 still a smaller regression checkpoint loop and should not be confused with the
@@ -88,11 +89,18 @@ shared input replay were subsequently used to investigate and correct:
   regressions, the Mode 7 snow-march transition, and a combat scanline defect
 - Mortal Kombat audio queue failure and CGRAM color-zero border behavior
 
-For the final Final Fantasy III rendering pass:
+For the earlier Final Fantasy III rendering pass:
 
 - the Mode 7 transition comparison was exact for frames 8300 through 8425
 - the affected combat scanline matched at the checked marker frames
 - live playtesting found no remaining issue in the previously reported paths
+
+Those original power-on controller movies no longer maintain one shared
+Clover/bsnes gameplay trajectory after the dungeon input sequence. They remain
+checked in under the `investigation` suite rather than being counted as green
+coverage. The save-RAM-backed `ff3-world-map-color-math` scenario replaces the
+fragile multi-thousand-frame preamble for the current deep-game regression and
+matches exactly for frames 1880 through 1930.
 
 These statements describe the paths tested. They do not imply that every later
 game state, PPU edge case, or audio sequence has been exhausted.
@@ -112,14 +120,14 @@ must be measured separately.
 
 ## Reproducing Comparisons
 
-Run the complete passing fence—four-ROM baseline plus validated FF3 interactive
-windows—with:
+Run the complete passing fence—five-ROM baseline plus the validated save-based
+FF3 interactive window—with:
 
 ```bash
 python3 scripts/run_accuracy_fence.py
 ```
 
-Run only the four-ROM baseline or passing Final Fantasy III input movies with:
+Run only the five-ROM baseline or passing Final Fantasy III input movie with:
 
 ```bash
 python3 scripts/run_accuracy_fence.py --suite baseline
@@ -130,7 +138,7 @@ The runner uses frame-only Clover dumps so routine sweeps do not write the
 larger APU/VRAM/OAM/CGRAM investigation payload for every frame. It removes
 passing temporary artifacts and preserves failures. Use
 `scripts/run_reference_sweep.py` for smaller ad hoc checkpoints and SDL
-version-3 captures when a new input or audio path must first be recorded.
+version-4 captures when a new input, save-RAM, or audio path must first be recorded.
 
 Interactive scenarios may declare a bsnes input-frame offset. The SDL movie
 records input as applied before Clover's `run_frame()`, while the bsnes libretro
@@ -139,11 +147,10 @@ presented-frame boundary. The checked-in offset aligns those harness
 observation points; it does not permit a video-frame comparison offset, which
 remains fixed at zero.
 
-The Zelda player-selection movie remains in the manifest under the
-`investigation` suite. Its first title transition can be aligned at the input
-boundary, but the later frame-indexed trajectory still diverges. The fence
-therefore reproduces and fails that scenario explicitly instead of treating a
-visual offset or partial outcome as an accuracy pass.
+The Zelda player-selection and original long FF3 rendering movies remain in the
+manifest under the `investigation` suite. Their later frame-indexed trajectories
+diverge. The fence therefore reproduces and fails those scenarios explicitly
+instead of treating a visual offset or partial outcome as an accuracy pass.
 
 The closed low-level reference investigations are preserved as historical
 context in [`archive/REFERENCE_RECONCILIATION.md`](archive/REFERENCE_RECONCILIATION.md).

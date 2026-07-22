@@ -84,6 +84,12 @@ add_executable(clover_hardware_loop_test
 target_include_directories(clover_hardware_loop_test PRIVATE src)
 target_link_libraries(clover_hardware_loop_test PRIVATE clover_core)
 
+add_executable(clover_hardware_profile_test
+    tests/HardwareProfileTest.cpp
+)
+target_include_directories(clover_hardware_profile_test PRIVATE src)
+target_link_libraries(clover_hardware_profile_test PRIVATE clover_core)
+
 add_executable(clover_save_ram_test
     tests/SaveRamTest.cpp
 )
@@ -140,6 +146,7 @@ target_include_directories(clover_frame_range_compare PRIVATE src)
 enable_testing()
 add_test(NAME clover_smoke_test COMMAND clover_smoke_test)
 add_test(NAME clover_hardware_loop_test COMMAND clover_hardware_loop_test)
+add_test(NAME clover_hardware_profile_test COMMAND clover_hardware_profile_test)
 add_test(NAME clover_save_ram_test COMMAND clover_save_ram_test)
 add_test(NAME clover_frontend_capability_test COMMAND clover_frontend_capability_test)
 add_test(NAME clover_local_rom_regression_test COMMAND clover_local_rom_regression_test)

@@ -7,8 +7,40 @@
 
 namespace clover::core
 {
+    void console_t::apply_hardware_configuration() noexcept
+    {
+        const snes_hardware_profile_t* profile{
+            snes_hardware_profile(_hardware_configuration.model)
+        };
+        if (profile == nullptr || !profile->implemented)
+            profile = &k_default_snes_hardware_profile;
+
+        video_standard_t standard{ video_standard_t::ntsc };
+        switch (_hardware_configuration.region)
+        {
+        case snes_region_selection_t::automatic:
+            standard = _cartridge.loaded()
+                ? _cartridge.declared_video_standard()
+                : video_standard_t::ntsc;
+            break;
+        case snes_region_selection_t::ntsc:
+            standard = video_standard_t::ntsc;
+            break;
+        case snes_region_selection_t::pal:
+            standard = video_standard_t::pal;
+            break;
+        }
+
+        _hardware_identity = { .profile = profile, .video_standard = standard };
+        const video_timing_t& video_timing{ video_timing_for(standard) };
+        _cpu.configure_hardware(video_timing, profile->cpu_version);
+        _ppu.configure_hardware(video_timing, profile->ppu1_version, profile->ppu2_version);
+        _apu.configure_master_clock(master_clock_frequency_hz(standard));
+    }
+
     void console_t::power_on() noexcept
     {
+        apply_hardware_configuration();
         _bus.connect_apu(_apu);
         _bus.connect_cartridge(_cartridge);
         _bus.connect_cpu(_cpu);
@@ -43,6 +75,29 @@ namespace clover::core
         _ppu.present(_framebuffer);
     }
 
+    bool console_t::set_hardware_configuration(snes_hardware_configuration_t configuration) noexcept
+    {
+        const snes_hardware_profile_t* profile{ snes_hardware_profile(configuration.model) };
+        if (profile == nullptr || !profile->implemented)
+            return false;
+
+        _hardware_configuration = configuration;
+        apply_hardware_configuration();
+        if (_powered_on)
+            reset();
+        return true;
+    }
+
+    snes_hardware_configuration_t console_t::hardware_configuration() const noexcept
+    {
+        return _hardware_configuration;
+    }
+
+    snes_hardware_identity_t console_t::hardware_identity() const noexcept
+    {
+        return _hardware_identity;
+    }
+
     void console_t::set_startup_entropy_mode(startup_entropy_mode_t mode) noexcept
     {
         _bus.set_entropy_mode(mode);
@@ -71,6 +126,8 @@ namespace clover::core
         const bool loaded{ _cartridge.load(rom_data) };
         if (!loaded)
             return false;
+
+        apply_hardware_configuration();
 
         if (_powered_on)
             reset();
@@ -225,6 +282,16 @@ namespace clover::core
     void console_t::refresh_framebuffer(const ppu_presentation_options_t& options) noexcept
     {
         _ppu.present(_framebuffer, options);
+    }
+
+    void console_t::set_completed_frame_queue_enabled(bool enabled) noexcept
+    {
+        _ppu.set_completed_frame_queue_enabled(enabled);
+    }
+
+    bool console_t::pop_completed_frame(framebuffer_t& framebuffer) noexcept
+    {
+        return _ppu.pop_completed_frame(framebuffer);
     }
 
     void console_t::set_presentation_layer_mask(uint8_t visible_layer_mask) noexcept

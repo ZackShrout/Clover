@@ -44,10 +44,12 @@ namespace clover::core
         case 0x22u:
         {
             const uint16_t target_low_word{ executor.fetch_operand_u16(state) };
-            executor.push_u8(state, state.pb);
+            executor.push_native_u8(state, state.pb);
             executor.idle();
             const uint8_t target_bank{ executor.fetch_operand_u8(state) };
-            executor.push_u16(state, static_cast<uint16_t>(state.pc - 1u));
+            executor.push_native_u16(state, static_cast<uint16_t>(state.pc - 1u));
+            if (state.emulation_mode)
+                state.sp = static_cast<uint16_t>(0x0100u | (state.sp & 0x00ffu));
             executor.retire_instruction();
             state.pb = target_bank;
             state.pc = target_low_word;
@@ -82,9 +84,11 @@ namespace clover::core
         {
             executor.idle();
             executor.idle();
-            const uint8_t low{ executor.pull_u8(state) };
-            const uint8_t high{ executor.pull_u8(state) };
-            const uint8_t bank{ executor.pull_u8(state) };
+            const uint8_t low{ executor.pull_native_u8(state) };
+            const uint8_t high{ executor.pull_native_u8(state) };
+            const uint8_t bank{ executor.pull_native_u8(state) };
+            if (state.emulation_mode)
+                state.sp = static_cast<uint16_t>(0x0100u | (state.sp & 0x00ffu));
             executor.retire_instruction();
             state.pc = static_cast<uint16_t>((low | (high << 8u)) + 1u);
             state.pb = bank;
@@ -123,7 +127,7 @@ namespace clover::core
         case 0xfcu:
         {
             const uint8_t pointer_low{ executor.fetch_operand_u8(state) };
-            executor.push_u16(state, state.pc);
+            executor.push_native_u16(state, state.pc);
             const uint8_t pointer_high{ executor.fetch_operand_u8(state) };
             executor.idle();
             const uint16_t pointer_base{ static_cast<uint16_t>(pointer_low | (pointer_high << 8u)) };
@@ -136,6 +140,8 @@ namespace clover::core
                 | static_cast<uint16_t>(pointer_base + state.x + 1u)) };
             executor.retire_instruction();
             state.pc = static_cast<uint16_t>(low | (high << 8u));
+            if (state.emulation_mode)
+                state.sp = static_cast<uint16_t>(0x0100u | (state.sp & 0x00ffu));
             return true;
         }
         default:

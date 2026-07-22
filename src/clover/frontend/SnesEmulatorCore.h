@@ -34,6 +34,10 @@ namespace clover::frontend
         [[nodiscard]] std::span<const video_plane_descriptor_t> video_planes() const noexcept override;
         [[nodiscard]] bool set_video_plane_enabled(video_plane_id_t id,
                                                    bool enabled) noexcept override;
+        [[nodiscard]] bool set_hardware_configuration(
+            core::snes_hardware_configuration_t configuration
+        ) noexcept;
+        [[nodiscard]] core::snes_hardware_identity_t hardware_identity() const noexcept;
 
     private:
         core::console_t _console{};

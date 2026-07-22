@@ -11,6 +11,7 @@
 
 #include <array>
 #include <cstdint>
+#include <deque>
 
 namespace clover::core
 {
@@ -261,6 +262,7 @@ namespace clover::core
         uint8_t brightness{ 0 };
         uint8_t bg_mode{ 0 };
         bool bg3_priority{ false };
+        bool mode7_extbg{ false };
         bool hires{ false };
         uint8_t mosaic_size{ 1 };
         bool mosaic_enabled[4]{ false, false, false, false };
@@ -314,6 +316,9 @@ namespace clover::core
     public:
         void power_on() noexcept;
         void reset() noexcept;
+        void configure_hardware(const video_timing_t& video_timing,
+                                uint8_t ppu1_version,
+                                uint8_t ppu2_version) noexcept;
         [[nodiscard]] video_standard_t video_standard() const noexcept;
         [[nodiscard]] const video_timing_t& video_timing() const noexcept;
         [[nodiscard]] uint8_t read_register(uint16_t address, uint8_t open_bus) noexcept;
@@ -339,6 +344,8 @@ namespace clover::core
                      const ppu_presentation_options_t& options = {}) const noexcept;
         void set_presentation_layer_mask(uint8_t visible_layer_mask) noexcept;
         void set_frame_capture_enabled(bool enabled) noexcept;
+        void set_completed_frame_queue_enabled(bool enabled) noexcept;
+        [[nodiscard]] bool pop_completed_frame(framebuffer_t& framebuffer) noexcept;
         void set_entropy_mode(ppu_entropy_mode_t mode) noexcept;
         [[nodiscard]] ppu_entropy_mode_t entropy_mode() const noexcept;
         void set_entropy_seed(uint32_t seed, uint32_t sequence = 0u) noexcept;
@@ -580,6 +587,7 @@ namespace clover::core
             bool pseudo_hires{ false };
             bool overscan{ false };
             bool interlace{ false };
+            bool mode7_extbg{ false };
             uint16_t mode7_a{ 0 };
             uint16_t mode7_b{ 0 };
             uint16_t mode7_c{ 0 };
@@ -670,6 +678,8 @@ namespace clover::core
         std::array<uint8_t, 544> _oam{};
         std::array<uint16_t, 256> _cgram{};
         video_timing_t _video_timing{ k_ntsc_video_timing };
+        uint8_t _ppu1_version{ 1 };
+        uint8_t _ppu2_version{ 3 };
         raster_counter_t _counter{};
         bool _timing_interlace{ false };
         uint64_t _frame_counter{ 0 };
@@ -702,5 +712,7 @@ namespace clover::core
         uint8_t _ppu1_mdr{ 0 };
         uint8_t _ppu2_mdr{ 0 };
         bool _frame_capture_enabled{ false };
+        bool _completed_frame_queue_enabled{ false };
+        std::deque<framebuffer_t> _completed_frames{};
     };
 }

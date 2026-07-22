@@ -222,6 +222,7 @@ namespace
         aggregate.visible_scanlines = step.visible_scanlines;
         aggregate.interlace = step.interlace;
         aggregate.frame_complete = aggregate.frame_complete || step.frame_complete;
+        aggregate.frames_completed += step.frames_completed;
         aggregate.entered_scanline = aggregate.entered_scanline || step.entered_scanline;
         aggregate.entered_frame_start = aggregate.entered_frame_start || step.entered_frame_start;
         aggregate.entered_hblank = aggregate.entered_hblank || step.entered_hblank;
@@ -297,7 +298,7 @@ namespace clover::core
     void bus_t::initialize(bool warm_reset) noexcept
     {
         const std::array<uint8_t, k_wram_size> preserved_wram{
-            warm_reset && _entropy_mode != startup_entropy_mode_t::none ? _wram : std::array<uint8_t, k_wram_size>{}
+            warm_reset ? _wram : std::array<uint8_t, k_wram_size>{}
         };
 
         std::fill(_wram.begin(), _wram.end(), 0);
@@ -312,7 +313,7 @@ namespace clover::core
             startup_entropy_generator_t entropy{ seed, sequence };
             fill_entropy_buffer(_entropy_mode, entropy, _wram.data(), _wram.size());
         }
-        else if (warm_reset && _entropy_mode != startup_entropy_mode_t::none)
+        else if (warm_reset)
         {
             _wram = preserved_wram;
         }

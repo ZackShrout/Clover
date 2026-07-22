@@ -69,6 +69,13 @@ namespace clover::core
         return (static_cast<uint32_t>(state.db) << 16u) | address;
     }
 
+    [[nodiscard]] inline uint32_t indexed_data_address(const cpu_state_t& state,
+                                                       uint16_t address,
+                                                       uint16_t index = 0) noexcept
+    {
+        return (data_address(state, address) + index) & 0x00ffffffu;
+    }
+
     [[nodiscard]] inline bool accumulator_is_8bit(const cpu_state_t& state) noexcept
     {
         return state.emulation_mode || (state.p & k_status_accumulator_width) != 0;
@@ -131,7 +138,25 @@ namespace clover::core
                                                                    uint8_t offset,
                                                                    uint16_t index) noexcept
     {
+        if (state.emulation_mode && (state.d & 0x00ffu) == 0)
+        {
+            return static_cast<uint16_t>((state.d & 0xff00u)
+                | static_cast<uint16_t>((offset + index) & 0x00ffu));
+        }
         return static_cast<uint16_t>(effective_direct_address(state, offset) + index);
+    }
+
+    [[nodiscard]] inline uint16_t direct_indexed_byte_address(const cpu_state_t& state,
+                                                              uint8_t offset,
+                                                              uint16_t index,
+                                                              uint8_t byte_offset) noexcept
+    {
+        if (state.emulation_mode && (state.d & 0x00ffu) == 0)
+        {
+            return static_cast<uint16_t>((state.d & 0xff00u)
+                | static_cast<uint16_t>((offset + index + byte_offset) & 0x00ffu));
+        }
+        return static_cast<uint16_t>(state.d + offset + index + byte_offset);
     }
 
     [[nodiscard]] inline uint16_t direct_indexed_pointer_address(const cpu_state_t& state,
@@ -140,8 +165,13 @@ namespace clover::core
                                                                  uint8_t byte_offset) noexcept
     {
         const uint16_t indexed_address{ static_cast<uint16_t>(state.d + offset + index) };
-        if (state.emulation_mode && (state.d & 0x00ffu) != 0)
+        if (state.emulation_mode)
         {
+            if ((state.d & 0x00ffu) == 0)
+            {
+                return static_cast<uint16_t>((state.d & 0xff00u)
+                    | static_cast<uint16_t>((offset + index + byte_offset) & 0x00ffu));
+            }
             return static_cast<uint16_t>((indexed_address & 0xff00u)
                 | static_cast<uint16_t>((indexed_address + byte_offset) & 0x00ffu));
         }
@@ -289,10 +319,11 @@ namespace clover::core
 
         [[nodiscard]] uint8_t pull_u8(cpu_state_t& state) noexcept
         {
-            ++state.sp;
             if (state.emulation_mode)
-                state.sp = static_cast<uint16_t>(0x0100u | (state.sp & 0x00ffu));
-            return read_u8(stack_address(state));
+                state.sp = static_cast<uint16_t>(0x0100u | ((state.sp + 1u) & 0x00ffu));
+            else
+                ++state.sp;
+            return read_u8(state.sp);
         }
 
         void push_u16(cpu_state_t& state, uint16_t value) noexcept
@@ -301,10 +332,34 @@ namespace clover::core
             push_u8(state, static_cast<uint8_t>(value & 0x00ffu));
         }
 
+        void push_native_u8(cpu_state_t& state, uint8_t value) noexcept
+        {
+            write_u8(state.sp, value);
+            --state.sp;
+        }
+
+        void push_native_u16(cpu_state_t& state, uint16_t value) noexcept
+        {
+            push_native_u8(state, static_cast<uint8_t>(value >> 8u));
+            push_native_u8(state, static_cast<uint8_t>(value & 0x00ffu));
+        }
+
         [[nodiscard]] uint16_t pull_u16(cpu_state_t& state) noexcept
         {
             const uint8_t low{ pull_u8(state) };
             const uint8_t high{ pull_u8(state) };
+            return static_cast<uint16_t>(low | (high << 8u));
+        }
+
+        [[nodiscard]] uint8_t pull_native_u8(cpu_state_t& state) noexcept
+        {
+            return read_u8(++state.sp);
+        }
+
+        [[nodiscard]] uint16_t pull_native_u16(cpu_state_t& state) noexcept
+        {
+            const uint8_t low{ pull_native_u8(state) };
+            const uint8_t high{ pull_native_u8(state) };
             return static_cast<uint16_t>(low | (high << 8u));
         }
 
@@ -349,9 +404,8 @@ namespace clover::core
             if ((state.d & 0x00ffu) != 0)
                 idle();
             idle();
-            const uint16_t address{ effective_direct_indexed_address(state, offset, index) };
-            const uint8_t low{ read_u8(address) };
-            const uint8_t high{ read_u8(static_cast<uint16_t>(address + 1u)) };
+            const uint8_t low{ read_u8(direct_indexed_byte_address(state, offset, index, 0)) };
+            const uint8_t high{ read_u8(direct_indexed_byte_address(state, offset, index, 1)) };
             return static_cast<uint16_t>(low | (high << 8u));
         }
 
@@ -365,7 +419,7 @@ namespace clover::core
             const uint16_t address{ effective_absolute_address(fetch_operand_u16(state)) };
             const uint32_t data_base{ data_address(state, address) };
             const uint8_t low{ read_u8(data_base) };
-            const uint8_t high{ read_u8(data_address(state, static_cast<uint16_t>(address + 1u))) };
+            const uint8_t high{ read_u8((data_base + 1u) & 0x00ffffffu) };
             return static_cast<uint16_t>(low | (high << 8u));
         }
 
@@ -388,8 +442,7 @@ namespace clover::core
             if (indexed_read_requires_idle(state, base_address, index))
                 idle();
 
-            const uint16_t address{ static_cast<uint16_t>(base_address + index) };
-            return read_u8(data_address(state, address));
+            return read_u8(indexed_data_address(state, base_address, index));
         }
 
         [[nodiscard]] uint16_t read_absolute_indexed_u16(cpu_state_t& state, uint16_t index) noexcept
@@ -398,9 +451,9 @@ namespace clover::core
             if (indexed_read_requires_idle(state, base_address, index))
                 idle();
 
-            const uint16_t address{ static_cast<uint16_t>(base_address + index) };
-            const uint8_t low{ read_u8(data_address(state, address)) };
-            const uint8_t high{ read_u8(data_address(state, static_cast<uint16_t>(address + 1u))) };
+            const uint32_t address{ indexed_data_address(state, base_address, index) };
+            const uint8_t low{ read_u8(address) };
+            const uint8_t high{ read_u8((address + 1u) & 0x00ffffffu) };
             return static_cast<uint16_t>(low | (high << 8u));
         }
 
@@ -439,8 +492,9 @@ namespace clover::core
             const uint8_t low_pointer{ read_u8(pointer_address) };
             const uint8_t high_pointer{ read_u8(static_cast<uint16_t>(pointer_address + 1u)) };
             const uint16_t address{ static_cast<uint16_t>(low_pointer | (high_pointer << 8u)) };
-            const uint8_t low{ read_u8(data_address(state, address)) };
-            const uint8_t high{ read_u8(data_address(state, static_cast<uint16_t>(address + 1u))) };
+            const uint32_t data_base{ data_address(state, address) };
+            const uint8_t low{ read_u8(data_base) };
+            const uint8_t high{ read_u8((data_base + 1u) & 0x00ffffffu) };
             return static_cast<uint16_t>(low | (high << 8u));
         }
 
@@ -465,8 +519,9 @@ namespace clover::core
             const uint8_t low_pointer{ read_u8(direct_indexed_pointer_address(state, offset, state.x, 0)) };
             const uint8_t high_pointer{ read_u8(direct_indexed_pointer_address(state, offset, state.x, 1)) };
             const uint16_t address{ static_cast<uint16_t>(low_pointer | (high_pointer << 8u)) };
-            const uint8_t low{ read_u8(data_address(state, address)) };
-            const uint8_t high{ read_u8(data_address(state, static_cast<uint16_t>(address + 1u))) };
+            const uint32_t data_base{ data_address(state, address) };
+            const uint8_t low{ read_u8(data_base) };
+            const uint8_t high{ read_u8((data_base + 1u) & 0x00ffffffu) };
             return static_cast<uint16_t>(low | (high << 8u));
         }
 
@@ -481,7 +536,7 @@ namespace clover::core
             const uint16_t base_address{ static_cast<uint16_t>(low_pointer | (high_pointer << 8u)) };
             if (indexed_read_requires_idle(state, base_address, state.y))
                 idle();
-            return read_u8(data_address(state, static_cast<uint16_t>(base_address + state.y)));
+            return read_u8(indexed_data_address(state, base_address, state.y));
         }
 
         [[nodiscard]] uint16_t read_direct_indirect_indexed_u16(cpu_state_t& state) noexcept
@@ -495,9 +550,9 @@ namespace clover::core
             const uint16_t base_address{ static_cast<uint16_t>(low_pointer | (high_pointer << 8u)) };
             if (indexed_read_requires_idle(state, base_address, state.y))
                 idle();
-            const uint16_t address{ static_cast<uint16_t>(base_address + state.y) };
-            const uint8_t low{ read_u8(data_address(state, address)) };
-            const uint8_t high{ read_u8(data_address(state, static_cast<uint16_t>(address + 1u))) };
+            const uint32_t address{ indexed_data_address(state, base_address, state.y) };
+            const uint8_t low{ read_u8(address) };
+            const uint8_t high{ read_u8((address + 1u) & 0x00ffffffu) };
             return static_cast<uint16_t>(low | (high << 8u));
         }
 
@@ -582,8 +637,8 @@ namespace clover::core
             const uint8_t low{ read_u8(pointer_address) };
             const uint8_t high{ read_u8(static_cast<uint16_t>(pointer_address + 1u)) };
             idle();
-            const uint16_t address{ static_cast<uint16_t>((low | (high << 8u)) + state.y) };
-            return read_u8(data_address(state, address));
+            const uint16_t base_address{ static_cast<uint16_t>(low | (high << 8u)) };
+            return read_u8(indexed_data_address(state, base_address, state.y));
         }
 
         [[nodiscard]] uint16_t read_stack_relative_indirect_indexed_u16(cpu_state_t& state) noexcept
@@ -592,11 +647,10 @@ namespace clover::core
             const uint8_t low_pointer{ read_u8(pointer_address) };
             const uint8_t high_pointer{ read_u8(static_cast<uint16_t>(pointer_address + 1u)) };
             idle();
-            const uint16_t address{
-                static_cast<uint16_t>((low_pointer | (high_pointer << 8u)) + state.y)
-            };
-            const uint8_t low{ read_u8(data_address(state, address)) };
-            const uint8_t high{ read_u8(data_address(state, static_cast<uint16_t>(address + 1u))) };
+            const uint16_t base_address{ static_cast<uint16_t>(low_pointer | (high_pointer << 8u)) };
+            const uint32_t address{ indexed_data_address(state, base_address, state.y) };
+            const uint8_t low{ read_u8(address) };
+            const uint8_t high{ read_u8((address + 1u) & 0x00ffffffu) };
             return static_cast<uint16_t>(low | (high << 8u));
         }
 
@@ -633,9 +687,10 @@ namespace clover::core
             if ((state.d & 0x00ffu) != 0)
                 idle();
             idle();
-            const uint16_t address{ effective_direct_indexed_address(state, offset, index) };
-            write_u8(address, static_cast<uint8_t>(value & 0x00ffu));
-            write_u8(static_cast<uint16_t>(address + 1u), static_cast<uint8_t>(value >> 8u));
+            write_u8(direct_indexed_byte_address(state, offset, index, 0),
+                     static_cast<uint8_t>(value & 0x00ffu));
+            write_u8(direct_indexed_byte_address(state, offset, index, 1),
+                     static_cast<uint8_t>(value >> 8u));
         }
 
         void write_absolute_u8(cpu_state_t& state, uint8_t value) noexcept
@@ -646,9 +701,9 @@ namespace clover::core
         void write_absolute_u16(cpu_state_t& state, uint16_t value) noexcept
         {
             const uint16_t address{ effective_absolute_address(fetch_operand_u16(state)) };
-            write_u8(data_address(state, address), static_cast<uint8_t>(value & 0x00ffu));
-            write_u8(data_address(state, static_cast<uint16_t>(address + 1u)),
-                     static_cast<uint8_t>(value >> 8u));
+            const uint32_t data_base{ data_address(state, address) };
+            write_u8(data_base, static_cast<uint8_t>(value & 0x00ffu));
+            write_u8((data_base + 1u) & 0x00ffffffu, static_cast<uint8_t>(value >> 8u));
         }
 
         void write_long_u8(cpu_state_t& state, uint8_t value) noexcept
@@ -667,18 +722,16 @@ namespace clover::core
         {
             const uint16_t base_address{ effective_absolute_address(fetch_operand_u16(state)) };
             idle();
-            const uint16_t address{ static_cast<uint16_t>(base_address + index) };
-            write_u8(data_address(state, address), value);
+            write_u8(indexed_data_address(state, base_address, index), value);
         }
 
         void write_absolute_indexed_u16(cpu_state_t& state, uint16_t index, uint16_t value) noexcept
         {
             const uint16_t base_address{ effective_absolute_address(fetch_operand_u16(state)) };
             idle();
-            const uint16_t address{ static_cast<uint16_t>(base_address + index) };
-            write_u8(data_address(state, address), static_cast<uint8_t>(value & 0x00ffu));
-            write_u8(data_address(state, static_cast<uint16_t>(address + 1u)),
-                     static_cast<uint8_t>(value >> 8u));
+            const uint32_t address{ indexed_data_address(state, base_address, index) };
+            write_u8(address, static_cast<uint8_t>(value & 0x00ffu));
+            write_u8((address + 1u) & 0x00ffffffu, static_cast<uint8_t>(value >> 8u));
         }
 
         void write_long_indexed_u8(cpu_state_t& state, uint16_t index, uint8_t value) noexcept
@@ -714,9 +767,9 @@ namespace clover::core
             const uint8_t low_pointer{ read_u8(pointer_address) };
             const uint8_t high_pointer{ read_u8(static_cast<uint16_t>(pointer_address + 1u)) };
             const uint16_t address{ static_cast<uint16_t>(low_pointer | (high_pointer << 8u)) };
-            write_u8(data_address(state, address), static_cast<uint8_t>(value & 0x00ffu));
-            write_u8(data_address(state, static_cast<uint16_t>(address + 1u)),
-                     static_cast<uint8_t>(value >> 8u));
+            const uint32_t data_base{ data_address(state, address) };
+            write_u8(data_base, static_cast<uint8_t>(value & 0x00ffu));
+            write_u8((data_base + 1u) & 0x00ffffffu, static_cast<uint8_t>(value >> 8u));
         }
 
         void write_direct_indexed_indirect_u8(cpu_state_t& state, uint8_t value) noexcept
@@ -740,9 +793,9 @@ namespace clover::core
             const uint8_t low_pointer{ read_u8(direct_indexed_pointer_address(state, offset, state.x, 0)) };
             const uint8_t high_pointer{ read_u8(direct_indexed_pointer_address(state, offset, state.x, 1)) };
             const uint16_t address{ static_cast<uint16_t>(low_pointer | (high_pointer << 8u)) };
-            write_u8(data_address(state, address), static_cast<uint8_t>(value & 0x00ffu));
-            write_u8(data_address(state, static_cast<uint16_t>(address + 1u)),
-                     static_cast<uint8_t>(value >> 8u));
+            const uint32_t data_base{ data_address(state, address) };
+            write_u8(data_base, static_cast<uint8_t>(value & 0x00ffu));
+            write_u8((data_base + 1u) & 0x00ffffffu, static_cast<uint8_t>(value >> 8u));
         }
 
         void write_direct_indirect_indexed_u8(cpu_state_t& state, uint8_t value) noexcept
@@ -753,9 +806,9 @@ namespace clover::core
             const uint16_t pointer_address{ effective_direct_address(state, offset) };
             const uint8_t low{ read_u8(pointer_address) };
             const uint8_t high{ read_u8(static_cast<uint16_t>(pointer_address + 1u)) };
-            const uint16_t address{ static_cast<uint16_t>((low | (high << 8u)) + state.y) };
+            const uint16_t base_address{ static_cast<uint16_t>(low | (high << 8u)) };
             idle();
-            write_u8(data_address(state, address), value);
+            write_u8(indexed_data_address(state, base_address, state.y), value);
         }
 
         void write_direct_indirect_indexed_u16(cpu_state_t& state, uint16_t value) noexcept
@@ -766,11 +819,11 @@ namespace clover::core
             const uint16_t pointer_address{ effective_direct_address(state, offset) };
             const uint8_t low_pointer{ read_u8(pointer_address) };
             const uint8_t high_pointer{ read_u8(static_cast<uint16_t>(pointer_address + 1u)) };
-            const uint16_t address{ static_cast<uint16_t>((low_pointer | (high_pointer << 8u)) + state.y) };
+            const uint16_t base_address{ static_cast<uint16_t>(low_pointer | (high_pointer << 8u)) };
+            const uint32_t address{ indexed_data_address(state, base_address, state.y) };
             idle();
-            write_u8(data_address(state, address), static_cast<uint8_t>(value & 0x00ffu));
-            write_u8(data_address(state, static_cast<uint16_t>(address + 1u)),
-                     static_cast<uint8_t>(value >> 8u));
+            write_u8(address, static_cast<uint8_t>(value & 0x00ffu));
+            write_u8((address + 1u) & 0x00ffffffu, static_cast<uint8_t>(value >> 8u));
         }
 
         void write_direct_indirect_long_u8(cpu_state_t& state, uint8_t value) noexcept
@@ -851,8 +904,8 @@ namespace clover::core
             const uint8_t low{ read_u8(pointer_address) };
             const uint8_t high{ read_u8(static_cast<uint16_t>(pointer_address + 1u)) };
             idle();
-            const uint16_t address{ static_cast<uint16_t>((low | (high << 8u)) + state.y) };
-            write_u8(data_address(state, address), value);
+            const uint16_t base_address{ static_cast<uint16_t>(low | (high << 8u)) };
+            write_u8(indexed_data_address(state, base_address, state.y), value);
         }
 
         void write_stack_relative_indirect_indexed_u16(cpu_state_t& state, uint16_t value) noexcept
@@ -861,12 +914,10 @@ namespace clover::core
             const uint8_t low_pointer{ read_u8(pointer_address) };
             const uint8_t high_pointer{ read_u8(static_cast<uint16_t>(pointer_address + 1u)) };
             idle();
-            const uint16_t address{
-                static_cast<uint16_t>((low_pointer | (high_pointer << 8u)) + state.y)
-            };
-            write_u8(data_address(state, address), static_cast<uint8_t>(value & 0x00ffu));
-            write_u8(data_address(state, static_cast<uint16_t>(address + 1u)),
-                     static_cast<uint8_t>(value >> 8u));
+            const uint16_t base_address{ static_cast<uint16_t>(low_pointer | (high_pointer << 8u)) };
+            const uint32_t address{ indexed_data_address(state, base_address, state.y) };
+            write_u8(address, static_cast<uint8_t>(value & 0x00ffu));
+            write_u8((address + 1u) & 0x00ffffffu, static_cast<uint8_t>(value >> 8u));
         }
 
         void idle() noexcept
@@ -1048,40 +1099,58 @@ namespace clover::core
                                               bool is_8bit,
                                               uint8_t& status) noexcept
     {
-        const uint8_t digits{ static_cast<uint8_t>(is_8bit ? 2u : 4u) };
-        uint16_t result{ 0 };
-        uint8_t carry{ static_cast<uint8_t>(carry_in ? 1u : 0u) };
+        int32_t result{
+            static_cast<int32_t>(lhs & 0x000fu)
+            + static_cast<int32_t>(rhs & 0x000fu)
+            + static_cast<int32_t>(carry_in ? 1 : 0)
+        };
+        if (result > 0x0009)
+            result += 0x0006;
+        bool carry{ result > 0x000f };
 
-        for (uint8_t digit_index{ 0 }; digit_index < digits; ++digit_index)
+        result = static_cast<int32_t>(lhs & 0x00f0u)
+            + static_cast<int32_t>(rhs & 0x00f0u)
+            + static_cast<int32_t>(carry ? 0x0010 : 0)
+            + (result & 0x000f);
+
+        if (!is_8bit)
         {
-            const uint8_t shift{ static_cast<uint8_t>(digit_index << 2u) };
-            uint8_t nibble{
-                static_cast<uint8_t>(((lhs >> shift) & 0x0fu) + ((rhs >> shift) & 0x0fu) + carry)
-            };
-            if (nibble > 9u)
-            {
-                nibble = static_cast<uint8_t>(nibble + 6u);
-                carry = 1u;
-            }
-            else
-            {
-                carry = 0u;
-            }
-
-            result = static_cast<uint16_t>(result | ((nibble & 0x0fu) << shift));
+            if (result > 0x009f)
+                result += 0x0060;
+            carry = result > 0x00ff;
+            result = static_cast<int32_t>(lhs & 0x0f00u)
+                + static_cast<int32_t>(rhs & 0x0f00u)
+                + static_cast<int32_t>(carry ? 0x0100 : 0)
+                + (result & 0x00ff);
+            if (result > 0x09ff)
+                result += 0x0600;
+            carry = result > 0x0fff;
+            result = static_cast<int32_t>(lhs & 0xf000u)
+                + static_cast<int32_t>(rhs & 0xf000u)
+                + static_cast<int32_t>(carry ? 0x1000 : 0)
+                + (result & 0x0fff);
         }
 
-        if (carry != 0)
+        const uint16_t sign_mask{ static_cast<uint16_t>(is_8bit ? 0x0080u : 0x8000u) };
+        const bool overflow{
+            ((~(lhs ^ rhs) & (lhs ^ static_cast<uint16_t>(result))) & sign_mask) != 0
+        };
+        if (overflow)
+            status |= k_status_overflow;
+        else
+            status &= static_cast<uint8_t>(~k_status_overflow);
+
+        const int32_t final_adjust_threshold{ is_8bit ? 0x009f : 0x9fff };
+        if (result > final_adjust_threshold)
+            result += is_8bit ? 0x0060 : 0x6000;
+
+        const uint16_t width_mask{ mask_for_width(is_8bit) };
+        if (result > static_cast<int32_t>(width_mask))
             status |= k_status_carry;
         else
             status &= static_cast<uint8_t>(~k_status_carry);
 
-        const uint8_t preserved_status{ status };
-        static_cast<void>(adc_binary(lhs, rhs, carry_in, is_8bit, status));
-        status = static_cast<uint8_t>((status & static_cast<uint8_t>(~k_status_carry))
-            | (preserved_status & k_status_carry));
-
-        return result;
+        return static_cast<uint16_t>(static_cast<uint16_t>(result) & width_mask);
     }
 
     [[nodiscard]] inline uint16_t adc_value(cpu_state_t& state,
@@ -1106,7 +1175,69 @@ namespace clover::core
         const bool is_8bit{ accumulator_is_8bit(state) };
         const uint16_t width_mask{ mask_for_width(is_8bit) };
         const uint16_t inverted_rhs{ static_cast<uint16_t>((~rhs) & width_mask) };
-        return static_cast<uint16_t>(adc_value(state, lhs, inverted_rhs) & width_mask);
+        const bool carry_in{ (state.p & k_status_carry) != 0 };
+
+        if ((state.p & k_status_decimal) == 0)
+        {
+            const uint16_t result{ adc_binary(lhs, inverted_rhs, carry_in, is_8bit, state.p) };
+            set_zero_negative_flags(state, result, is_8bit);
+            return result;
+        }
+
+        int32_t result{
+            static_cast<int32_t>(lhs & 0x000fu)
+            + static_cast<int32_t>(inverted_rhs & 0x000fu)
+            + static_cast<int32_t>(carry_in ? 1 : 0)
+        };
+        if (result <= 0x000f)
+            result -= 0x0006;
+        bool carry{ result > 0x000f };
+
+        result = static_cast<int32_t>(lhs & 0x00f0u)
+            + static_cast<int32_t>(inverted_rhs & 0x00f0u)
+            + static_cast<int32_t>(carry ? 0x0010 : 0)
+            + (result & 0x000f);
+
+        if (!is_8bit)
+        {
+            if (result <= 0x00ff)
+                result -= 0x0060;
+            carry = result > 0x00ff;
+            result = static_cast<int32_t>(lhs & 0x0f00u)
+                + static_cast<int32_t>(inverted_rhs & 0x0f00u)
+                + static_cast<int32_t>(carry ? 0x0100 : 0)
+                + (result & 0x00ff);
+            if (result <= 0x0fff)
+                result -= 0x0600;
+            carry = result > 0x0fff;
+            result = static_cast<int32_t>(lhs & 0xf000u)
+                + static_cast<int32_t>(inverted_rhs & 0xf000u)
+                + static_cast<int32_t>(carry ? 0x1000 : 0)
+                + (result & 0x0fff);
+        }
+
+        const uint16_t sign_mask{ static_cast<uint16_t>(is_8bit ? 0x0080u : 0x8000u) };
+        const bool overflow{
+            ((~(lhs ^ inverted_rhs) & (lhs ^ static_cast<uint16_t>(result))) & sign_mask) != 0
+        };
+        if (overflow)
+            state.p |= k_status_overflow;
+        else
+            state.p &= static_cast<uint8_t>(~k_status_overflow);
+
+        if (result <= static_cast<int32_t>(width_mask))
+            result -= is_8bit ? 0x0060 : 0x6000;
+
+        if (result > static_cast<int32_t>(width_mask))
+            state.p |= k_status_carry;
+        else
+            state.p &= static_cast<uint8_t>(~k_status_carry);
+
+        const uint16_t masked_result{
+            static_cast<uint16_t>(static_cast<uint16_t>(result) & width_mask)
+        };
+        set_zero_negative_flags(state, masked_result, is_8bit);
+        return masked_result;
     }
 
     inline void compare_value(cpu_state_t& state,

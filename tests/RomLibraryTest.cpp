@@ -1,3 +1,8 @@
+//
+// Created by Zack Shrout on 7/21/26.
+// Copyright (c) 2026 BunnySoft. All rights reserved.
+//
+
 #include "clover/platform/RomLibrary.h"
 
 #include <array>

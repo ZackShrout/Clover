@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "test_id": "ppu-bus-activity",
+  "local_directory": "roms/local/hardware-tests/ppu/reference/ppubusactivity_rev2",
+  "description": "Raw Sigrok PPU bus capture plus the separately distributed cooked CSV.",
+  "files": {
+    "cooked.csv": "47f19bd9d28d47583650e68cf6e9133a61a6f260d5e315ddf244ef6cc9d38468",
+    "logic-1-1": "9de025bb285614d3215d3b14b3ed014eb3c1686a0c61b3efb456bffe765ae121",
+    "logic-1-2": "cec7773b8684a1565120b104208e29b160ef0ea8731c33e7df2fbb71020a5ff7",
+    "metadata": "7802b550e2869ba38e3fa40c5d897635a6f20e9c4b3824081e703edfa0937f85",
+    "version": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35"
+  },
+  "status": "retained evidence; no automated bus-trace comparator yet"
+}

@@ -21,6 +21,7 @@ namespace
         aggregate.visible_scanlines = step.visible_scanlines;
         aggregate.interlace = step.interlace;
         aggregate.frame_complete = aggregate.frame_complete || step.frame_complete;
+        aggregate.frames_completed += step.frames_completed;
         aggregate.entered_scanline = aggregate.entered_scanline || step.entered_scanline;
         aggregate.entered_frame_start =
             aggregate.entered_frame_start || step.entered_frame_start;
@@ -111,8 +112,7 @@ namespace clover::core
         }
 
         _master_clock += result.elapsed_master_clocks;
-        if (result.ppu.frame_complete)
-            ++_frame_index;
+        _frame_index += result.ppu.frames_completed;
 
         return result;
     }

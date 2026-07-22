@@ -15,7 +15,9 @@ namespace clover::core
         {
         case 0x0bu:
             executor.idle();
-            executor.push_u16(state, state.d);
+            executor.push_native_u16(state, state.d);
+            if (state.emulation_mode)
+                state.sp = static_cast<uint16_t>(0x0100u | (state.sp & 0x00ffu));
             executor.retire_instruction();
             return true;
         case 0x08u:
@@ -33,7 +35,9 @@ namespace clover::core
         case 0x2bu:
             executor.idle();
             executor.idle();
-            state.d = executor.pull_u16(state);
+            state.d = executor.pull_native_u16(state);
+            if (state.emulation_mode)
+                state.sp = static_cast<uint16_t>(0x0100u | (state.sp & 0x00ffu));
             executor.retire_instruction();
             set_zero_negative_flags(state, state.d, false);
             return true;
@@ -82,12 +86,16 @@ namespace clover::core
             const uint16_t address{ static_cast<uint16_t>(state.d + offset) };
             const uint8_t low{ executor.read_u8(address) };
             const uint8_t high{ executor.read_u8(static_cast<uint16_t>(address + 1u)) };
-            executor.push_u16(state, static_cast<uint16_t>(low | (high << 8u)));
+            executor.push_native_u16(state, static_cast<uint16_t>(low | (high << 8u)));
+            if (state.emulation_mode)
+                state.sp = static_cast<uint16_t>(0x0100u | (state.sp & 0x00ffu));
             executor.retire_instruction();
             return true;
         }
         case 0xf4u:
-            executor.push_u16(state, executor.fetch_operand_u16(state));
+            executor.push_native_u16(state, executor.fetch_operand_u16(state));
+            if (state.emulation_mode)
+                state.sp = static_cast<uint16_t>(0x0100u | (state.sp & 0x00ffu));
             executor.retire_instruction();
             return true;
         case 0xfau:
@@ -126,7 +134,9 @@ namespace clover::core
         {
             const int16_t displacement{ static_cast<int16_t>(executor.fetch_operand_u16(state)) };
             executor.idle();
-            executor.push_u16(state, static_cast<uint16_t>(state.pc + displacement));
+            executor.push_native_u16(state, static_cast<uint16_t>(state.pc + displacement));
+            if (state.emulation_mode)
+                state.sp = static_cast<uint16_t>(0x0100u | (state.sp & 0x00ffu));
             executor.retire_instruction();
             return true;
         }
@@ -146,7 +156,9 @@ namespace clover::core
         case 0xabu:
             executor.idle();
             executor.idle();
-            state.db = executor.pull_u8(state);
+            state.db = executor.pull_native_u8(state);
+            if (state.emulation_mode)
+                state.sp = static_cast<uint16_t>(0x0100u | (state.sp & 0x00ffu));
             executor.retire_instruction();
             set_zero_negative_flags(state, state.db, true);
             return true;

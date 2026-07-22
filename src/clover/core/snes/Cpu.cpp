@@ -225,6 +225,7 @@ namespace
         aggregate.visible_scanlines = step.visible_scanlines;
         aggregate.interlace = step.interlace;
         aggregate.frame_complete = aggregate.frame_complete || step.frame_complete;
+        aggregate.frames_completed += step.frames_completed;
         aggregate.entered_scanline = aggregate.entered_scanline || step.entered_scanline;
         aggregate.entered_frame_start = aggregate.entered_frame_start || step.entered_frame_start;
         aggregate.entered_hblank = aggregate.entered_hblank || step.entered_hblank;
@@ -258,6 +259,13 @@ namespace clover::core
         _ppu = &ppu;
     }
 
+    void cpu_t::configure_hardware(const video_timing_t& video_timing, uint8_t cpu_version) noexcept
+    {
+        _video_timing = video_timing;
+        _visible_scanlines = video_timing.visible_scanlines;
+        _cpu_version = static_cast<uint8_t>(cpu_version & 0x0fu);
+    }
+
     void cpu_t::power_on() noexcept
     {
         _state = {};
@@ -275,15 +283,15 @@ namespace clover::core
         // bsnes polls after the first two-master-clock S-CPU tick and every
         // four clocks thereafter (hcounter & 2).
         _interrupt_poll_phase = 2;
-        _visible_scanlines = k_ntsc_video_timing.visible_scanlines;
+        _visible_scanlines = _video_timing.visible_scanlines;
         _waiting = false;
         _wait_wake_idle_pending = false;
         _stopped = false;
         _interlace = false;
-        _last_timing = _counter.snapshot(k_ntsc_video_timing, _visible_scanlines);
+        _last_timing = _counter.snapshot(_video_timing, _visible_scanlines);
         _nmi_poll_valid = false;
-        _last_irq_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 10, _interlace);
-        _last_irq_gate_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 6, _interlace);
+        _last_irq_timing = _counter.snapshot_delayed(_video_timing, _visible_scanlines, 10, _interlace);
+        _last_irq_gate_timing = _counter.snapshot_delayed(_video_timing, _visible_scanlines, 6, _interlace);
         _irq_condition_valid = false;
         _dma_active = false;
         _reset_pending = true;
@@ -314,15 +322,15 @@ namespace clover::core
         _dma_counter = 0;
         _counter.reset();
         _interrupt_poll_phase = 2;
-        _visible_scanlines = k_ntsc_video_timing.visible_scanlines;
+        _visible_scanlines = _video_timing.visible_scanlines;
         _waiting = false;
         _wait_wake_idle_pending = false;
         _stopped = false;
         _interlace = false;
-        _last_timing = _counter.snapshot(k_ntsc_video_timing, _visible_scanlines);
+        _last_timing = _counter.snapshot(_video_timing, _visible_scanlines);
         _nmi_poll_valid = false;
-        _last_irq_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 10, _interlace);
-        _last_irq_gate_timing = _counter.snapshot_delayed(k_ntsc_video_timing, _visible_scanlines, 6, _interlace);
+        _last_irq_timing = _counter.snapshot_delayed(_video_timing, _visible_scanlines, 10, _interlace);
+        _last_irq_gate_timing = _counter.snapshot_delayed(_video_timing, _visible_scanlines, 6, _interlace);
         _irq_condition_valid = false;
         _dma_active = false;
         _reset_pending = true;
@@ -391,9 +399,9 @@ namespace clover::core
     uint8_t cpu_t::read_register(uint16_t address, master_clock_delta_t elapsed_master_clocks) noexcept
     {
         raster_counter_t timed_counter{ _counter };
-        timed_counter.advance(elapsed_master_clocks, k_ntsc_video_timing, _interlace);
+        timed_counter.advance(elapsed_master_clocks, _video_timing, _interlace);
         const timing_snapshot_t timed_snapshot{
-            timed_counter.snapshot(k_ntsc_video_timing, _visible_scanlines)
+            timed_counter.snapshot(_video_timing, _visible_scanlines)
         };
         const uint8_t timed_nmi_hold{ remaining_hold(_io.nmi_hold_clocks, elapsed_master_clocks) };
         const uint8_t timed_irq_hold{ remaining_hold(_io.irq_hold_clocks, elapsed_master_clocks) };
@@ -479,7 +487,7 @@ namespace clover::core
             const uint8_t value{
                 static_cast<uint8_t>(
                     (open_bus & 0x70u)
-                    | 0x02u
+                    | _cpu_version
                     | (_io.nmi_flag ? 0x80u : 0x00u)
                 )
             };

@@ -38,12 +38,11 @@ namespace
 
                 interrupts.assert_irq_line();
                 interrupts.advance_to_observation_point(104u);
-                interrupts.advance_to_observation_point(108u);
-                interrupts.observe_opcode_edge(108u, false);
+                interrupts.observe_opcode_edge(104u, false);
                 if (interrupts.sample().irq_pending)
                     return "irq_same_edge_pipeline_deferral";
 
-                interrupts.observe_opcode_edge(109u, false);
+                interrupts.observe_opcode_edge(105u, false);
                 if (!interrupts.consume_irq())
                     return "irq_following_edge_pipeline_delivery";
 
@@ -1452,6 +1451,11 @@ int main()
 
             static clover::core::console_t interlace_timing_console{};
             interlace_timing_console.power_on();
+            if (interlace_timing_console.video_timing().field_scanlines(false, true) != 263u
+                || interlace_timing_console.video_timing().field_scanlines(true, true) != 262u)
+            {
+                return fail("interlace_field_lengths");
+            }
             interlace_timing_console.write_u8(0x002133u, 0x01u);
             while (interlace_timing_console.frame_index() == 0)
                 static_cast<void>(interlace_timing_console.step_hardware());

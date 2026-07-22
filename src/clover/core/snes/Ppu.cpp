@@ -324,7 +324,7 @@ namespace
             static_cast<uint16_t>(width << (geometry.large_tiles ? 1u : 0u))
         };
         const uint16_t vertical_span{
-            static_cast<uint16_t>(256u << (geometry.large_tiles ? 1u : 0u)
+            static_cast<uint16_t>(width << (geometry.large_tiles ? 1u : 0u)
                 << screen_size_bit(geometry.screen_size, 1u))
         };
 
@@ -657,6 +657,7 @@ namespace clover::core
         _presented_frame.clear();
         _presentation_composed_frame.clear();
         _presentation_presented_frame.clear();
+        _frame_high_geometry = false;
         _completed_frames.clear();
         std::fill(_registers.begin(), _registers.end(), 0);
         std::fill(_vram.begin(), _vram.end(), 0);
@@ -664,6 +665,8 @@ namespace clover::core
         std::fill(_cgram.begin(), _cgram.end(), 0);
         _counter.reset();
         _timing_interlace = false;
+        _display_interlace = false;
+        _display_overscan = false;
         _frame_counter = 0;
         _display = {};
         _display.disabled = true;
@@ -1215,9 +1218,7 @@ namespace clover::core
                 )
             };
             const uint16_t offset_hoffset{
-                static_cast<uint16_t>(
-                    (_bg_state.hoffset[2] & ~0x0007u) << (_screen_state.hires ? 1u : 0u)
-                )
+                static_cast<uint16_t>(_bg_state.hoffset[2] & ~0x0007u)
             };
 
             for (uint8_t tile_slot{ 0 }; tile_slot < background.offset_hoffset.size(); ++tile_slot)
@@ -1227,9 +1228,11 @@ namespace clover::core
                 if (offset_x < target_tile_width)
                     continue;
 
-                const uint16_t horizontal_source{
-                    static_cast<uint16_t>(offset_x - target_tile_width + offset_hoffset)
-                };
+                const uint16_t horizontal_source{ static_cast<uint16_t>(
+                    _screen_state.hires
+                        ? ((tile_slot >> 1u) - 1u) * 8u + offset_hoffset
+                        : offset_x - target_tile_width + offset_hoffset
+                ) };
                 background.offset_hoffset[tile_slot] = _vram[
                     compute_background_addressing(offset_geometry,
                                                   offset_window,
@@ -1320,7 +1323,11 @@ namespace clover::core
                 else
                 {
                     if ((hlookup & valid_mask) != 0)
-                        horizontal_source = static_cast<uint16_t>(screen_x + (hlookup & ~0x0007u));
+                    {
+                        horizontal_source = static_cast<uint16_t>(
+                            screen_x + (hlookup & ~0x0007u) + (hires_hoffset & 0x0007u)
+                        );
+                    }
                     if ((vlookup & valid_mask) != 0)
                         vertical_source = static_cast<uint16_t>(base_vertical_pixel + vlookup);
                 }
@@ -1387,6 +1394,275 @@ namespace clover::core
         }
     }
 
+    void ppu_t::cycle_background_name_table(uint8_t background_index,
+                                            uint16_t scanline,
+                                            uint16_t dot) noexcept
+    {
+        if (scanline == 0u || background_index >= _background_layer_state.size())
+            return;
+
+        auto& background{ _background_layer_state[background_index] };
+        const bool hires{ _screen_state.hires };
+        const background_geometry_t geometry{
+            .hires = hires,
+            .large_tiles = _bg_state.large_tiles[background_index],
+            .screen_size = _bg_state.screen_size[background_index],
+            .screen_address = _bg_state.screen_address[background_index]
+        };
+        const auto window{ build_background_address_window(geometry, false) };
+        const uint8_t mode_index{
+            background_mode_index(_bg_state.render_mode[background_index])
+        };
+        const uint16_t base_vertical_pixel{
+            background_vertical_pixel(scanline,
+                                      _mosaic_state.enabled[background_index] ? mosaic_voffset() : 0u,
+                                      hires,
+                                      _screen_state.interlace,
+                                      _counter.odd_field,
+                                      _mosaic_state.enabled[background_index])
+        };
+        const uint16_t hscroll{
+            static_cast<uint16_t>(_bg_state.hoffset[background_index] << (hires ? 1u : 0u))
+        };
+        const uint16_t base_hpixel{
+            static_cast<uint16_t>(((dot & ~31u) >> 2u) << (hires ? 1u : 0u))
+        };
+        const uint8_t base_index{
+            static_cast<uint8_t>((dot >> 5u) << (hires ? 1u : 0u))
+        };
+
+        for (uint8_t half{ 0u }; half < (hires ? 2u : 1u); ++half)
+        {
+            const uint8_t tile_index{ static_cast<uint8_t>(base_index + half) };
+            if (tile_index >= background.cycle_tiles.size())
+                continue;
+
+            const uint16_t hpixel{ static_cast<uint16_t>(base_hpixel + (half != 0u ? 8u : 0u)) };
+            uint16_t horizontal_source{ static_cast<uint16_t>(hpixel + hscroll) };
+            uint16_t vertical_source{
+                static_cast<uint16_t>(base_vertical_pixel + _bg_state.voffset[background_index])
+            };
+
+            if ((_bg_state.mode == 2u || _bg_state.mode == 4u || _bg_state.mode == 6u)
+                && background_index < 2u)
+            {
+                const uint16_t valid_mask{ static_cast<uint16_t>(1u << (13u + background_index)) };
+                const uint16_t hlookup{ _background_layer_state[2].cycle_offset_hoffset };
+                const uint16_t vlookup{ _background_layer_state[2].cycle_offset_voffset };
+                if (_bg_state.mode == 4u)
+                {
+                    if ((hlookup & valid_mask) != 0u)
+                    {
+                        if ((hlookup & 0x8000u) == 0u)
+                            horizontal_source = static_cast<uint16_t>(hpixel + (hlookup & ~7u) + (hscroll & 7u));
+                        else
+                            vertical_source = static_cast<uint16_t>(base_vertical_pixel + hlookup);
+                    }
+                }
+                else
+                {
+                    if ((hlookup & valid_mask) != 0u)
+                        horizontal_source = static_cast<uint16_t>(hpixel + (hlookup & ~7u) + (hscroll & 7u));
+                    if ((vlookup & valid_mask) != 0u)
+                        vertical_source = static_cast<uint16_t>(base_vertical_pixel + vlookup);
+                }
+            }
+
+            const auto addressing{
+                compute_background_addressing(geometry, window, horizontal_source, vertical_source)
+            };
+            auto& tile{ background.cycle_tiles[tile_index] };
+            tile = {};
+            tile.source_x = addressing.horizontal_source;
+            tile.source_y = addressing.vertical_source;
+            tile.tilemap_address = addressing.tilemap_address;
+            tile.tilemap_entry = _vram[tile.tilemap_address];
+            tile.palette_group = static_cast<uint8_t>((tile.tilemap_entry >> 10u) & 7u);
+            tile.priority = _bg_state.priority[background_index][(tile.tilemap_entry >> 13u) & 1u];
+            tile.hmirror = (tile.tilemap_entry & 0x4000u) != 0u;
+            tile.vmirror = (tile.tilemap_entry & 0x8000u) != 0u;
+            tile.character = static_cast<uint16_t>(tile.tilemap_entry & 0x03ffu);
+            if ((hires || geometry.large_tiles)
+                && (((addressing.horizontal_source & 8u) != 0u) != tile.hmirror))
+            {
+                ++tile.character;
+            }
+            if (geometry.large_tiles
+                && (((addressing.vertical_source & 8u) != 0u) != tile.vmirror))
+            {
+                tile.character = static_cast<uint16_t>(tile.character + 16u);
+            }
+
+            uint8_t fine_y{ static_cast<uint8_t>(addressing.vertical_source & 7u) };
+            if (tile.vmirror)
+                fine_y ^= 7u;
+            const uint16_t character_mask{ static_cast<uint16_t>(k_vram_word_mask >> (3u + mode_index)) };
+            const uint16_t character_index{
+                static_cast<uint16_t>(_bg_state.tiledata_address[background_index] >> (3u + mode_index))
+            };
+            const uint16_t origin{
+                static_cast<uint16_t>((tile.character + character_index) & character_mask)
+            };
+            tile.vram_address = static_cast<uint16_t>((origin << (3u + mode_index)) + fine_y);
+            tile.palette_base = static_cast<uint8_t>(
+                (_bg_state.mode == 0u ? background_index << 5u : 0u)
+                + (tile.palette_group << (2u << mode_index))
+            );
+            tile.row_pair_count = static_cast<uint8_t>(1u << mode_index);
+        }
+    }
+
+    void ppu_t::cycle_background_offset(uint16_t scanline, uint16_t dot, uint16_t y) noexcept
+    {
+        if (scanline == 0u)
+            return;
+
+        const uint16_t x{ static_cast<uint16_t>((dot >> 5u) << 3u) };
+        const background_geometry_t geometry{
+            .hires = _screen_state.hires,
+            .large_tiles = _bg_state.large_tiles[2],
+            .screen_size = _bg_state.screen_size[2],
+            .screen_address = _bg_state.screen_address[2]
+        };
+        const auto window{ build_background_address_window(geometry, true) };
+        const auto addressing{
+            compute_background_addressing(geometry,
+                                          window,
+                                          static_cast<uint16_t>(x + (_bg_state.hoffset[2] & ~7u)),
+                                          static_cast<uint16_t>(y + _bg_state.voffset[2]))
+        };
+        if (y == 0u)
+            _background_layer_state[2].cycle_offset_hoffset = _vram[addressing.tilemap_address];
+        else
+            _background_layer_state[2].cycle_offset_voffset = _vram[addressing.tilemap_address];
+    }
+
+    void ppu_t::cycle_background_character(uint8_t background_index,
+                                           uint16_t dot,
+                                           uint8_t pair_index,
+                                           bool half) noexcept
+    {
+        auto& background{ _background_layer_state[background_index] };
+        const uint8_t tile_index{ static_cast<uint8_t>(
+            ((dot >> 5u) << (_screen_state.hires ? 1u : 0u)) + (half ? 1u : 0u)
+        ) };
+        if (tile_index >= background.cycle_tiles.size() || pair_index >= 4u)
+            return;
+        auto& tile{ background.cycle_tiles[tile_index] };
+        tile.row_data[pair_index] = decode_bitplane_pair(
+            _vram[(tile.vram_address + (pair_index << 3u)) & k_vram_word_mask],
+            !tile.hmirror
+        );
+    }
+
+    void ppu_t::cycle_background_fetch(uint16_t scanline, uint16_t dot) noexcept
+    {
+        const uint8_t cycle{ static_cast<uint8_t>((dot >> 2u) & 7u) };
+        const auto name = [this, scanline, dot](uint8_t bg) noexcept {
+            cycle_background_name_table(bg, scanline, dot);
+        };
+        const auto chr = [this, dot](uint8_t bg, uint8_t pair, bool half = false) noexcept {
+            cycle_background_character(bg, dot, pair, half);
+        };
+
+        switch (_bg_state.mode)
+        {
+        case 0u:
+            if (cycle < 4u) name(static_cast<uint8_t>(3u - cycle));
+            else chr(static_cast<uint8_t>(7u - cycle), 0u);
+            break;
+        case 1u:
+            if (cycle == 0u) name(2u); else if (cycle == 1u) name(1u); else if (cycle == 2u) name(0u);
+            else if (cycle == 3u) chr(2u, 0u); else if (cycle == 4u) chr(1u, 0u);
+            else if (cycle == 5u) chr(1u, 1u); else if (cycle == 6u) chr(0u, 0u); else chr(0u, 1u);
+            break;
+        case 2u:
+            if (cycle == 0u) name(1u); else if (cycle == 1u) name(0u);
+            else if (cycle == 2u) cycle_background_offset(scanline, dot, 0u);
+            else if (cycle == 3u) cycle_background_offset(scanline, dot, 8u);
+            else if (cycle == 4u) chr(1u, 0u); else if (cycle == 5u) chr(1u, 1u);
+            else if (cycle == 6u) chr(0u, 0u); else chr(0u, 1u);
+            break;
+        case 3u:
+            if (cycle == 0u) name(1u); else if (cycle == 1u) name(0u);
+            else if (cycle == 2u) chr(1u, 0u); else if (cycle == 3u) chr(1u, 1u);
+            else chr(0u, static_cast<uint8_t>(cycle - 4u));
+            break;
+        case 4u:
+            if (cycle == 0u) name(1u); else if (cycle == 1u) name(0u);
+            else if (cycle == 2u) cycle_background_offset(scanline, dot, 0u);
+            else if (cycle == 3u) chr(1u, 0u); else chr(0u, static_cast<uint8_t>(cycle - 4u));
+            break;
+        case 5u:
+            if (cycle == 0u) name(1u); else if (cycle == 1u) name(0u);
+            else if (cycle == 2u) chr(1u, 0u, false); else if (cycle == 3u) chr(1u, 0u, true);
+            else if (cycle == 4u) chr(0u, 0u, false); else if (cycle == 5u) chr(0u, 1u, false);
+            else if (cycle == 6u) chr(0u, 0u, true); else chr(0u, 1u, true);
+            break;
+        case 6u:
+            if (cycle == 0u) name(1u); else if (cycle == 1u) name(0u);
+            else if (cycle == 2u) cycle_background_offset(scanline, dot, 0u);
+            else if (cycle == 3u) cycle_background_offset(scanline, dot, 8u);
+            else if (cycle == 4u) chr(0u, 0u, false); else if (cycle == 5u) chr(0u, 1u, false);
+            else if (cycle == 6u) chr(0u, 0u, true); else chr(0u, 1u, true);
+            break;
+        default:
+            break;
+        }
+    }
+
+    ppu_pixel_candidate_t ppu_t::resolve_cycle_background_pixel_candidate(
+        uint8_t background_index) noexcept
+    {
+        auto& background{ _background_layer_state[background_index] };
+        if (background.cycle_rendering_index >= background.cycle_tiles.size())
+            return {};
+        auto& tile{ background.cycle_tiles[background.cycle_rendering_index] };
+        uint8_t color{ 0u };
+        // BGMODE controls the live shifter width.  Prefetched tile data and
+        // attributes survive a mid-scanline mode change, but their old bit
+        // depth does not: the newly selected mode decides how many bitplane
+        // pairs are consumed from those retained latches.
+        const uint8_t row_pair_count{ static_cast<uint8_t>(
+            1u << background_mode_index(_bg_state.render_mode[background_index])
+        ) };
+        for (uint8_t pair{ 0u }; pair < row_pair_count; ++pair)
+        {
+            color |= static_cast<uint8_t>((tile.row_data[pair] & 3u) << (pair << 1u));
+            tile.row_data[pair] = static_cast<uint16_t>(tile.row_data[pair] >> 2u);
+        }
+        ppu_pixel_candidate_t candidate{};
+        if (color != 0u)
+        {
+            candidate = {
+                .priority = tile.priority,
+                .palette = static_cast<uint8_t>(tile.palette_base + color),
+                .palette_group = tile.palette_group,
+                .color_math_enabled = _color_math_state.bg_color_enable[background_index],
+                .source = background_pixel_source(background_index)
+            };
+        }
+        background.cycle_pixel_counter = static_cast<uint8_t>((background.cycle_pixel_counter + 1u) & 7u);
+        if (background.cycle_pixel_counter == 0u)
+            ++background.cycle_rendering_index;
+
+        if (background.cycle_rendering_index == 0u || !_mosaic_state.enabled[background_index])
+        {
+            background.cycle_mosaic_hcounter = _mosaic_state.size;
+            background.cycle_mosaic_pixel = candidate;
+        }
+        else if (--background.cycle_mosaic_hcounter == 0u)
+        {
+            background.cycle_mosaic_hcounter = _mosaic_state.size;
+            background.cycle_mosaic_pixel = candidate;
+        }
+        else
+        {
+            candidate = background.cycle_mosaic_pixel;
+        }
+        return candidate;
+    }
+
     void ppu_t::synthesize_background_layer_candidate(uint8_t background_index) noexcept
     {
         auto& background{ _background_layer_state[background_index] };
@@ -1394,6 +1670,192 @@ namespace clover::core
             return;
 
         const size_t sample_count{ sample_pixel_count() };
+        if (_screen_state.hires)
+        {
+            const uint8_t mode_index{
+                background_mode_index(_bg_state.render_mode[background_index])
+            };
+            const background_geometry_t geometry{
+                .hires = true,
+                .large_tiles = _bg_state.large_tiles[background_index],
+                .screen_size = _bg_state.screen_size[background_index],
+                .screen_address = _bg_state.screen_address[background_index]
+            };
+            const background_address_window_t window{
+                build_background_address_window(geometry, false)
+            };
+            const uint16_t mosaic_vertical_offset{
+                static_cast<uint16_t>(
+                    _mosaic_state.enabled[background_index] ? mosaic_voffset() : 0u)
+            };
+            const uint16_t base_vertical_pixel{
+                background_vertical_pixel(background.evaluation_scanline,
+                                          mosaic_vertical_offset,
+                                          true,
+                                          _screen_state.interlace,
+                                          _counter.odd_field,
+                                          _mosaic_state.enabled[background_index])
+            };
+            const uint16_t base_vertical_source{
+                static_cast<uint16_t>(base_vertical_pixel + _bg_state.voffset[background_index])
+            };
+            const uint16_t horizontal_scroll{
+                static_cast<uint16_t>(_bg_state.hoffset[background_index] << 1u)
+            };
+            const uint16_t character_mask{
+                static_cast<uint16_t>(k_vram_word_mask >> (3u + mode_index))
+            };
+            const uint16_t character_index{
+                static_cast<uint16_t>(
+                    _bg_state.tiledata_address[background_index] >> (3u + mode_index))
+            };
+            const uint8_t palette_size_shift{ static_cast<uint8_t>(2u << mode_index) };
+
+            const bool offset_per_tile_mode{
+                (_bg_state.mode == 2u || _bg_state.mode == 4u || _bg_state.mode == 6u)
+                    && background_index < 2u
+            };
+            const background_geometry_t offset_geometry{
+                .hires = true,
+                .large_tiles = _bg_state.large_tiles[2],
+                .screen_size = _bg_state.screen_size[2],
+                .screen_address = _bg_state.screen_address[2]
+            };
+            const background_address_window_t offset_window{
+                build_background_address_window(offset_geometry, true)
+            };
+            const uint16_t target_tile_width{ 16u };
+            const uint16_t offset_horizontal_scroll{
+                static_cast<uint16_t>(_bg_state.hoffset[2] & ~0x0007u)
+            };
+
+            uint16_t mosaic_counter{ 1u };
+            ppu_pixel_candidate_t mosaic_candidate{};
+            for (size_t sample_x{ 0 }; sample_x < sample_count; ++sample_x)
+            {
+                const uint16_t x{ static_cast<uint16_t>(sample_x) };
+                uint16_t horizontal_source{ static_cast<uint16_t>(x + horizontal_scroll) };
+                uint16_t vertical_source{ base_vertical_source };
+
+                if (offset_per_tile_mode)
+                {
+                    const uint16_t offset_x{
+                        static_cast<uint16_t>(x + (horizontal_scroll & 0x0007u))
+                    };
+                    if (offset_x >= target_tile_width)
+                    {
+                        const uint16_t lookup_x{ static_cast<uint16_t>(
+                            ((offset_x >> 4u) - 1u) * 8u + offset_horizontal_scroll
+                        ) };
+                        const uint16_t hlookup{
+                            _vram[compute_background_addressing(offset_geometry,
+                                                               offset_window,
+                                                               lookup_x,
+                                                               _bg_state.voffset[2]).tilemap_address]
+                        };
+                        const uint16_t vlookup{
+                            _vram[compute_background_addressing(
+                                offset_geometry,
+                                offset_window,
+                                lookup_x,
+                                static_cast<uint16_t>(_bg_state.voffset[2] + 8u)
+                            ).tilemap_address]
+                        };
+                        const uint16_t valid_mask{
+                            static_cast<uint16_t>(1u << (13u + background_index))
+                        };
+
+                        if (_bg_state.mode == 4u)
+                        {
+                            if ((hlookup & valid_mask) != 0u)
+                            {
+                                if ((hlookup & 0x8000u) == 0u)
+                                    horizontal_source = static_cast<uint16_t>(offset_x + (hlookup & ~0x0007u));
+                                else
+                                    vertical_source = static_cast<uint16_t>(base_vertical_pixel + hlookup);
+                            }
+                        }
+                        else
+                        {
+                            if ((hlookup & valid_mask) != 0u)
+                                horizontal_source = static_cast<uint16_t>(offset_x + (hlookup & ~0x0007u));
+                            if ((vlookup & valid_mask) != 0u)
+                                vertical_source = static_cast<uint16_t>(base_vertical_pixel + vlookup);
+                        }
+                    }
+                }
+
+                const auto addressing{
+                    compute_background_addressing(geometry, window, horizontal_source, vertical_source)
+                };
+                const uint16_t tilemap_entry{ _vram[addressing.tilemap_address] };
+                const uint8_t palette_group{
+                    static_cast<uint8_t>((tilemap_entry >> 10u) & 0x07u)
+                };
+                const bool hmirror{ (tilemap_entry & 0x4000u) != 0u };
+                const bool vmirror{ (tilemap_entry & 0x8000u) != 0u };
+                uint16_t character{ static_cast<uint16_t>(tilemap_entry & 0x03ffu) };
+                if (((addressing.horizontal_source & 0x0008u) != 0u) != hmirror)
+                    character = static_cast<uint16_t>(character + 1u);
+                if (geometry.large_tiles
+                    && (((addressing.vertical_source & 0x0008u) != 0u) != vmirror))
+                {
+                    character = static_cast<uint16_t>(character + 16u);
+                }
+
+                uint8_t fine_y{ static_cast<uint8_t>(addressing.vertical_source & 0x07u) };
+                if (vmirror)
+                    fine_y = static_cast<uint8_t>(fine_y ^ 0x07u);
+                const uint16_t origin{
+                    static_cast<uint16_t>((character + character_index) & character_mask)
+                };
+                const uint16_t vram_address{
+                    static_cast<uint16_t>((origin << (3u + mode_index)) + fine_y)
+                };
+                const uint8_t fine_x{
+                    static_cast<uint8_t>(addressing.horizontal_source & 0x07u)
+                };
+                uint8_t color{ 0u };
+                const uint8_t row_pair_count{ static_cast<uint8_t>(1u << mode_index) };
+                for (uint8_t pair_index{ 0u }; pair_index < row_pair_count; ++pair_index)
+                {
+                    const uint16_t row_data{
+                        decode_bitplane_pair(
+                            _vram[(vram_address + (pair_index << 3u)) & k_vram_word_mask],
+                            !hmirror)
+                    };
+                    color |= static_cast<uint8_t>(
+                        extract_row_pair_pixel(row_data, fine_x) << (pair_index << 1u)
+                    );
+                }
+
+                ppu_pixel_candidate_t candidate{};
+                if (color != 0u)
+                {
+                    candidate = {
+                        .priority = _bg_state.priority[background_index][
+                            (tilemap_entry >> 13u) & 0x01u
+                        ],
+                        .palette = static_cast<uint8_t>((palette_group << palette_size_shift) + color),
+                        .palette_group = palette_group,
+                        .color_math_enabled = _color_math_state.bg_color_enable[background_index],
+                        .source = background_pixel_source(background_index)
+                    };
+                }
+
+                if (!_mosaic_state.enabled[background_index] || --mosaic_counter == 0u)
+                {
+                    mosaic_counter = static_cast<uint16_t>(
+                        _mosaic_state.enabled[background_index] ? _mosaic_state.size << 1u : 1u
+                    );
+                    mosaic_candidate = candidate;
+                }
+                background.samples[sample_x] = mosaic_candidate;
+            }
+
+            return;
+        }
+
         for (uint8_t tile_index{ 0 }; tile_index < background.tile_count; ++tile_index)
         {
             const auto& tile{ background.tiles[tile_index] };
@@ -1531,8 +1993,11 @@ namespace clover::core
         _pipeline_state.next_pixel_dot = 58u;
         _pipeline_state.next_pixel_x = 0u;
         _pipeline_state.next_object_fetch_dot = 1080u;
+        _pipeline_state.next_background_fetch_dot = 0u;
         _pipeline_state.next_object_fetch_index = 0u;
         _pipeline_state.background_fetch_state_dirty = false;
+        _pipeline_state.use_cycle_background_pipeline = true;
+        _pipeline_state.background_begin_completed = false;
         _pipeline_state.object_fetch_started = false;
         _pipeline_state.object_fetch_completed = false;
     }
@@ -1548,6 +2013,16 @@ namespace clover::core
             background.pixel_counter = static_cast<uint8_t>(_bg_state.hoffset[background_index] & 0x07u);
             background.mosaic_hcounter = _mosaic_state.size;
             background.mosaic_pixel = {};
+            background.cycle_rendering_index = 0u;
+            background.cycle_pixel_counter = static_cast<uint8_t>(
+                ((_bg_state.hoffset[background_index] & 7u) << (_screen_state.hires ? 1u : 0u))
+                    & 7u
+            );
+            background.cycle_offset_hoffset = 0u;
+            background.cycle_offset_voffset = 0u;
+            background.cycle_mosaic_hcounter = _mosaic_state.size;
+            background.cycle_mosaic_pixel = {};
+            background.cycle_below_pixel = {};
             if (background.tile_count != 0u)
             {
                 for (uint8_t pair_index{ 0 }; pair_index < background.render_tiles[0].row_pair_count; ++pair_index)
@@ -1782,10 +2257,55 @@ namespace clover::core
             ppu_pixel_candidate_t background_below{};
             if (_bg_state.active[background_index])
             {
-                const auto candidate{ resolve_background_pixel_candidate(background_index, x) };
+                const ppu_pixel_candidate_t cycle_candidate{
+                    _bg_state.render_mode[background_index]
+                            == ppu_background_render_state_t::mode_t::mode7
+                        ? ppu_pixel_candidate_t{}
+                        : (_screen_state.hires && (x & 1u) == 0u
+                            ? _background_layer_state[background_index].cycle_below_pixel
+                            : resolve_cycle_background_pixel_candidate(background_index))
+                };
+                const ppu_pixel_candidate_t candidate{
+                    _pipeline_state.use_cycle_background_pipeline
+                            && _bg_state.render_mode[background_index]
+                                != ppu_background_render_state_t::mode_t::mode7
+                        ? cycle_candidate
+                        : resolve_background_pixel_candidate(background_index, x)
+                };
                 _background_layer_state[background_index].samples[sample_x] = candidate;
-                background_above = _bg_state.above_enabled[background_index] ? candidate : ppu_pixel_candidate_t{};
-                background_below = _bg_state.below_enabled[background_index] ? candidate : ppu_pixel_candidate_t{};
+                if (_screen_state.hires)
+                {
+                    // Modes 5 and 6 render two background samples per dot.  The
+                    // even sample feeds the subscreen and the odd sample feeds
+                    // the main screen; the other screen retains the sample
+                    // produced during the adjacent half-dot.
+                    const auto paired_candidate{
+                        x == 0u
+                            ? ppu_pixel_candidate_t{}
+                            : _background_layer_state[background_index].samples[sample_x - 1u]
+                    };
+                    if ((x & 1u) == 0u)
+                    {
+                        background_above = _bg_state.above_enabled[background_index]
+                            ? paired_candidate : ppu_pixel_candidate_t{};
+                        background_below = _bg_state.below_enabled[background_index]
+                            ? candidate : ppu_pixel_candidate_t{};
+                    }
+                    else
+                    {
+                        background_above = _bg_state.above_enabled[background_index]
+                            ? candidate : ppu_pixel_candidate_t{};
+                        background_below = _bg_state.below_enabled[background_index]
+                            ? paired_candidate : ppu_pixel_candidate_t{};
+                    }
+                }
+                else
+                {
+                    background_above = _bg_state.above_enabled[background_index]
+                        ? candidate : ppu_pixel_candidate_t{};
+                    background_below = _bg_state.below_enabled[background_index]
+                        ? candidate : ppu_pixel_candidate_t{};
+                }
 
                 const bool background_window_hit{
                     window_hit(pixel_x,
@@ -2037,36 +2557,84 @@ namespace clover::core
                             halve);
     }
 
+    void ppu_t::promote_framebuffer_geometry() noexcept
+    {
+        if (_frame_high_geometry)
+            return;
+
+        const auto promote = [](framebuffer_t& frame) noexcept
+        {
+            uint32_t* const pixels{ frame.data() };
+            for (size_t y{ framebuffer_t::k_height }; y-- > 0u;)
+            {
+                for (size_t x{ framebuffer_t::k_width }; x-- > 0u;)
+                {
+                    const uint32_t pixel{ pixels[y * framebuffer_t::k_width + x] };
+                    const size_t output_y{ y * 2u };
+                    const size_t output_x{ x * 2u };
+                    pixels[output_y * framebuffer_t::k_max_width + output_x] = pixel;
+                    pixels[output_y * framebuffer_t::k_max_width + output_x + 1u] = pixel;
+                    pixels[(output_y + 1u) * framebuffer_t::k_max_width + output_x] = pixel;
+                    pixels[(output_y + 1u) * framebuffer_t::k_max_width + output_x + 1u] = pixel;
+                }
+            }
+            frame.set_geometry(framebuffer_t::k_max_width, framebuffer_t::k_max_height);
+        };
+
+        promote(_composed_frame);
+        if (_presentation_layer_mask != ppu_presentation_options_t::k_all_layers_visible)
+            promote(_presentation_composed_frame);
+        else
+            _presentation_composed_frame.set_geometry(framebuffer_t::k_max_width,
+                                                       framebuffer_t::k_max_height);
+        _frame_high_geometry = true;
+    }
+
     void ppu_t::render_pixel(uint16_t scanline, uint16_t x) noexcept
     {
         if (scanline == 0u || scanline >= active_visible_scanlines() || x >= sample_pixel_count())
             return;
 
-        const bool high_geometry{ _screen_state.hires || _screen_state.interlace || _screen_state.pseudo_hires };
+        const bool high_geometry{ _screen_state.hires || _display_interlace || _screen_state.pseudo_hires };
         if (high_geometry)
-        {
-            _composed_frame.set_geometry(framebuffer_t::k_max_width, framebuffer_t::k_max_height);
-            _presentation_composed_frame.set_geometry(framebuffer_t::k_max_width, framebuffer_t::k_max_height);
-        }
+            promote_framebuffer_geometry();
 
         if (_display.disabled)
         {
+            // Forced blank suppresses the screen output, but the background
+            // shifters continue to consume their pixel data.  Mid-scanline
+            // mode changes can expose that retained pipeline state later in
+            // the same line.
+            for (uint8_t background_index{ 0u }; background_index < 4u; ++background_index)
+            {
+                if ((!_screen_state.hires || (x & 1u) != 0u)
+                    && _bg_state.active[background_index]
+                    && _bg_state.render_mode[background_index]
+                        != ppu_background_render_state_t::mode_t::mode7)
+                {
+                    (void)resolve_cycle_background_pixel_candidate(background_index);
+                }
+            }
             if (!_frame_capture_enabled)
                 return;
 
             constexpr size_t k_non_overscan_top_border{ 8u };
             const size_t row_index{
-                static_cast<size_t>(scanline - 1u) + (_screen_state.overscan ? 0u : k_non_overscan_top_border)
+                static_cast<size_t>(scanline - 1u) + (_display_overscan ? 0u : k_non_overscan_top_border)
             };
             if (row_index < framebuffer_t::k_height)
             {
-                const size_t output_x{ high_geometry && !_screen_state.hires ? x * 2u : x };
-                const size_t output_y{ high_geometry ? row_index * 2u : row_index };
+                const size_t output_x{ _frame_high_geometry && !_screen_state.hires ? x * 2u : x };
+                const size_t output_y{
+                    _frame_high_geometry
+                        ? row_index * 2u + (_display_interlace && _counter.odd_field ? 1u : 0u)
+                        : row_index
+                };
                 const size_t pitch{ _composed_frame.pitch_pixels() };
                 _composed_frame.data()[output_y * pitch + output_x] = 0xff000000u;
-                if (high_geometry && !_screen_state.hires)
+                if (_frame_high_geometry && !_screen_state.hires)
                     _composed_frame.data()[output_y * pitch + output_x + 1u] = 0xff000000u;
-                if (high_geometry)
+                if (_frame_high_geometry && !_display_interlace)
                 {
                     std::copy_n(_composed_frame.data() + output_y * pitch, pitch,
                                 _composed_frame.data() + (output_y + 1u) * pitch);
@@ -2085,7 +2653,24 @@ namespace clover::core
         ppu_pixel_candidate_t below{};
         const ppu_pixel_candidate_t object_candidate{ resolve_object_pixel_candidate(x) };
         resolve_pixel_layers(x, object_candidate, above, below);
-        resolve_pixel_color_math(x, above, below);
+        uint16_t pseudo_hires_subscreen_color{ 0u };
+        if (_screen_state.pseudo_hires && !_screen_state.hires)
+        {
+            resolve_pixel_color_math(x, below, above);
+            pseudo_hires_subscreen_color = _compositor_state.output_color[static_cast<size_t>(x)];
+            if (x == 0u)
+                pseudo_hires_subscreen_color = 0u;
+            resolve_pixel_color_math(x, above, below);
+        }
+        else if (_screen_state.hires && (x & 1u) == 0u)
+            resolve_pixel_color_math(x, below, above);
+        else
+            resolve_pixel_color_math(x, above, below);
+
+        // The first hires output sample is emitted before either screen has
+        // established an enabled color and is therefore transparent/black.
+        if (_screen_state.hires && x == 0u)
+            _compositor_state.output_color[0] = 0u;
 
         const size_t sample_x{ static_cast<size_t>(x) };
         _compositor_state.above_samples[sample_x] = above;
@@ -2110,7 +2695,7 @@ namespace clover::core
         // (vcounter + 7), leaving eight rows of top border.
         constexpr size_t k_non_overscan_top_border{ 8u };
         const size_t row_index{
-            static_cast<size_t>(scanline - 1u) + (_screen_state.overscan ? 0u : k_non_overscan_top_border)
+            static_cast<size_t>(scanline - 1u) + (_display_overscan ? 0u : k_non_overscan_top_border)
         };
         if (row_index >= framebuffer_t::k_height)
             return;
@@ -2118,15 +2703,26 @@ namespace clover::core
         const uint32_t rgba8{
             snes_color_to_rgba8(_compositor_state.output_color[sample_x], _display.brightness)
         };
-        const size_t output_x{ high_geometry && !_screen_state.hires ? sample_x * 2u : sample_x };
-        const size_t output_y{ high_geometry ? row_index * 2u : row_index };
+        const uint32_t pseudo_hires_subscreen_rgba8{
+            snes_color_to_rgba8(pseudo_hires_subscreen_color, _display.brightness)
+        };
+        const size_t output_x{ _frame_high_geometry && !_screen_state.hires ? sample_x * 2u : sample_x };
+        const size_t output_y{
+            _frame_high_geometry
+                ? row_index * 2u + (_display_interlace && _counter.odd_field ? 1u : 0u)
+                : row_index
+        };
         const size_t pitch{ _composed_frame.pitch_pixels() };
-        _composed_frame.data()[output_y * pitch + output_x] = rgba8;
-        if (high_geometry && !_screen_state.hires)
+        _composed_frame.data()[output_y * pitch + output_x] =
+            _screen_state.pseudo_hires && !_screen_state.hires
+                ? pseudo_hires_subscreen_rgba8 : rgba8;
+        if (_frame_high_geometry && !_screen_state.hires)
             _composed_frame.data()[output_y * pitch + output_x + 1u] = rgba8;
-        if (high_geometry)
+        if (_frame_high_geometry && !_display_interlace)
         {
-            _composed_frame.data()[(output_y + 1u) * pitch + output_x] = rgba8;
+            _composed_frame.data()[(output_y + 1u) * pitch + output_x] =
+                _screen_state.pseudo_hires && !_screen_state.hires
+                    ? pseudo_hires_subscreen_rgba8 : rgba8;
             if (!_screen_state.hires)
                 _composed_frame.data()[(output_y + 1u) * pitch + output_x + 1u] = rgba8;
         }
@@ -2138,9 +2734,15 @@ namespace clover::core
 
         static const render_write_trace_filter_t trace_filter{ load_render_write_trace_filter() };
         if (trace_filter.enabled
-            && _frame_counter == trace_filter.frame
-            && scanline == trace_filter.scanline
-            && x == trace_filter.x)
+            && (trace_filter.frame == std::numeric_limits<uint64_t>::max()
+                || _frame_counter == trace_filter.frame)
+            && (trace_filter.scanline == std::numeric_limits<uint16_t>::max()
+                || scanline == trace_filter.scanline)
+            && (trace_filter.x == std::numeric_limits<uint16_t>::max()
+                || x == trace_filter.x
+                || output_x == trace_filter.x
+                || (_frame_high_geometry && !_screen_state.hires
+                    && output_x + 1u == trace_filter.x)))
         {
             const auto& object_above{ _compositor_state.objects.above_samples[sample_x] };
             const auto& object_below{ _compositor_state.objects.below_samples[sample_x] };
@@ -2188,6 +2790,78 @@ namespace clover::core
             _pipeline_state.background_fetch_state_dirty = false;
         }
 
+        // BG fetch/Below and Above/render phases must stay chronologically
+        // interleaved.  CPU writes can land in the two-clock gap between
+        // them, and processing either stream in a batch changes which mode
+        // consumes a retained shifter sample.
+        while (true)
+        {
+            const uint16_t fetch_dot{
+                static_cast<uint16_t>(_pipeline_state.next_background_fetch_dot <= 1076u
+                    ? _pipeline_state.next_background_fetch_dot : 0xffffu)
+            };
+            const uint16_t pixel_dot{
+                static_cast<uint16_t>(_pipeline_state.next_pixel_dot <= 1078u
+                    ? _pipeline_state.next_pixel_dot : 0xffffu)
+            };
+            const uint16_t event_dot{ std::min(fetch_dot, pixel_dot) };
+            if (event_dot == 0xffffu || event_dot >= end_dot)
+                break;
+
+            if (fetch_dot <= pixel_dot)
+            {
+                if (fetch_dot >= start_dot)
+                {
+                    if (fetch_dot <= 1054u)
+                        cycle_background_fetch(scanline, fetch_dot);
+                    if (fetch_dot == 56u && !_pipeline_state.background_begin_completed)
+                    {
+                        for (auto& background : _background_layer_state)
+                        {
+                            for (uint16_t& row : background.cycle_tiles[0].row_data)
+                            {
+                                row = static_cast<uint16_t>(
+                                    row >> (background.cycle_pixel_counter << 1u)
+                                );
+                            }
+                        }
+                        _pipeline_state.background_begin_completed = true;
+                    }
+                    if (fetch_dot >= 56u && _screen_state.hires)
+                    {
+                        for (uint8_t background_index{ 0u }; background_index < 4u; ++background_index)
+                        {
+                            if (_bg_state.active[background_index]
+                                && _bg_state.render_mode[background_index]
+                                    != ppu_background_render_state_t::mode_t::mode7)
+                            {
+                                _background_layer_state[background_index].cycle_below_pixel =
+                                    resolve_cycle_background_pixel_candidate(background_index);
+                            }
+                        }
+                    }
+                }
+                _pipeline_state.next_background_fetch_dot = static_cast<uint16_t>(fetch_dot + 4u);
+                continue;
+            }
+
+            const uint16_t render_x{ static_cast<uint16_t>((pixel_dot - 58u) >> 2u) };
+            if (pixel_dot >= start_dot)
+            {
+                if (_screen_state.hires)
+                {
+                    render_pixel(scanline, static_cast<uint16_t>(render_x << 1u));
+                    render_pixel(scanline, static_cast<uint16_t>((render_x << 1u) + 1u));
+                }
+                else
+                {
+                    render_pixel(scanline, render_x);
+                }
+            }
+            _pipeline_state.next_pixel_x = static_cast<uint16_t>(render_x + 1u);
+            _pipeline_state.next_pixel_dot = static_cast<uint16_t>(pixel_dot + 4u);
+        }
+
         while (_pipeline_state.next_object_evaluate_dot < end_dot
             && _pipeline_state.next_object_evaluate_dot <= 1016u)
         {
@@ -2209,25 +2883,24 @@ namespace clover::core
         }
         process_object_fetch_range(scanline, start_dot, end_dot);
 
-        while (_pipeline_state.next_pixel_dot < end_dot
-            && _pipeline_state.next_pixel_dot <= 1078u
-            && _pipeline_state.next_pixel_x < sample_pixel_count())
-        {
-            if (_pipeline_state.next_pixel_dot >= start_dot)
-                render_pixel(scanline, _pipeline_state.next_pixel_x);
-
-            ++_pipeline_state.next_pixel_x;
-            _pipeline_state.next_pixel_dot = static_cast<uint16_t>(
-                _pipeline_state.next_pixel_dot + (_screen_state.hires ? 2u : 4u)
-            );
-        }
     }
 
     void ppu_t::process_pipeline_range(const timing_snapshot_t& previous_timing,
                                        const timing_snapshot_t& current_timing) noexcept
     {
         uint16_t scanline{ previous_timing.raster.scanline };
-        for (uint16_t remaining{ _video_timing.scanlines_per_frame }; remaining > 0; --remaining)
+        const bool wrapped_field{
+            current_timing.raster.scanline < previous_timing.raster.scanline
+        };
+        const bool previous_odd_field{
+            wrapped_field ? !_counter.odd_field : _counter.odd_field
+        };
+        const uint16_t previous_field_scanlines{
+            _video_timing.field_scanlines(previous_odd_field, _timing_interlace)
+        };
+        for (uint16_t remaining{ static_cast<uint16_t>(_video_timing.scanlines_per_frame + 1u) };
+             remaining > 0;
+             --remaining)
         {
             initialize_scanline_pipeline(scanline);
 
@@ -2250,7 +2923,9 @@ namespace clover::core
             if (scanline == current_timing.raster.scanline)
                 break;
 
-            scanline = static_cast<uint16_t>((scanline + 1u) % _video_timing.scanlines_per_frame);
+            scanline = static_cast<uint16_t>(
+                scanline + 1u >= previous_field_scanlines ? 0u : scanline + 1u
+            );
         }
     }
 
@@ -2833,7 +3508,7 @@ namespace clover::core
 
         constexpr size_t k_non_overscan_top_border{ 8u };
         const size_t row_index{
-            static_cast<size_t>(scanline - 1u) + (_screen_state.overscan ? 0u : k_non_overscan_top_border)
+            static_cast<size_t>(scanline - 1u) + (_display_overscan ? 0u : k_non_overscan_top_border)
         };
         if (row_index >= framebuffer_t::k_height)
             return;
@@ -3073,19 +3748,72 @@ namespace clover::core
         if (offset >= _registers.size())
             return;
 
+        const timing_snapshot_t write_timing{ timing() };
+        if (address == 0x2133u)
+        {
+            static const render_write_trace_filter_t trace_filter{ load_render_write_trace_filter() };
+            if (trace_filter.enabled
+                && (trace_filter.frame == std::numeric_limits<uint64_t>::max()
+                    || _frame_counter == trace_filter.frame)
+                && (trace_filter.scanline == std::numeric_limits<uint16_t>::max()
+                    || write_timing.raster.scanline == trace_filter.scanline))
+            {
+                std::printf("PPU SETINI write: frame=%llu scanline=%u dot=%u value=%02x\n",
+                            static_cast<unsigned long long>(_frame_counter),
+                            static_cast<unsigned>(write_timing.raster.scanline),
+                            static_cast<unsigned>(write_timing.raster.dot),
+                            static_cast<unsigned>(value));
+            }
+        }
+        const bool changes_background_pipeline_state{
+            address >= 0x2105u && address <= 0x2114u
+        };
+        // Finish the PPU phase already reached by the beam before exposing a
+        // background register write to subsequent fetch and shifter phases.
+        if (changes_background_pipeline_state
+            && _pipeline_state.initialized_scanline == write_timing.raster.scanline
+            && write_timing.raster.dot <= 1078u)
+        {
+            process_scanline_range(write_timing.raster.scanline,
+                                   write_timing.raster.dot,
+                                   static_cast<uint16_t>(write_timing.raster.dot + 1u));
+        }
         _registers[offset] = value;
 
-        const timing_snapshot_t write_timing{ timing() };
         const bool changes_background_fetch_state{
             address == 0x2100u
             || (address >= 0x2105u && address <= 0x2114u)
             || (address >= 0x211au && address <= 0x2120u)
         };
         if (changes_background_fetch_state
+            && !changes_background_pipeline_state
             && _pipeline_state.initialized_scanline == write_timing.raster.scanline
             && write_timing.raster.dot < 56u)
         {
             _pipeline_state.background_fetch_state_dirty = true;
+        }
+        if (changes_background_pipeline_state
+            && _pipeline_state.initialized_scanline == write_timing.raster.scanline
+            && write_timing.raster.dot <= 1078u)
+        {
+            _pipeline_state.use_cycle_background_pipeline = true;
+            static const render_write_trace_filter_t trace_filter{ load_render_write_trace_filter() };
+            if (trace_filter.enabled
+                && (trace_filter.frame == std::numeric_limits<uint64_t>::max()
+                    || _frame_counter == trace_filter.frame)
+                && (trace_filter.scanline == std::numeric_limits<uint16_t>::max()
+                    || write_timing.raster.scanline == trace_filter.scanline))
+            {
+                std::printf("PPU BG register write: frame=%llu scanline=%u dot=%u address=%04x value=%02x next_pixel=%u "
+                            "next_fetch=%u\n",
+                            static_cast<unsigned long long>(_frame_counter),
+                            static_cast<unsigned>(write_timing.raster.scanline),
+                            static_cast<unsigned>(write_timing.raster.dot),
+                            static_cast<unsigned>(address),
+                            static_cast<unsigned>(value),
+                            static_cast<unsigned>(_pipeline_state.next_pixel_dot),
+                            static_cast<unsigned>(_pipeline_state.next_background_fetch_dot));
+            }
         }
 
         switch (address)
@@ -3445,7 +4173,6 @@ namespace clover::core
             _screen_state.overscan = (value & 0x04u) != 0;
             _screen_state.pseudo_hires = (value & 0x08u) != 0;
             _screen_state.mode7_extbg = (value & 0x40u) != 0;
-            _timing_interlace = _screen_state.interlace;
             _object_layer_state.interlace = (value & 0x02u) != 0;
             for (auto& object : _object_layer_state.objects)
                 object.height = object_height(object.size_select);
@@ -3465,6 +4192,13 @@ namespace clover::core
         ppu_step_result_t result{};
         result.timing = timing();
         result.visible_scanlines = active_visible_scanlines();
+        if (previous_timing.raster.scanline < 128u
+            && result.timing.raster.scanline >= 128u)
+        {
+            // The counter samples SETINI interlace at V=128 for the current
+            // field's 262/263-line period.
+            _timing_interlace = _screen_state.interlace;
+        }
         result.interlace = _timing_interlace;
         if (result.timing.raster.scanline < previous_timing.raster.scanline)
         {
@@ -3474,11 +4208,30 @@ namespace clover::core
                 _presentation_presented_frame = _presentation_composed_frame;
             if (_completed_frame_queue_enabled)
                 _completed_frames.push_back(_presented_frame);
-            render_placeholder_frame();
-            const bool high_geometry{ _screen_state.hires || _screen_state.interlace || _screen_state.pseudo_hires };
-            _composed_frame.set_geometry(high_geometry ? framebuffer_t::k_max_width : framebuffer_t::k_width,
-                                         high_geometry ? framebuffer_t::k_max_height : framebuffer_t::k_height);
-            _presentation_composed_frame.set_geometry(_composed_frame.width(), _composed_frame.height());
+            // Screen row placement is sampled independently at V=0.  SETINI
+            // writes later in the field remain live for rendering behavior,
+            // but cannot move scanlines or change which interlace row is used.
+            _display_interlace = _screen_state.interlace;
+            _display_overscan = _screen_state.overscan;
+            if (_display_interlace)
+            {
+                // Each interlaced field updates only one row of every output
+                // pair.  Retain the opposite field until it is replaced by
+                // the following frame.
+                _frame_high_geometry = true;
+                _composed_frame.set_geometry(framebuffer_t::k_max_width,
+                                             framebuffer_t::k_max_height);
+                _presentation_composed_frame.set_geometry(_composed_frame.width(),
+                                                          _composed_frame.height());
+            }
+            else
+            {
+                render_placeholder_frame();
+                _frame_high_geometry = false;
+                _composed_frame.set_geometry(framebuffer_t::k_width, framebuffer_t::k_height);
+                _presentation_composed_frame.set_geometry(_composed_frame.width(),
+                                                          _composed_frame.height());
+            }
             result.frame_complete = true;
             result.frames_completed = 1;
         }

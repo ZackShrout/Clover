@@ -401,6 +401,17 @@ namespace clover::core
         void evaluate_background_tiles(uint8_t background_index) noexcept;
         void fetch_background_tile_rows(uint8_t background_index) noexcept;
         void synthesize_background_layer_candidate(uint8_t background_index) noexcept;
+        void cycle_background_fetch(uint16_t scanline, uint16_t dot) noexcept;
+        void cycle_background_name_table(uint8_t background_index,
+                                         uint16_t scanline,
+                                         uint16_t dot) noexcept;
+        void cycle_background_offset(uint16_t scanline, uint16_t dot, uint16_t y) noexcept;
+        void cycle_background_character(uint8_t background_index,
+                                        uint16_t dot,
+                                        uint8_t pair_index,
+                                        bool half) noexcept;
+        [[nodiscard]] ppu_pixel_candidate_t resolve_cycle_background_pixel_candidate(
+            uint8_t background_index) noexcept;
         void evaluate_object_scanline(uint16_t scanline) noexcept;
         void evaluate_object_tiles() noexcept;
         void fetch_object_tile_rows() noexcept;
@@ -419,6 +430,7 @@ namespace clover::core
         void decode_render_state() noexcept;
         void clear_compositor_state() noexcept;
         [[nodiscard]] size_t sample_pixel_count() const noexcept;
+        void promote_framebuffer_geometry() noexcept;
         void render_scanline(uint16_t scanline) noexcept;
         void render_placeholder_frame() noexcept;
 
@@ -568,6 +580,14 @@ namespace clover::core
             uint8_t pixel_counter{ 0 };
             uint16_t mosaic_hcounter{ 1 };
             ppu_pixel_candidate_t mosaic_pixel{};
+            std::array<tile_candidate_t, 66> cycle_tiles{};
+            uint8_t cycle_rendering_index{ 0 };
+            uint8_t cycle_pixel_counter{ 0 };
+            uint16_t cycle_offset_hoffset{ 0 };
+            uint16_t cycle_offset_voffset{ 0 };
+            uint16_t cycle_mosaic_hcounter{ 1 };
+            ppu_pixel_candidate_t cycle_mosaic_pixel{};
+            ppu_pixel_candidate_t cycle_below_pixel{};
         };
 
         struct ppu_color_math_state_t
@@ -641,8 +661,11 @@ namespace clover::core
             uint16_t next_pixel_dot{ 58u };
             uint16_t next_pixel_x{ 0u };
             uint16_t next_object_fetch_dot{ 1080u };
+            uint16_t next_background_fetch_dot{ 0u };
             uint8_t next_object_fetch_index{ 0u };
             bool background_fetch_state_dirty{ false };
+            bool use_cycle_background_pipeline{ false };
+            bool background_begin_completed{ false };
             bool object_fetch_started{ false };
             bool object_fetch_completed{ false };
         };
@@ -678,6 +701,7 @@ namespace clover::core
         framebuffer_t _presented_frame{};
         framebuffer_t _presentation_composed_frame{};
         framebuffer_t _presentation_presented_frame{};
+        bool _frame_high_geometry{ false };
         uint8_t _presentation_layer_mask{ ppu_presentation_options_t::k_all_layers_visible };
         std::array<uint8_t, 0x40> _registers{};
         std::array<uint16_t, 32 * 1024> _vram{};
@@ -688,6 +712,8 @@ namespace clover::core
         uint8_t _ppu2_version{ 3 };
         raster_counter_t _counter{};
         bool _timing_interlace{ false };
+        bool _display_interlace{ false };
+        bool _display_overscan{ false };
         uint64_t _frame_counter{ 0 };
         ppu_entropy_mode_t _entropy_mode{ ppu_entropy_mode_t::none };
         bool _entropy_seed_override_enabled{ false };

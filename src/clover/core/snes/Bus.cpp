@@ -786,12 +786,15 @@ namespace clover::core
                 && frame_index <= live_trace_filter.frame_max)
             {
                 const timing_snapshot_t timing{ _ppu->timing() };
+                const timing_snapshot_t cpu_timing{ _cpu->timing(_ppu->video_timing()) };
                 const cpu_state_t cpu{ _cpu->state() };
-                std::printf("Bus PPU write: frame=%llu scanline=%u dot=%u addr=%04x value=%02x "
+                std::printf("Bus PPU write: frame=%llu scanline=%u dot=%u cpu_scanline=%u cpu_dot=%u addr=%04x value=%02x "
                             "PB:%02x PC:%04x A:%04x X:%04x Y:%04x SP:%04x D:%04x DB:%02x P:%02x E:%u\n",
                             static_cast<unsigned long long>(frame_index),
                             static_cast<unsigned>(timing.raster.scanline),
                             static_cast<unsigned>(timing.raster.dot),
+                            static_cast<unsigned>(cpu_timing.raster.scanline),
+                            static_cast<unsigned>(cpu_timing.raster.dot),
                             static_cast<unsigned>(register_address),
                             static_cast<unsigned>(value),
                             cpu.pb,

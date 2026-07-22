@@ -40,11 +40,17 @@ namespace clover::core
             return master_clocks_per_scanline;
         }
 
+        [[nodiscard]] constexpr uint16_t field_scanlines(bool odd_field,
+                                                         bool interlace) const noexcept
+        {
+            return static_cast<uint16_t>(scanlines_per_frame + (interlace && !odd_field ? 1u : 0u));
+        }
+
         [[nodiscard]] constexpr master_clock_delta_t master_clocks_per_frame(bool odd_field = false,
                                                                              bool interlace = false) const noexcept
         {
             return static_cast<master_clock_delta_t>(
-                master_clocks_per_scanline * scanlines_per_frame
+                master_clocks_per_scanline * field_scanlines(odd_field, interlace)
                     - (standard == video_standard_t::ntsc && !interlace && odd_field
                         ? master_clocks_per_scanline - short_scanline_clocks
                         : 0)
@@ -136,7 +142,7 @@ namespace clover::core
             {
                 next_dot -= video_timing.scanline_clocks(scanline, odd_field, interlace);
                 ++scanline;
-                if (scanline >= video_timing.scanlines_per_frame)
+                if (scanline >= video_timing.field_scanlines(odd_field, interlace))
                 {
                     scanline = 0;
                     odd_field = !odd_field;
@@ -178,8 +184,10 @@ namespace clover::core
 
                 if (scanline == 0)
                 {
-                    scanline = static_cast<uint16_t>(video_timing.scanlines_per_frame - 1u);
                     odd_field = !odd_field;
+                    scanline = static_cast<uint16_t>(
+                        video_timing.field_scanlines(odd_field, interlace) - 1u
+                    );
                 }
                 else
                 {

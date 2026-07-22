@@ -789,6 +789,11 @@ namespace clover::core
 
             _waiting = false;
             _wait_wake_idle_pending = true;
+            // WAI continues polling the interrupt pipeline while it idles.
+            // Once a transition wakes the CPU, latch it before the mandatory
+            // final wake-up idle so the following CPU step enters the handler
+            // instead of executing the instruction after WAI.
+            executor.observe_opcode_edge(_state);
             executor.idle();
             const cpu_step_result_t result{ executor.finish() };
             _master_clock += result.master_clocks;

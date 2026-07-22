@@ -82,6 +82,11 @@ namespace clover::core
         if (_state.irq_hold)
         {
             _state.irq_hold = false;
+            if (_state.irq_line)
+            {
+                _state.irq_transition = true;
+                _irq_transition_clock = observation_clock;
+            }
         }
         else if (_state.irq_line)
         {

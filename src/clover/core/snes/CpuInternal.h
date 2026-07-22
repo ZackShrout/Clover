@@ -9,8 +9,6 @@
 #include "clover/core/snes/Cpu.h"
 #include "clover/core/snes/Interrupts.h"
 
-#include <cstdio>
-
 namespace clover::core
 {
     inline constexpr master_clock_delta_t k_cpu_bus_cycle_clocks{ 6 };
@@ -273,6 +271,19 @@ namespace clover::core
             begin_cpu_cycle();
             _cpu.alu_edge();
             const master_clock_delta_t access_clocks{ cpu_access_clocks(address, _fast_rom_enabled) };
+            const bool ppu_register_write{
+                (address & 0x40ffe0u) == 0x002100u
+            };
+            if (ppu_register_write)
+            {
+                // S-CPU writes become visible to the independently clocked
+                // S-PPU on its final two-master-clock phase.
+                _bus.write_cpu_u8(
+                    address,
+                    value,
+                    static_cast<master_clock_delta_t>(access_clocks - 2u)
+                );
+            }
             _master_clocks = static_cast<master_clock_delta_t>(
                 _master_clocks + _cpu.service_dma_edge(
                     _bus, _dma, _interrupts, _ppu_step_result, access_clocks
@@ -283,7 +294,8 @@ namespace clover::core
             );
             _interrupts.clear_irq_lock();
             _bus.trace_cpu_apu_port_access(address, value, true, _master_clocks);
-            _bus.write_u8(address, value);
+            if (!ppu_register_write)
+                _bus.write_u8(address, value);
         }
 
         [[nodiscard]] uint8_t fetch_opcode(cpu_state_t& state) noexcept

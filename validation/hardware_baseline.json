@@ -1,0 +1,585 @@
+{
+  "hardware_profile": "late-3chip",
+  "manifest_sha256": "84ea4250b2891e8cff4b2983ee95f59bad2aadd5ca3a0d1c340d73f168792ad6",
+  "scenarios": {
+    "blargg-controller-strobe-behavior": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "253bde2f7a74cb0775ff0f5ad51a3400b297475e056c78e589c40005d4887b5f",
+      "clover_frame_sha256": "253bde2f7a74cb0775ff0f5ad51a3400b297475e056c78e589c40005d4887b5f",
+      "self_report": "passed",
+      "status": "SELF_REPORT_PASS"
+    },
+    "blargg-disable-ipl-rom": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "248b53417023e8236927558c99d8293be044feb87939e663edd48179dd28d89f",
+      "clover_frame_sha256": "248b53417023e8236927558c99d8293be044feb87939e663edd48179dd28d89f",
+      "self_report": "passed",
+      "status": "SELF_REPORT_PASS"
+    },
+    "blargg-exec-from-io-1": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "715b706d59d51029da043909a57d04a1c85791a02c82c7f13c90fdc0fbd1a210",
+      "clover_frame_sha256": "715b706d59d51029da043909a57d04a1c85791a02c82c7f13c90fdc0fbd1a210",
+      "self_report": "passed",
+      "status": "SELF_REPORT_PASS"
+    },
+    "blargg-exec-from-io-2": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "dd228d1e3ca46bab90f97fec2873a498f608f5b2a66a2e56f9a178d756408c51",
+      "clover_frame_sha256": "dd228d1e3ca46bab90f97fec2873a498f608f5b2a66a2e56f9a178d756408c51",
+      "self_report": "passed",
+      "status": "SELF_REPORT_PASS"
+    },
+    "blargg-exec-from-io-3": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "3a1204bcdd4fa2d73b628c10582ae37f817ca4fc638085d4d311f40246716f15",
+      "clover_frame_sha256": "3a1204bcdd4fa2d73b628c10582ae37f817ca4fc638085d4d311f40246716f15",
+      "self_report": "passed",
+      "status": "SELF_REPORT_PASS"
+    },
+    "blargg-exec-from-io-4": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "7bfdefde68653373747e0a5dad2824d8406940166fff8aaa3d7b50db6fd295cb",
+      "clover_frame_sha256": "7bfdefde68653373747e0a5dad2824d8406940166fff8aaa3d7b50db6fd295cb",
+      "self_report": "passed",
+      "status": "SELF_REPORT_PASS"
+    },
+    "blargg-spc-dsp6": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "2e8625366ad45438930f62a2e418d6096dfb25a3f1d2185b4c99f0e47418d8fa",
+      "clover_frame_sha256": "2e8625366ad45438930f62a2e418d6096dfb25a3f1d2185b4c99f0e47418d8fa",
+      "self_report": "passed",
+      "status": "SELF_REPORT_PASS"
+    },
+    "blargg-spc-memory-access-times": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "cd805b36f649a3d46417e301362971a24f3e3a648139517b9d851f7a975eb1c1",
+      "clover_frame_sha256": "cd805b36f649a3d46417e301362971a24f3e3a648139517b9d851f7a975eb1c1",
+      "self_report": "passed",
+      "status": "SELF_REPORT_PASS"
+    },
+    "blargg-spc-smp": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "6982264b6b3642837520388632417966867ef5b7ee934cf9d686431f3a45f05e",
+      "clover_frame_sha256": "6982264b6b3642837520388632417966867ef5b7ee934cf9d686431f3a45f05e",
+      "self_report": "passed",
+      "status": "SELF_REPORT_PASS"
+    },
+    "blargg-spc-timer": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "b29dc4ac793a03d1a4de06bd406394b7002ae13a7191d0b0311b8fefbc61d942",
+      "clover_frame_sha256": "b29dc4ac793a03d1a4de06bd406394b7002ae13a7191d0b0311b8fefbc61d942",
+      "self_report": "passed",
+      "status": "SELF_REPORT_PASS"
+    },
+    "blargg-speed-2-freezes-2": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "cfa560be0757bca12ea4b16006803d853ea8f3e750614349a873755f1b0abd98",
+      "clover_frame_sha256": "cfa560be0757bca12ea4b16006803d853ea8f3e750614349a873755f1b0abd98",
+      "status": "BSNES_MATCH"
+    },
+    "blargg-test-speed": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "f33b4abb774062af715dd829bd14a8a7d852659c194e1503e36cf68d5e1b491f",
+      "clover_frame_sha256": "f33b4abb774062af715dd829bd14a8a7d852659c194e1503e36cf68d5e1b491f",
+      "status": "BSNES_MATCH"
+    },
+    "blargg-timer-at-power-reset": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "0ecb46914e344744774a751583910a4e744f8451fb93d95a0140ed1ce3fbae5b",
+      "clover_frame_sha256": "0ecb46914e344744774a751583910a4e744f8451fb93d95a0140ed1ce3fbae5b",
+      "self_report": "passed",
+      "status": "SELF_REPORT_PASS"
+    },
+    "blargg-timer-speed": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "19e2f44747965103f72674cfc912597d2c4a5d7d44ae1011cb4032e5c1c2eb40",
+      "clover_frame_sha256": "19e2f44747965103f72674cfc912597d2c4a5d7d44ae1011cb4032e5c1c2eb40",
+      "self_report": "passed",
+      "status": "SELF_REPORT_PASS"
+    },
+    "blargg-timer-speed-2": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "19e2f44747965103f72674cfc912597d2c4a5d7d44ae1011cb4032e5c1c2eb40",
+      "clover_frame_sha256": "19e2f44747965103f72674cfc912597d2c4a5d7d44ae1011cb4032e5c1c2eb40",
+      "self_report": "passed",
+      "status": "SELF_REPORT_PASS"
+    },
+    "blargg-timer-speed-2-alt": {
+      "bsnes_exact": false,
+      "bsnes_frame_sha256": "6b55583c802397b967d42a9ff6333f69744995158b185d182c2e46547b8af538",
+      "clover_frame_sha256": "fa137d10ebfe56cadd2aea28f00d24ed39fea2bd6c18a5016050d1a73b2e784a",
+      "self_report": "passed",
+      "status": "SELF_REPORT_PASS"
+    },
+    "blargg-timer-speed-3": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "3908593c386dca3d58ce4aefbf6caa2b81b04d23144a4f91f7481fa2efc5a645",
+      "clover_frame_sha256": "3908593c386dca3d58ce4aefbf6caa2b81b04d23144a4f91f7481fa2efc5a645",
+      "status": "BSNES_MATCH"
+    },
+    "blargg-timer-stop": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "33c57ed70536ad766e468caf4e5a22d93fddcbf7a668465697ef180b89d90d61",
+      "clover_frame_sha256": "33c57ed70536ad766e468caf4e5a22d93fddcbf7a668465697ef180b89d90d61",
+      "self_report": "passed",
+      "status": "SELF_REPORT_PASS"
+    },
+    "blargg-timer-stop-2": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "5cf56e7bff36a010e751eacb38c0ee662fa88230b1c924eb0cb121ceb18d5326",
+      "clover_frame_sha256": "5cf56e7bff36a010e751eacb38c0ee662fa88230b1c924eb0cb121ceb18d5326",
+      "self_report": "passed",
+      "status": "SELF_REPORT_PASS"
+    },
+    "gilyon-cpu-opcode-conformance": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "9da753c21884ae404615b2d538cd1363fa9d877e15e5f04964f8c16029db986b",
+      "clover_frame_sha256": "9da753c21884ae404615b2d538cd1363fa9d877e15e5f04964f8c16029db986b",
+      "self_report": "passed",
+      "status": "SELF_REPORT_PASS"
+    },
+    "gilyon-spc700-opcode-conformance": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "78f30a95a34c8340620811103d5f3c56f996013321e3654b24a4e418014b360b",
+      "clover_frame_sha256": "78f30a95a34c8340620811103d5f3c56f996013321e3654b24a4e418014b360b",
+      "self_report": "passed",
+      "status": "SELF_REPORT_PASS"
+    },
+    "peterlemon-cpu-adc": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "f6e22c8edaf9e1c230f6139715560ade205f4ed31a18fbb7c78f5768a19b5d70",
+      "clover_frame_sha256": "f6e22c8edaf9e1c230f6139715560ade205f4ed31a18fbb7c78f5768a19b5d70",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-cpu-and": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "1d5120076cbb436c147fb8620cf15b47fa47a6f8d8c7da499d0f85ee8dca871c",
+      "clover_frame_sha256": "1d5120076cbb436c147fb8620cf15b47fa47a6f8d8c7da499d0f85ee8dca871c",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-cpu-asl": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "32a0f2f9990c6e940a62ec639437ecc6aacf634af1ddfdc0dcd665c25bde14d1",
+      "clover_frame_sha256": "32a0f2f9990c6e940a62ec639437ecc6aacf634af1ddfdc0dcd665c25bde14d1",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-cpu-bit": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "f5cd101c337ba32d82cb5c2fac0892a77b298a36d2d44a952f573d5e0928e69e",
+      "clover_frame_sha256": "f5cd101c337ba32d82cb5c2fac0892a77b298a36d2d44a952f573d5e0928e69e",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-cpu-branch": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "ddc03b0a85aea6a9c1b0eecfcb8c13163022ab4d326c850e2079679ec23e40fd",
+      "clover_frame_sha256": "ddc03b0a85aea6a9c1b0eecfcb8c13163022ab4d326c850e2079679ec23e40fd",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-cpu-compare": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "2e6ebdc6581ca6863006f2fe35bf1a16fb16a1178b024c6aa4cb6ca215c4b40c",
+      "clover_frame_sha256": "2e6ebdc6581ca6863006f2fe35bf1a16fb16a1178b024c6aa4cb6ca215c4b40c",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-cpu-decrement": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "5ec1f70ff4f5fd377254bb6c0355efdff1ed6dd58804ea96699506ef9403ec3f",
+      "clover_frame_sha256": "5ec1f70ff4f5fd377254bb6c0355efdff1ed6dd58804ea96699506ef9403ec3f",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-cpu-eor": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "bd3dfc393f362d56d7770bedec484d38fc869960d1fab3f677f98812037c41dc",
+      "clover_frame_sha256": "bd3dfc393f362d56d7770bedec484d38fc869960d1fab3f677f98812037c41dc",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-cpu-increment": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "ac7a5439132c308482f3cce8ab925e6cc07fed7f32565ec0c3cd8b35030be6d8",
+      "clover_frame_sha256": "ac7a5439132c308482f3cce8ab925e6cc07fed7f32565ec0c3cd8b35030be6d8",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-cpu-jump": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "6742432d3af4181a8aee738eb46c7c5d73ee8b36cd7130bdc591d093f594861c",
+      "clover_frame_sha256": "6742432d3af4181a8aee738eb46c7c5d73ee8b36cd7130bdc591d093f594861c",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-cpu-load": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "68a8cb921a24daf0a479f0553b559d4be222180dfd65cc332f619651f0e01bfa",
+      "clover_frame_sha256": "68a8cb921a24daf0a479f0553b559d4be222180dfd65cc332f619651f0e01bfa",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-cpu-lsr": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "a0fbe5a6170a26b0db85656754f377e93514ef769ea9182a52ef99829f70e4ea",
+      "clover_frame_sha256": "a0fbe5a6170a26b0db85656754f377e93514ef769ea9182a52ef99829f70e4ea",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-cpu-misc": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "51ba031e97c86265c3946b977cf1ccdfa83cc204ee7de3514299913cfc0d5ebf",
+      "clover_frame_sha256": "51ba031e97c86265c3946b977cf1ccdfa83cc204ee7de3514299913cfc0d5ebf",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-cpu-move": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "c9d0b77faa02f93f0744013f6339ca2a51afa7299b96899bc915093b5f6cd856",
+      "clover_frame_sha256": "c9d0b77faa02f93f0744013f6339ca2a51afa7299b96899bc915093b5f6cd856",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-cpu-ora": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "3ff4c4531c74680eb66e9f24c87e404ac7be994774d9f0c74fdf9dff95684056",
+      "clover_frame_sha256": "3ff4c4531c74680eb66e9f24c87e404ac7be994774d9f0c74fdf9dff95684056",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-cpu-push-pull": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "30f981220ae4e027c3a354044562f04fcce95574a54bac8edf41f6fe594ebd45",
+      "clover_frame_sha256": "30f981220ae4e027c3a354044562f04fcce95574a54bac8edf41f6fe594ebd45",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-cpu-return": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "ac993b832c12aebf8698f490483d0e4708cf890a14263c58ccfc50b2e3d7475d",
+      "clover_frame_sha256": "ac993b832c12aebf8698f490483d0e4708cf890a14263c58ccfc50b2e3d7475d",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-cpu-rol": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "39b06e0a32e4d037bbf1f888f5cfe6543aac1db5f1972a7059b9a78cce77f36c",
+      "clover_frame_sha256": "39b06e0a32e4d037bbf1f888f5cfe6543aac1db5f1972a7059b9a78cce77f36c",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-cpu-ror": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "529ed9dc9f6c734046038a8bdf55a4be1b24b093f1d4d112bf9a08a55742aaf2",
+      "clover_frame_sha256": "529ed9dc9f6c734046038a8bdf55a4be1b24b093f1d4d112bf9a08a55742aaf2",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-cpu-sbc": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "a6a0972180188967a1bfb66fa105c2dd1983aa85a8d1bb095348b016585ef190",
+      "clover_frame_sha256": "a6a0972180188967a1bfb66fa105c2dd1983aa85a8d1bb095348b016585ef190",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-cpu-status": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "56ce90315705d76128ef3d48a6419ecb9cf7d17e0d881b559387de1d6284e0c6",
+      "clover_frame_sha256": "56ce90315705d76128ef3d48a6419ecb9cf7d17e0d881b559387de1d6284e0c6",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-cpu-store": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "f2083b2411be9f66f80c1cde06b1936dd3716636e657d53b3fe4534ff3e08edc",
+      "clover_frame_sha256": "f2083b2411be9f66f80c1cde06b1936dd3716636e657d53b3fe4534ff3e08edc",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-cpu-transfer": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "f8a0e9fbe8c8b3f6744410a8b49c45e4d6a56882f459d03384cc9f9d54a7b22c",
+      "clover_frame_sha256": "f8a0e9fbe8c8b3f6744410a8b49c45e4d6a56882f459d03384cc9f9d54a7b22c",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-spc700-adc": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "3fcd69d372c785a69e07f442156bba6a01859b400158e4af3db438c04174b88b",
+      "clover_frame_sha256": "3fcd69d372c785a69e07f442156bba6a01859b400158e4af3db438c04174b88b",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-spc700-and": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "2ce0c91317f9cfe19f745d570a1bc7b9c5d2a006d7699ac3f272e5aadccb5b33",
+      "clover_frame_sha256": "2ce0c91317f9cfe19f745d570a1bc7b9c5d2a006d7699ac3f272e5aadccb5b33",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-spc700-decrement": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "fd0f7d39aed50094e95bfe7de99e1e631a249030f03efae329a0ab0ed378d916",
+      "clover_frame_sha256": "fd0f7d39aed50094e95bfe7de99e1e631a249030f03efae329a0ab0ed378d916",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-spc700-eor": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "85039c0f252753ac93a28cfca793fb28c8abe28c2f47d18357f89edad2195a38",
+      "clover_frame_sha256": "85039c0f252753ac93a28cfca793fb28c8abe28c2f47d18357f89edad2195a38",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-spc700-increment": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "d6c14fcfbaf5bf02d5c596962b6a6d3fdb5667cc7729efc27938fbdb91b9d9f0",
+      "clover_frame_sha256": "d6c14fcfbaf5bf02d5c596962b6a6d3fdb5667cc7729efc27938fbdb91b9d9f0",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-spc700-ora": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "52a772cbf5c37acc80388c5060035de70bcb4e4f4963202c07af9015970b727a",
+      "clover_frame_sha256": "52a772cbf5c37acc80388c5060035de70bcb4e4f4963202c07af9015970b727a",
+      "status": "BSNES_MATCH"
+    },
+    "peterlemon-spc700-sbc": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "5d6a53417b3e6ee166ecab406e8c243766554b14f5d8de74b246db2f94a9d221",
+      "clover_frame_sha256": "5d6a53417b3e6ee166ecab406e8c243766554b14f5d8de74b246db2f94a9d221",
+      "status": "BSNES_MATCH"
+    },
+    "ppu-actualmix-blendtest": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "99952797410bc3656fa2ba4c25b43021a51a05b7f1781d8f25635bbb0e34027f",
+      "clover_frame_sha256": "99952797410bc3656fa2ba4c25b43021a51a05b7f1781d8f25635bbb0e34027f",
+      "status": "BSNES_MATCH"
+    },
+    "ppu-bus-activity": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "454534733d7c6f43cedb9f65712e2b4d0bec4a01b457ba13e93c0c6bbec9279c",
+      "clover_frame_sha256": "454534733d7c6f43cedb9f65712e2b4d0bec4a01b457ba13e93c0c6bbec9279c",
+      "status": "BSNES_MATCH"
+    },
+    "ppu-gradient-cgwsel": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "84831294534c28a0d633576f364b5b5a3926374523551ef561710fb1afbcd98a",
+      "clover_frame_sha256": "84831294534c28a0d633576f364b5b5a3926374523551ef561710fb1afbcd98a",
+      "status": "BSNES_MATCH"
+    },
+    "ppu-hblank-emulation": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "dc4961d3295f34472ae4ce2a529c24a44a72e6c72c8b1b6508fa1e55ee4fd1c8",
+      "clover_frame_sha256": "dc4961d3295f34472ae4ce2a529c24a44a72e6c72c8b1b6508fa1e55ee4fd1c8",
+      "status": "BSNES_MATCH"
+    },
+    "ppu-hblank-vram-dma": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "96ed10c47b3b4ef96356bde2b1e1aa7a24f4024314b3cc938eec0ea4864b68da",
+      "clover_frame_sha256": "96ed10c47b3b4ef96356bde2b1e1aa7a24f4024314b3cc938eec0ea4864b68da",
+      "status": "BSNES_MATCH"
+    },
+    "ppu-hblank-vram-dma-maximum": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "358adc76e10dbe168c510d5fc5766010a05082a2a989d84b44d5ef8b7aaddc76",
+      "clover_frame_sha256": "358adc76e10dbe168c510d5fc5766010a05082a2a989d84b44d5ef8b7aaddc76",
+      "status": "BSNES_MATCH"
+    },
+    "ppu-ladida-midframe-hdma": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "752d517c6508c8c5f0d699048879220e3b6326cb0e8f36981af8feaed2407ec6",
+      "clover_frame_sha256": "752d517c6508c8c5f0d699048879220e3b6326cb0e8f36981af8feaed2407ec6",
+      "status": "BSNES_MATCH"
+    },
+    "ppu-mode3-elasticity": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "8ab61596271da25bdbbcdf444a27748d53b5fedd79b5ddc962887e5c107704cc",
+      "clover_frame_sha256": "8ab61596271da25bdbbcdf444a27748d53b5fedd79b5ddc962887e5c107704cc",
+      "status": "BSNES_MATCH"
+    },
+    "ppu-mode5-interlace-twoship": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "f3bde1226c97dabf15bdb9df27aa5c606c89343f8fe1453133a43a11f2b380cd",
+      "clover_frame_sha256": "f3bde1226c97dabf15bdb9df27aa5c606c89343f8fe1453133a43a11f2b380cd",
+      "status": "BSNES_MATCH"
+    },
+    "ppu-mode7-extbg": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "714a8fced19065bbb5418400916400114adcec549944bed1aa8d93673fe97b03",
+      "clover_frame_sha256": "714a8fced19065bbb5418400916400114adcec549944bed1aa8d93673fe97b03",
+      "status": "BSNES_MATCH"
+    },
+    "ppu-opt-mode2-big-map": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "639de68cde0b7adf248d5f463b4e1c0704698bf8debe2a917f3b1c263238ccb5",
+      "clover_frame_sha256": "639de68cde0b7adf248d5f463b4e1c0704698bf8debe2a917f3b1c263238ccb5",
+      "status": "BSNES_MATCH"
+    },
+    "ppu-opt-mode6-big-map": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "30c7c50995ddb5d7d06b24207fcc4c3ab582abb73d4ebf742309489d815468e9",
+      "clover_frame_sha256": "30c7c50995ddb5d7d06b24207fcc4c3ab582abb73d4ebf742309489d815468e9",
+      "status": "BSNES_MATCH"
+    },
+    "ppu-split-screen": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "bfd5a9cdcc19894f97541ef57e0ecd76843379836838306d2e2924055203a436",
+      "clover_frame_sha256": "bfd5a9cdcc19894f97541ef57e0ecd76843379836838306d2e2924055203a436",
+      "status": "BSNES_MATCH"
+    },
+    "sour-cpu-opcode-timing-v2": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "6f73624ef795b48dcfcd58a857722e6b29b2afe506bd7c760c4696c09fcea655",
+      "clover_frame_sha256": "6f73624ef795b48dcfcd58a857722e6b29b2afe506bd7c760c4696c09fcea655",
+      "status": "BSNES_MATCH"
+    },
+    "sour-dma-interrupt-boundary": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "53abd275ffc68110037078b944657ddca7fbc45cb00d34033cff66de3d23e7c1",
+      "clover_frame_sha256": "53abd275ffc68110037078b944657ddca7fbc45cb00d34033cff66de3d23e7c1",
+      "status": "BSNES_MATCH"
+    },
+    "undisbeliever-hdma-2100-glitch": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "20799f5b016c3fd99ca29c1a7fdf067f1fb2f2346320c86ae9b0ee9398d5dbeb",
+      "clover_frame_sha256": "20799f5b016c3fd99ca29c1a7fdf067f1fb2f2346320c86ae9b0ee9398d5dbeb",
+      "status": "BSNES_MATCH"
+    },
+    "undisbeliever-hdma-2100-glitch-2ch-0a": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "b8a885ce1fccf0b3634c69698e68050fa530bb25bd975768722f612abf777ffd",
+      "clover_frame_sha256": "b8a885ce1fccf0b3634c69698e68050fa530bb25bd975768722f612abf777ffd",
+      "status": "BSNES_MATCH"
+    },
+    "undisbeliever-hdma-2100-glitch-2ch-81": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "a00aba19402c2ea160c231c6592732b877cc159d7aaf1aeb0bbc6874c5ef4d28",
+      "clover_frame_sha256": "a00aba19402c2ea160c231c6592732b877cc159d7aaf1aeb0bbc6874c5ef4d28",
+      "status": "BSNES_MATCH"
+    },
+    "undisbeliever-hdma-21ff-2100-0f-glitch": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "20799f5b016c3fd99ca29c1a7fdf067f1fb2f2346320c86ae9b0ee9398d5dbeb",
+      "clover_frame_sha256": "20799f5b016c3fd99ca29c1a7fdf067f1fb2f2346320c86ae9b0ee9398d5dbeb",
+      "status": "BSNES_MATCH"
+    },
+    "undisbeliever-hdma-21ff-2100-glitch": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "d97bc7a540a97a76f3ec3cca972fdf8a53a4d9eaf1ad306581dd10a27974c6d5",
+      "clover_frame_sha256": "d97bc7a540a97a76f3ec3cca972fdf8a53a4d9eaf1ad306581dd10a27974c6d5",
+      "status": "BSNES_MATCH"
+    },
+    "undisbeliever-hdma-21ff-glitch": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "20799f5b016c3fd99ca29c1a7fdf067f1fb2f2346320c86ae9b0ee9398d5dbeb",
+      "clover_frame_sha256": "20799f5b016c3fd99ca29c1a7fdf067f1fb2f2346320c86ae9b0ee9398d5dbeb",
+      "status": "BSNES_MATCH"
+    },
+    "undisbeliever-hdmaen-latch": {
+      "bsnes_exact": false,
+      "bsnes_frame_sha256": "315b7c837f24c355f16370edb3c098f6553b1ae559fc6a8a0ecf7450a878e493",
+      "clover_frame_sha256": "4aaeea6d541cc6691355e4300050fea8bd93c51be59756767084b9009d983fc4",
+      "status": "BSNES_DIFFERENCE"
+    },
+    "undisbeliever-hdmaen-latch-2": {
+      "bsnes_exact": false,
+      "bsnes_frame_sha256": "6b922dccaae2194e02226637e7907dd430eec7041d12050d4c76be5eacc90795",
+      "clover_frame_sha256": "e096f31548527f39de8393335491fb548e2e924d1852c9f118a86baa61a22f35",
+      "status": "BSNES_DIFFERENCE"
+    },
+    "undisbeliever-inidisp-brightness-delay": {
+      "bsnes_exact": false,
+      "bsnes_frame_sha256": "1ecf67194260f374653a41fe6123cb3a16cf41051def892496ba031b57a8fb5c",
+      "clover_frame_sha256": "8140d849cc3a184e55667216f584c37db343b262193a0e29fc4a2c1380ef6c23",
+      "status": "BSNES_DIFFERENCE"
+    },
+    "undisbeliever-inidisp-d7-glitch": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "20799f5b016c3fd99ca29c1a7fdf067f1fb2f2346320c86ae9b0ee9398d5dbeb",
+      "clover_frame_sha256": "20799f5b016c3fd99ca29c1a7fdf067f1fb2f2346320c86ae9b0ee9398d5dbeb",
+      "status": "BSNES_MATCH"
+    },
+    "undisbeliever-inidisp-enable-mid-frame": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "1672d9d06fa35638fd0e07a7105fcba04ff080bc6e7570e9eebb0db5e9e02985",
+      "clover_frame_sha256": "1672d9d06fa35638fd0e07a7105fcba04ff080bc6e7570e9eebb0db5e9e02985",
+      "status": "BSNES_MATCH"
+    },
+    "undisbeliever-inidisp-force-blank": {
+      "bsnes_exact": false,
+      "bsnes_frame_sha256": "75fa4ec64d8b997fac05e132243e82ee8feda4250f4696400b7a1bcf30a5d4e7",
+      "clover_frame_sha256": "82425b8fdbfee9b982d27dfdcf8f7057d8153d3e198ccdcc501cdd8b8b5cb198",
+      "status": "BSNES_DIFFERENCE"
+    },
+    "undisbeliever-inidisp-hammer-0f": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "20799f5b016c3fd99ca29c1a7fdf067f1fb2f2346320c86ae9b0ee9398d5dbeb",
+      "clover_frame_sha256": "20799f5b016c3fd99ca29c1a7fdf067f1fb2f2346320c86ae9b0ee9398d5dbeb",
+      "status": "BSNES_MATCH"
+    },
+    "undisbeliever-inidisp-hammer-0f-long": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "20799f5b016c3fd99ca29c1a7fdf067f1fb2f2346320c86ae9b0ee9398d5dbeb",
+      "clover_frame_sha256": "20799f5b016c3fd99ca29c1a7fdf067f1fb2f2346320c86ae9b0ee9398d5dbeb",
+      "status": "BSNES_MATCH"
+    },
+    "undisbeliever-inidisp-hammer-0f00": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "20799f5b016c3fd99ca29c1a7fdf067f1fb2f2346320c86ae9b0ee9398d5dbeb",
+      "clover_frame_sha256": "20799f5b016c3fd99ca29c1a7fdf067f1fb2f2346320c86ae9b0ee9398d5dbeb",
+      "status": "BSNES_MATCH"
+    },
+    "undisbeliever-inidisp-hammer-0f0f": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "20799f5b016c3fd99ca29c1a7fdf067f1fb2f2346320c86ae9b0ee9398d5dbeb",
+      "clover_frame_sha256": "20799f5b016c3fd99ca29c1a7fdf067f1fb2f2346320c86ae9b0ee9398d5dbeb",
+      "status": "BSNES_MATCH"
+    },
+    "undisbeliever-inidisp-hammer-0f8f": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "20799f5b016c3fd99ca29c1a7fdf067f1fb2f2346320c86ae9b0ee9398d5dbeb",
+      "clover_frame_sha256": "20799f5b016c3fd99ca29c1a7fdf067f1fb2f2346320c86ae9b0ee9398d5dbeb",
+      "status": "BSNES_MATCH"
+    },
+    "undisbeliever-inidisp-hammer-0f8f-fast": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "20799f5b016c3fd99ca29c1a7fdf067f1fb2f2346320c86ae9b0ee9398d5dbeb",
+      "clover_frame_sha256": "20799f5b016c3fd99ca29c1a7fdf067f1fb2f2346320c86ae9b0ee9398d5dbeb",
+      "status": "BSNES_MATCH"
+    },
+    "undisbeliever-inidisp-hammer-8f0f": {
+      "bsnes_exact": true,
+      "bsnes_frame_sha256": "6f73624ef795b48dcfcd58a857722e6b29b2afe506bd7c760c4696c09fcea655",
+      "clover_frame_sha256": "6f73624ef795b48dcfcd58a857722e6b29b2afe506bd7c760c4696c09fcea655",
+      "status": "BSNES_MATCH"
+    },
+    "undisbeliever-scpu-a-dma-bug-1": {
+      "bsnes_frame_sha256": null,
+      "clover_frame_sha256": null,
+      "status": "NOT_APPLICABLE"
+    },
+    "undisbeliever-scpu-a-dma-bug-2": {
+      "bsnes_frame_sha256": null,
+      "clover_frame_sha256": null,
+      "status": "NOT_APPLICABLE"
+    },
+    "undisbeliever-scpu-a-dma-bug-3": {
+      "bsnes_frame_sha256": null,
+      "clover_frame_sha256": null,
+      "status": "NOT_APPLICABLE"
+    },
+    "undisbeliever-scpu-a-dma-bug-5": {
+      "bsnes_frame_sha256": null,
+      "clover_frame_sha256": null,
+      "status": "NOT_APPLICABLE"
+    },
+    "undisbeliever-scpu-a-dma-bug-ch0": {
+      "bsnes_frame_sha256": null,
+      "clover_frame_sha256": null,
+      "status": "NOT_APPLICABLE"
+    },
+    "undisbeliever-scpu-a-dma-bug-fix": {
+      "bsnes_frame_sha256": null,
+      "clover_frame_sha256": null,
+      "status": "NOT_APPLICABLE"
+    },
+    "undisbeliever-scpu-a-dma-bug-fix2": {
+      "bsnes_frame_sha256": null,
+      "clover_frame_sha256": null,
+      "status": "NOT_APPLICABLE"
+    },
+    "undisbeliever-scpu-a-dma-bug-r2": {
+      "bsnes_frame_sha256": null,
+      "clover_frame_sha256": null,
+      "status": "NOT_APPLICABLE"
+    },
+    "undisbeliever-scpu-a-dma-bug-strange": {
+      "bsnes_frame_sha256": null,
+      "clover_frame_sha256": null,
+      "status": "NOT_APPLICABLE"
+    },
+    "undisbeliever-scpu-a-dma-bug-two-regs": {
+      "bsnes_frame_sha256": null,
+      "clover_frame_sha256": null,
+      "status": "NOT_APPLICABLE"
+    }
+  },
+  "version": 1
+}

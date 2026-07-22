@@ -71,7 +71,7 @@ From a configured build containing the local hash-pinned ROM corpus:
 ctest --test-dir cmake-build-sdl-release --output-on-failure
 python3 scripts/run_accuracy_fence.py --build-dir cmake-build-sdl-release
 python3 scripts/run_hardware_validation.py --suite all \
-  --build-dir cmake-build-sdl-release
+  --build-dir cmake-build-sdl-release --regression
 ```
 
 The hardware runner intentionally preserves the distinction between

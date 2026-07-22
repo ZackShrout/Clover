@@ -33,9 +33,10 @@ source revisions, deferred device/enhancement-chip lanes, and verdict hierarchy
 are recorded in [`SNES_TEST_CORPUS.md`](SNES_TEST_CORPUS.md).
 
 Each entry has a stable ID, source collection, subsystem category, suite tags,
-automation requirement, observation frame, hardware-profile scope, and SHA-256
-identity. Archive members are first-class tests and are hash-checked after
-extraction. Memory dumps and notes are supporting material, not executable ROMs.
+automation requirement, observation frame, hardware-profile scope, expected
+status per implemented profile, and SHA-256 identity. Archive members are
+first-class tests and are hash-checked after extraction. Memory dumps and notes
+are supporting material, not executable ROMs.
 
 Despite its local directory name, `snes-test-roms` is not an official Nintendo
 test collection. Nintendo's known official programs include the SNES Aging Test
@@ -83,11 +84,33 @@ python3 scripts/run_hardware_validation.py --suite all --jobs 8
 python3 scripts/run_hardware_validation.py --suite all --list
 python3 scripts/run_hardware_validation.py --suite all \
   --output-dir /private/tmp/clover-hardware-baseline
+python3 scripts/run_hardware_validation.py --suite all --regression
 ```
 
 `--strict` requires every applicable selected case to be backed by an approved
 exact hardware reference. This is intentionally stronger than the ordinary
 baseline and will remain red until the hardware-reference library is populated.
+
+`--regression` is the day-to-day accuracy gate. It requires every selected case
+to reach its manifest-declared, profile-specific status and compares its compact
+observation record against
+[`validation/hardware_baseline.json`](../validation/hardware_baseline.json).
+The observation record pins Clover and bsnes frame hashes plus the relevant
+self-report and comparison verdicts. A stable `BSNES_DIFFERENCE` may therefore
+be an accepted regression outcome for a characterization ROM; this preserves
+the observation without mislabeling it as hardware truth.
+
+Refreshing the baseline is an explicit full-suite operation:
+
+```bash
+python3 scripts/run_hardware_validation.py --suite all --write-baseline
+```
+
+The runner refuses to write it if ordinary failures or manifest expectation
+drift are present. Baseline changes should be reviewed as accuracy-model changes,
+not accepted merely because a new run produced them. `--regression` and
+`--write-baseline` require the differential lane and cannot be combined with
+`--clover-only`.
 
 ## Status Vocabulary
 

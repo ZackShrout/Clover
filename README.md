@@ -193,6 +193,7 @@ hardware-revision scope, and preserves JSON, Markdown, frame, and log artifacts:
 ```bash
 python3 scripts/run_hardware_validation.py --suite smoke
 python3 scripts/run_hardware_validation.py --suite all
+python3 scripts/run_hardware_validation.py --suite all --regression
 ```
 
 bsnes is retained as useful differential evidence, but agreement with it is not

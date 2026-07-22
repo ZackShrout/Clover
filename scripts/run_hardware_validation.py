@@ -19,8 +19,15 @@ from typing import Any
 
 
 DEFAULT_MANIFEST = Path("validation/hardware_tests.json")
+DEFAULT_BASELINE = Path("validation/hardware_baseline.json")
 DEFAULT_BSNES_CORE = Path("../bsnes/bsnes/out/bsnes_libretro.dylib")
 REQUIRED_TOOLS = ("clover_rom_bringup", "clover_bsnes_bringup", "clover_frame_compare")
+RESULT_STATUSES = {
+    "VERIFIED", "HARDWARE_DIFFERENCE", "SELF_REPORT_PASS", "SELF_REPORT_FAIL",
+    "SELF_REPORT_PENDING", "BSNES_MATCH", "BSNES_DIFFERENCE", "OBSERVED",
+    "NOT_APPLICABLE", "NEEDS_AUTOMATION", "ERROR", "BSNES_ERROR",
+    "MISSING_REFERENCE",
+}
 
 
 @dataclass(frozen=True)
@@ -40,6 +47,7 @@ class test_t:
     input_script: Path | None
     reset_frames: tuple[int, ...]
     hardware_profiles: tuple[str, ...]
+    expected_status: dict[str, str]
     reference: Path | None
     notes: str
 
@@ -54,9 +62,13 @@ class result_t:
     hardware_profiles: list[str]
     selected_profile: str
     status: str
+    expected_status: str = ""
+    expectation_met: bool = False
     clover_ok: bool = False
+    clover_frame_sha256: str | None = None
     self_report: str | None = None
     bsnes_ok: bool | None = None
+    bsnes_frame_sha256: str | None = None
     reference_compared: bool = False
     reference_exact: bool | None = None
     bsnes_compared: bool = False
@@ -107,6 +119,19 @@ def load_manifest(path: Path, workspace: Path) -> list[test_t]:
         raise ValueError("hardware-test manifest has invalid collection provenance")
 
     defaults = raw.get("defaults", {})
+    expectations_raw = raw.get("expectations")
+    if not isinstance(expectations_raw, dict):
+        raise ValueError("hardware-test manifest must contain profile-scoped expectations")
+    expectations: dict[str, dict[str, str]] = {}
+    for profile, profile_expectations in expectations_raw.items():
+        if not isinstance(profile_expectations, dict):
+            raise ValueError(f"expectations for profile {profile!r} must be an object")
+        expectations[str(profile)] = {
+            str(test_id): str(status)
+            for test_id, status in profile_expectations.items()
+        }
+        if any(status not in RESULT_STATUSES for status in expectations[str(profile)].values()):
+            raise ValueError(f"profile {profile!r} declares an unknown expected status")
     items = raw.get("tests")
     if not isinstance(items, list) or not items:
         raise ValueError("hardware-test manifest must contain tests")
@@ -153,6 +178,17 @@ def load_manifest(path: Path, workspace: Path) -> list[test_t]:
             raise ValueError(f"test {test_id} has invalid limits")
         if not re.fullmatch(r"[0-9a-f]{64}", sha256):
             raise ValueError(f"test {test_id} has invalid SHA-256")
+        expected_status = {
+            profile: expectations[profile][test_id]
+            for profile in expectations
+            if profile in expectations and test_id in expectations[profile]
+        }
+        for profile, status in expected_status.items():
+            applicable = profile in hardware_profiles
+            if applicable == (status == "NOT_APPLICABLE"):
+                raise ValueError(
+                    f"test {test_id} has inconsistent scope and expectation for {profile}"
+                )
 
         rom_raw = item.get("rom")
         archive_raw = item.get("archive")
@@ -181,10 +217,22 @@ def load_manifest(path: Path, workspace: Path) -> list[test_t]:
             input_script=resolve_path(workspace, str(input_script_raw)) if input_script_raw else None,
             reset_frames=reset_frames,
             hardware_profiles=hardware_profiles,
+            expected_status=expected_status,
             reference=resolve_path(workspace, str(reference_raw)) if reference_raw else None,
             notes=notes,
         ))
         seen.add(test_id)
+    unknown_expectations = {
+        test_id
+        for profile_expectations in expectations.values()
+        for test_id in profile_expectations
+        if test_id not in seen
+    }
+    if unknown_expectations:
+        raise ValueError(
+            "expectations reference unknown tests: "
+            + ", ".join(sorted(unknown_expectations))
+        )
     return tests
 
 
@@ -392,7 +440,7 @@ def run_test(
         id=test.id, collection=test.collection, category=test.category,
         method=test.method, frame=test.frame,
         hardware_profiles=list(test.hardware_profiles), selected_profile=selected_profile,
-        status="OBSERVED",
+        status="OBSERVED", expected_status=test.expected_status[selected_profile],
         artifact_directory=str(scenario_dir), notes=test.notes,
     )
 
@@ -436,6 +484,7 @@ def run_test(
         return result
     result.clover_ok = True
     clover_frame = clover_dir / f"frame_{test.frame}.ppm"
+    result.clover_frame_sha256 = sha256_bytes(clover_frame.read_bytes())
     if test.method == "self-report":
         result.self_report = decode_self_report(clover_frame)
         if result.self_report == "passed":
@@ -481,10 +530,12 @@ def run_test(
             result.error = error
             return result
         result.bsnes_ok = True
+        bsnes_frame = bsnes_dir / f"frame_{test.frame}.ppm"
+        result.bsnes_frame_sha256 = sha256_bytes(bsnes_frame.read_bytes())
         result.bsnes_compared = True
         exact, pixels, first = compare_frames(
             build_dir / "clover_frame_compare",
-            bsnes_dir / f"frame_{test.frame}.ppm", clover_frame,
+            bsnes_frame, clover_frame,
             workspace, scenario_dir / "bsnes-compare.log",
         )
         result.bsnes_exact = exact
@@ -500,6 +551,76 @@ def run_test(
         if test.method != "self-report":
             result.status = "OBSERVED"
     return result
+
+
+def baseline_observation(result: result_t) -> dict[str, Any]:
+    observation: dict[str, Any] = {
+        "status": result.status,
+        "clover_frame_sha256": result.clover_frame_sha256,
+        "bsnes_frame_sha256": result.bsnes_frame_sha256,
+    }
+    if result.self_report is not None:
+        observation["self_report"] = result.self_report
+    if result.reference_exact is not None:
+        observation["reference_exact"] = result.reference_exact
+    if result.bsnes_exact is not None:
+        observation["bsnes_exact"] = result.bsnes_exact
+    return observation
+
+
+def write_baseline(path: Path, manifest: Path, selected_profile: str,
+                   results: list[result_t]) -> None:
+    payload = {
+        "version": 1,
+        "hardware_profile": selected_profile,
+        "manifest_sha256": sha256_bytes(manifest.read_bytes()),
+        "scenarios": {
+            result.id: baseline_observation(result) for result in results
+        },
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def compare_baseline(path: Path, manifest: Path, selected_profile: str,
+                     results: list[result_t]) -> list[str]:
+    try:
+        baseline = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        return [f"unable to read regression baseline {path}: {error}"]
+    if baseline.get("version") != 1:
+        return [f"regression baseline {path} has an unsupported version"]
+    if baseline.get("hardware_profile") != selected_profile:
+        return [
+            f"baseline profile {baseline.get('hardware_profile')!r} does not match "
+            f"selected profile {selected_profile!r}"
+        ]
+    expected_manifest_hash = baseline.get("manifest_sha256")
+    actual_manifest_hash = sha256_bytes(manifest.read_bytes())
+    if expected_manifest_hash != actual_manifest_hash:
+        return [
+            "hardware-test manifest differs from the baseline contract: "
+            f"expected {expected_manifest_hash}, actual {actual_manifest_hash}"
+        ]
+    scenarios = baseline.get("scenarios")
+    if not isinstance(scenarios, dict):
+        return [f"regression baseline {path} has no scenario map"]
+
+    mismatches: list[str] = []
+    for result in results:
+        expected = scenarios.get(result.id)
+        if not isinstance(expected, dict):
+            mismatches.append(f"{result.id}: missing from regression baseline")
+            continue
+        actual = baseline_observation(result)
+        if actual != expected:
+            fields = sorted(set(actual) | set(expected))
+            changes = [
+                f"{field} expected={expected.get(field)!r} actual={actual.get(field)!r}"
+                for field in fields if expected.get(field) != actual.get(field)
+            ]
+            mismatches.append(f"{result.id}: " + "; ".join(changes))
+    return mismatches
 
 
 def write_reports(output_root: Path, manifest: Path, selected_profile: str,
@@ -527,8 +648,8 @@ def write_reports(output_root: Path, manifest: Path, selected_profile: str,
         lines.append(f"- {status}: {count}")
     lines.extend([
         "", "## Results", "",
-        "| Test | Collection | Category | Method | Status | Self-report | bsnes | Pixels | Hardware profile |",
-        "|---|---|---|---|---|---|---:|---:|---|",
+        "| Test | Collection | Category | Method | Status | Expected | Contract | Self-report | bsnes | Pixels | Hardware profile |",
+        "|---|---|---|---|---|---|---|---|---:|---:|---|",
     ])
     for result in results:
         bsnes = "—" if result.bsnes_exact is None else ("exact" if result.bsnes_exact else "different")
@@ -536,7 +657,9 @@ def write_reports(output_root: Path, manifest: Path, selected_profile: str,
         profiles = ", ".join(result.hardware_profiles)
         lines.append(
             f"| {result.id} | {result.collection} | {result.category} | {result.method} | "
-            f"{result.status} | {result.self_report or '—'} | {bsnes} | {pixels} | {profiles} |"
+            f"{result.status} | {result.expected_status} | "
+            f"{'met' if result.expectation_met else 'DRIFT'} | {result.self_report or '—'} | "
+            f"{bsnes} | {pixels} | {profiles} |"
         )
     lines.extend([
         "", "## Interpretation", "",
@@ -562,6 +685,15 @@ def main() -> int:
     parser.add_argument("--clover-only", action="store_true")
     parser.add_argument("--skip-tests", action="store_true")
     parser.add_argument("--strict", action="store_true", help="Fail unless every selected test is VERIFIED")
+    parser.add_argument(
+        "--regression", action="store_true",
+        help="Fail on manifest expectation or checked-in baseline drift",
+    )
+    parser.add_argument("--baseline", default=str(DEFAULT_BASELINE))
+    parser.add_argument(
+        "--write-baseline", action="store_true",
+        help="Write the selected full-suite results as the regression baseline",
+    )
     parser.add_argument("--list", action="store_true")
     args = parser.parse_args()
 
@@ -600,13 +732,27 @@ def main() -> int:
     if not selected:
         print(f"No tests selected for suite {args.suite!r}", file=sys.stderr)
         return 1
+    missing_expectations = [
+        test.id for test in selected
+        if selected_profile not in test.expected_status
+    ]
+    if missing_expectations:
+        print(
+            "Missing expected_status for selected hardware profile: "
+            + ", ".join(missing_expectations),
+            file=sys.stderr,
+        )
+        return 1
 
     if args.list:
         for test in selected:
+            expected = (
+                test.expected_status.get(selected_profile, "NOT_APPLICABLE")
+            )
             print(
                 f"{test.id:40} {test.collection:13} {test.category:18} "
                 f"{test.method:17} frame={test.frame:5} automation={test.automation} "
-                f"profiles={','.join(test.hardware_profiles)}"
+                f"expected={expected:18} profiles={','.join(test.hardware_profiles)}"
             )
         return 0
 
@@ -622,6 +768,12 @@ def main() -> int:
         return 1
     if args.jobs < 1 or args.jobs > 32:
         print("--jobs must be between 1 and 32", file=sys.stderr)
+        return 1
+    if (args.regression or args.write_baseline) and args.clover_only:
+        print("--regression and --write-baseline require the bsnes differential lane", file=sys.stderr)
+        return 1
+    if args.write_baseline and (args.suite != "all" or bool(args.scenario)):
+        print("--write-baseline requires an unfiltered --suite all run", file=sys.stderr)
         return 1
 
     if args.output_dir:
@@ -654,6 +806,7 @@ def main() -> int:
             method=test.method, frame=test.frame,
             hardware_profiles=list(test.hardware_profiles), selected_profile=selected_profile,
             status="NOT_APPLICABLE",
+            expected_status=test.expected_status[selected_profile],
             notes=test.notes,
         )
         for test in selected if selected_profile not in test.hardware_profiles
@@ -679,12 +832,32 @@ def main() -> int:
 
     order = {test.id: index for index, test in enumerate(selected)}
     results.sort(key=lambda result: order[result.id])
+    for result in results:
+        result.expectation_met = result.status == result.expected_status
     write_reports(output_root, manifest, selected_profile, results)
 
     failures = [result for result in results if result.status in {
         "ERROR", "BSNES_ERROR", "MISSING_REFERENCE", "SELF_REPORT_FAIL", "HARDWARE_DIFFERENCE"
     }]
     unresolved = [result for result in results if result.status not in {"VERIFIED", "NOT_APPLICABLE"}]
+    expectation_drift = [result for result in results if not result.expectation_met]
+    baseline_mismatches: list[str] = []
+    baseline = resolve_path(workspace, args.baseline)
+    if args.regression:
+        baseline_mismatches = compare_baseline(baseline, manifest, selected_profile, results)
+        if baseline_mismatches:
+            print("\nRegression baseline drift:", file=sys.stderr)
+            for mismatch in baseline_mismatches:
+                print(f"- {mismatch}", file=sys.stderr)
+    if args.write_baseline:
+        if failures or expectation_drift:
+            print(
+                "Refusing to write a baseline from failing or expectation-drifted results.",
+                file=sys.stderr,
+            )
+        else:
+            write_baseline(baseline, manifest, selected_profile, results)
+            print(f"Regression baseline written: {baseline}")
     verified_count = sum(result.status == "VERIFIED" for result in results)
     print(f"\nReport: {output_root / 'report.md'}")
     print(f"Machine report: {output_root / 'report.json'}")
@@ -693,7 +866,12 @@ def main() -> int:
         f"unresolved/evidence-only: {len(unresolved)}"
     )
 
-    failed = bool(failures) or (args.strict and bool(unresolved))
+    failed = (
+        bool(failures)
+        or (args.strict and bool(unresolved))
+        or (args.regression and (bool(expectation_drift) or bool(baseline_mismatches)))
+        or (args.write_baseline and (bool(failures) or bool(expectation_drift)))
+    )
     print(f"Artifacts preserved: {output_root}")
     return 1 if failed else 0
 

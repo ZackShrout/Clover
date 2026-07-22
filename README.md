@@ -12,8 +12,8 @@ acceptable substitute for modeling the machine correctly.
 Clover currently includes:
 
 - a headless SNES core with 65C816 CPU, PPU, SPC700/DSP audio, DMA/HDMA,
-  interrupts, controller input, LoROM/HiROM cartridge mapping, and automatic
-  NTSC/PAL timing
+  interrupts, controller input, LoROM/HiROM cartridge mapping, CX4 cartridge
+  enhancement hardware, and automatic NTSC/PAL timing
 - a system-neutral frontend seam around the SNES core
 - an SDL3 desktop app with video, audio, keyboard/gamepad input, frame pacing,
   and deterministic investigation captures
@@ -31,7 +31,12 @@ The complete curated validation battery is green for the canonical NTSC late
 3-chip profile, including the 65C816 and SPC700 conformance lanes, the five-ROM
 2000-frame accuracy fence, deterministic interactive regressions, and the
 hires/interlace closure set. Its exact scope and non-claims are recorded in
-[`docs/SNES_BASE_ACCURACY_MILESTONE.md`](docs/SNES_BASE_ACCURACY_MILESTONE.md).
+ [`docs/SNES_BASE_ACCURACY_MILESTONE.md`](docs/SNES_BASE_ACCURACY_MILESTONE.md).
+
+CX4 support was added after that milestone. Mega Man X2 now participates in the
+retail accuracy fence and compares exactly with bsnes across its 800-frame
+power-on sequence. CX4 is modeled at its command interface; instruction-level
+HG51BS169 execution and command latency remain future accuracy work.
 
 ## Repository Layout
 
@@ -152,7 +157,8 @@ same input sequence to be compared against bsnes.
 ## Accuracy Fence
 
 The primary regression ratchet is manifest-driven. Its default `full` suite
-runs CTest, captures every frame through frame 2000 for the five milestone ROMs
+runs CTest, captures every frame through frame 2000 for the five milestone ROMs,
+replays the 800-frame post-milestone Mega Man X2 CX4 lane,
 under Clover and bsnes, replays the validated save-RAM-backed Final Fantasy III
 world-map path, enforces the bringup guardrails, and compares all requested
 frames exactly:

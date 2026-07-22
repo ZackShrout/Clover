@@ -125,14 +125,15 @@ must be measured separately.
 
 ## Reproducing Comparisons
 
-Run the complete passing fence—five-ROM baseline plus the validated save-based
+Run the complete passing fence—the five-ROM 2000-frame baseline, Mega Man X2's
+800-frame CX4 lane, plus the validated save-based
 FF3 interactive window—with:
 
 ```bash
 python3 scripts/run_accuracy_fence.py
 ```
 
-Run only the five-ROM baseline or passing Final Fantasy III input movie with:
+Run only the retail baseline lanes or passing Final Fantasy III input movie with:
 
 ```bash
 python3 scripts/run_accuracy_fence.py --suite baseline

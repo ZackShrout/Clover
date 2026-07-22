@@ -65,6 +65,7 @@ namespace clover::core
     void console_t::reset() noexcept
     {
         _scheduler.reset();
+        _cartridge.reset();
         _bus.reset();
         _cpu.reset();
         _dma.reset();

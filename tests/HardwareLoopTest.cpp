@@ -1184,6 +1184,76 @@ int main()
 
             if (const int result = []() -> int
                 {
+                    std::array<std::byte, 0x8000> cx4_image{};
+                    cx4_image[0x0000] = std::byte{ 0x42 };
+                    cx4_image[0x7fd5u] = std::byte{ 0x20 }; // LoROM
+                    cx4_image[0x7fd6u] = std::byte{ 0xf3 }; // CX4 cartridge
+                    cx4_image[0x7ffcu] = std::byte{ 0x00 };
+                    cx4_image[0x7ffdu] = std::byte{ 0x80 };
+
+                    static clover::core::console_t cx4_console{};
+                    cx4_console.power_on();
+                    if (!cx4_console.load_cartridge(cx4_image))
+                        return fail("cx4_cartridge_load");
+
+                    cx4_console.write_u8(0x006123u, 0x5au);
+                    if (cx4_console.read_u8(0x006123u) != 0x5au
+                        || cx4_console.read_u8(0x806123u) != 0x5au)
+                    {
+                        return fail("cx4_ram_window_and_mirror");
+                    }
+
+                    // CX4 command $89 exposes its identifying constants.
+                    cx4_console.write_u8(0x007f4fu, 0x89u);
+                    if (cx4_console.read_u8(0x007f80u) != 0x36u
+                        || cx4_console.read_u8(0x007f81u) != 0x43u
+                        || cx4_console.read_u8(0x007f82u) != 0x05u
+                        || cx4_console.read_u8(0x007f83u) != 0xffu
+                        || cx4_console.read_u8(0x007f84u) != 0xffu
+                        || cx4_console.read_u8(0x007f85u) != 0xffu)
+                    {
+                        return fail("cx4_immediate_rom_id");
+                    }
+
+                    // Signed 24-bit multiply: -2 * 3 = -6 (48-bit result).
+                    cx4_console.write_u8(0x007f80u, 0xfeu);
+                    cx4_console.write_u8(0x007f81u, 0xffu);
+                    cx4_console.write_u8(0x007f82u, 0xffu);
+                    cx4_console.write_u8(0x007f83u, 0x03u);
+                    cx4_console.write_u8(0x007f84u, 0x00u);
+                    cx4_console.write_u8(0x007f85u, 0x00u);
+                    cx4_console.write_u8(0x007f4fu, 0x25u);
+                    if (cx4_console.read_u8(0x007f80u) != 0xfau
+                        || cx4_console.read_u8(0x007f81u) != 0xffu
+                        || cx4_console.read_u8(0x007f82u) != 0xffu
+                        || cx4_console.read_u8(0x007f83u) != 0xffu
+                        || cx4_console.read_u8(0x007f84u) != 0xffu
+                        || cx4_console.read_u8(0x007f85u) != 0xffu)
+                    {
+                        return fail("cx4_signed_multiply");
+                    }
+
+                    // Cartridge-ROM-to-CX4-RAM transfer through registers $1f40-$1f47.
+                    cx4_console.write_u8(0x007f40u, 0x00u);
+                    cx4_console.write_u8(0x007f41u, 0x80u);
+                    cx4_console.write_u8(0x007f42u, 0x00u);
+                    cx4_console.write_u8(0x007f43u, 0x01u);
+                    cx4_console.write_u8(0x007f44u, 0x00u);
+                    cx4_console.write_u8(0x007f45u, 0x00u);
+                    cx4_console.write_u8(0x007f46u, 0x00u);
+                    cx4_console.write_u8(0x007f47u, 0x00u);
+                    if (cx4_console.read_u8(0x006000u) != 0x42u)
+                        return fail("cx4_rom_to_ram_transfer");
+
+                    return 0;
+                }();
+                result != 0)
+            {
+                return result;
+            }
+
+            if (const int result = []() -> int
+                {
                     std::array<std::byte, 0x10000> hirom_image{};
                     hirom_image[0x2100] = std::byte{ 0x21 };
                     hirom_image[0x2140] = std::byte{ 0x40 };

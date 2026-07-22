@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "clover/core/snes/Timing.h"
+#include "clover/core/snes/Cx4.h"
 
 namespace clover::core
 {
@@ -23,10 +24,17 @@ namespace clover::core
         hirom
     };
 
+    enum class cartridge_hardware_t : uint8_t
+    {
+        base,
+        cx4
+    };
+
     struct cartridge_header_t
     {
         cartridge_mapping_mode_t mapping_mode{ cartridge_mapping_mode_t::none };
         uint8_t raw_map_mode{ 0 };
+        uint8_t raw_cartridge_type{ 0 };
         uint8_t raw_ram_size{ 0 };
         uint8_t destination_code{ 0 };
         uint16_t reset_vector{ 0 };
@@ -39,11 +47,12 @@ namespace clover::core
 
         void reset() noexcept;
         [[nodiscard]] bool load(std::span<const std::byte> rom_data) noexcept;
-        [[nodiscard]] uint8_t read_u8(uint32_t address) const noexcept;
+        [[nodiscard]] uint8_t read_u8(uint32_t address, uint8_t open_bus = 0) const noexcept;
         void write_u8(uint32_t address, uint8_t value) noexcept;
         [[nodiscard]] bool loaded() const noexcept;
         [[nodiscard]] cartridge_mapping_mode_t mapping_mode() const noexcept;
         [[nodiscard]] const cartridge_header_t& header() const noexcept;
+        [[nodiscard]] cartridge_hardware_t hardware() const noexcept;
         [[nodiscard]] video_standard_t declared_video_standard() const noexcept;
         [[nodiscard]] std::span<const std::byte> persistent_memory() const noexcept;
         [[nodiscard]] bool load_persistent_memory(std::span<const std::byte> data) noexcept;
@@ -55,6 +64,7 @@ namespace clover::core
         {
             cartridge_mapping_mode_t mapping_mode{ cartridge_mapping_mode_t::none };
             uint8_t raw_map_mode{ 0 };
+            uint8_t raw_cartridge_type{ 0 };
             uint8_t raw_ram_size{ 0 };
             uint8_t destination_code{ 0 };
             uint16_t reset_vector{ 0 };
@@ -71,6 +81,7 @@ namespace clover::core
         [[nodiscard]] static uint32_t hirom_ram_offset(uint32_t address, size_t ram_size) noexcept;
         [[nodiscard]] static bool is_lorom_address(uint32_t address) noexcept;
         [[nodiscard]] static bool is_hirom_address(uint32_t address) noexcept;
+        [[nodiscard]] static bool is_cx4_address(uint32_t address) noexcept;
         [[nodiscard]] static header_candidate_t score_lorom_header(std::span<const uint8_t> rom_data) noexcept;
         [[nodiscard]] static header_candidate_t score_hirom_header(std::span<const uint8_t> rom_data) noexcept;
         [[nodiscard]] static int score_header_candidate(std::span<const uint8_t> rom_data,
@@ -85,6 +96,8 @@ namespace clover::core
         std::vector<uint8_t> _ram_data{};
         cartridge_header_t _header{};
         cartridge_mapping_mode_t _mapping_mode{ cartridge_mapping_mode_t::bootstrap };
+        cartridge_hardware_t _hardware{ cartridge_hardware_t::base };
+        cx4_t _cx4{};
         bool _loaded{ false };
         bool _ram_dirty{ false };
     };

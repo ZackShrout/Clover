@@ -46,6 +46,14 @@
       "end_frame": 2000
     },
     {
+      "id": "megaman-x2-cx4-power-on-800",
+      "suite": "baseline",
+      "rom": "roms/local/Megaman X2 (USA).sfc",
+      "sha256": "f3246755f608a1e1dc9c848b61da3b824c7853b29b3be40df6fc7f2793a887ed",
+      "start_frame": 1,
+      "end_frame": 800
+    },
+    {
       "id": "zelda-player-select",
       "suite": "investigation",
       "rom": "roms/local/Legend of Zelda, The - A Link to the Past (USA).sfc",

@@ -14,6 +14,8 @@ namespace clover::core
     {
         if (!_loaded)
             std::fill(_bootstrap_program_rom.begin(), _bootstrap_program_rom.end(), 0);
+        else if (_hardware == cartridge_hardware_t::cx4)
+            _cx4.power_on(_rom_data);
     }
 
     bool cartridge_t::load(std::span<const std::byte> rom_data) noexcept
@@ -43,10 +45,12 @@ namespace clover::core
         return true;
     }
 
-    uint8_t cartridge_t::read_u8(uint32_t address) const noexcept
+    uint8_t cartridge_t::read_u8(uint32_t address, uint8_t open_bus) const noexcept
     {
         if (_loaded)
         {
+            if (_hardware == cartridge_hardware_t::cx4 && is_cx4_address(address))
+                return _cx4.read(address, open_bus);
             if (!_ram_data.empty())
             {
                 if (_mapping_mode == cartridge_mapping_mode_t::lorom
@@ -86,6 +90,11 @@ namespace clover::core
     {
         if (_loaded)
         {
+            if (_hardware == cartridge_hardware_t::cx4 && is_cx4_address(address))
+            {
+                _cx4.write(address, value);
+                return;
+            }
             if (!_ram_data.empty())
             {
                 if (_mapping_mode == cartridge_mapping_mode_t::lorom
@@ -131,6 +140,11 @@ namespace clover::core
     const cartridge_header_t& cartridge_t::header() const noexcept
     {
         return _header;
+    }
+
+    cartridge_hardware_t cartridge_t::hardware() const noexcept
+    {
+        return _hardware;
     }
 
     video_standard_t cartridge_t::declared_video_standard() const noexcept
@@ -248,6 +262,14 @@ namespace clover::core
         return (bank >= 0x40u && bank <= 0x7du) || bank >= 0xc0u;
     }
 
+    bool cartridge_t::is_cx4_address(uint32_t address) noexcept
+    {
+        const uint8_t bank{ static_cast<uint8_t>(address >> 16u) };
+        const uint16_t offset{ static_cast<uint16_t>(address) };
+        return (bank <= 0x3fu || (bank >= 0x80u && bank <= 0xbfu))
+            && offset >= 0x6000u && offset <= 0x7fffu;
+    }
+
     cartridge_t::header_candidate_t cartridge_t::score_lorom_header(
         std::span<const uint8_t> rom_data
     ) noexcept
@@ -259,6 +281,7 @@ namespace clover::core
 
         const size_t header_offset{ 0x7fc0u };
         candidate.raw_map_mode = rom_data[header_offset + 0x15u];
+        candidate.raw_cartridge_type = rom_data[header_offset + 0x16u];
         candidate.raw_ram_size = rom_data[header_offset + 0x18u];
         candidate.destination_code = rom_data[header_offset + 0x19u];
         candidate.reset_vector = static_cast<uint16_t>(
@@ -281,6 +304,7 @@ namespace clover::core
 
         const size_t header_offset{ 0xffc0u };
         candidate.raw_map_mode = rom_data[header_offset + 0x15u];
+        candidate.raw_cartridge_type = rom_data[header_offset + 0x16u];
         candidate.raw_ram_size = rom_data[header_offset + 0x18u];
         candidate.destination_code = rom_data[header_offset + 0x19u];
         candidate.reset_vector = static_cast<uint16_t>(
@@ -345,9 +369,13 @@ namespace clover::core
         _mapping_mode = winner.mapping_mode;
         _header.mapping_mode = winner.mapping_mode;
         _header.raw_map_mode = winner.raw_map_mode;
+        _header.raw_cartridge_type = winner.raw_cartridge_type;
         _header.raw_ram_size = winner.raw_ram_size;
         _header.destination_code = winner.destination_code;
         _header.reset_vector = winner.reset_vector;
+        _hardware = winner.raw_cartridge_type == 0xf3u
+            ? cartridge_hardware_t::cx4
+            : cartridge_hardware_t::base;
         if (winner.raw_ram_size != 0u && winner.raw_ram_size < 16u)
             _ram_data.assign(static_cast<size_t>(1024u) << winner.raw_ram_size, 0u);
         _ram_dirty = false;
@@ -360,6 +388,7 @@ namespace clover::core
         _ram_data.clear();
         _header = {};
         _mapping_mode = cartridge_mapping_mode_t::bootstrap;
+        _hardware = cartridge_hardware_t::base;
         _loaded = false;
         _ram_dirty = false;
     }

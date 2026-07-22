@@ -368,7 +368,7 @@ namespace clover::core
 
         if (_cartridge != nullptr)
         {
-            _open_bus = _cartridge->read_u8(address);
+            _open_bus = _cartridge->read_u8(address, _open_bus);
             return _open_bus;
         }
 

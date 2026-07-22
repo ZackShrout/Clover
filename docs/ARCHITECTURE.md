@@ -208,6 +208,9 @@ Rules for diagnostics:
 ## Current Scope
 
 Clover currently implements the late 3-chip SNES/SFC hardware model with NTSC
-and PAL timing plus LoROM and HiROM mapping. It does not yet implement enhancement coprocessors such as
-CX4, Super FX, SA-1, or cartridge DSP variants. Current unresolved accuracy
+and PAL timing plus LoROM and HiROM mapping. CX4 cartridges are detected from
+their header type and expose cartridge-owned RAM and command registers through
+the LoROM bus window. The command-level CX4 model is synchronous; a future
+instruction-level HG51BS169 core would add execution latency and contention.
+Super FX, SA-1, and cartridge DSP variants remain unsupported. Current unresolved accuracy
 areas are tracked in [`KNOWN_SIMPLIFICATIONS.md`](KNOWN_SIMPLIFICATIONS.md).

@@ -6,14 +6,19 @@ hardware behavior.
 
 ## Cartridge Hardware
 
-Clover currently maps ordinary LoROM and HiROM cartridges with SRAM. It does
-not implement enhancement coprocessors or their mapping/timing behavior,
-including CX4, Super FX, SA-1, and cartridge DSP families.
+Clover currently maps ordinary LoROM and HiROM cartridges with SRAM and detects
+and emulates CX4 cartridges. Super FX, SA-1, and cartridge DSP families remain
+unsupported.
 
 Consequences:
 
-- Mega Man X2 and other CX4 software are unsupported even if they boot or avoid
-  crashing.
+- CX4 currently uses synchronous command-level emulation. Its 3 KiB RAM,
+  register interface, data transfer, arithmetic, sprite construction, and
+  graphics commands are implemented, but HG51BS169 instruction timing, command
+  latency, and contention are not yet modeled.
+- Mega Man X2 is hash-pinned in an 800-frame exact differential fence. Mega
+  Man X3 is expected to use the same interface but has not yet received an
+  equivalent local retail lane.
 - ExLoROM/ExHiROM and unusual cartridge layouts have not been established as
   supported.
 - Header scoring recognizes a base mapping; it is not a substitute for parsing
@@ -70,7 +75,8 @@ hardware tests.
 Deterministic Clover-versus-bsnes comparison is the default regression mode.
 Entropy mode exists for undefined cold-boot-state investigations.
 
-The five-ROM 2000-frame exact baseline and later interactive captures cover
+The five-ROM 2000-frame base-console baseline, the 800-frame Mega Man X2 CX4
+lane, and later interactive captures cover
 only the paths executed. They do not imply universal compatibility. Exact
 pixels, audio evidence, hardware state, and equivalent observation points are
 required according to the fault being investigated; a game merely reaching a

@@ -45,5 +45,6 @@ namespace clover::core
         uint16_t _data_register{ 0x0080u };
         bool _status_high_byte{};
         bool _frozen{};
+        bool _raster_output_written{};
     };
 }

@@ -38,6 +38,7 @@ namespace clover::core
         _data_register = 0x0080u;
         _status_high_byte = false;
         _frozen = false;
+        _raster_output_written = false;
 
         dsp1_reference::CentreX = dsp1_reference::CentreY = dsp1_reference::CentreZ = 0;
         dsp1_reference::Gx = dsp1_reference::Gy = dsp1_reference::Gz = 0;
@@ -77,6 +78,9 @@ namespace clover::core
         if (_frozen)
             return;
 
+        if (!read && _phase == phase_t::results && _command == 0x0au)
+            _raster_output_written = true;
+
         if (read)
             value = _byte_index == 0u ? static_cast<uint8_t>(_data_register)
                                       : static_cast<uint8_t>(_data_register >> 8u);
@@ -113,6 +117,7 @@ namespace clover::core
 
             execute();
             _word_index = 0;
+            _raster_output_written = false;
             if (result_count(_command) == 0u)
             {
                 _phase = phase_t::command;
@@ -143,6 +148,10 @@ namespace clover::core
         static constexpr std::array<uint8_t, 16> counts{
             2, 4, 7, 3, 2, 4, 3, 1, 3, 3, 1, 3, 3, 3, 2, 1
         };
+        if (command == 0x18u || command == 0x38u)
+            return 4;
+        if (command == 0x1cu || command == 0x3cu)
+            return 6;
         return counts[command & 0x0fu]
             + ((command & 0x0fu) == 0x04u && (command & 0x10u) ? 4u : 0u);
     }
@@ -152,8 +161,13 @@ namespace clover::core
         static constexpr std::array<uint16_t, 16> counts{
             1, 0, 4, 3, 2, 0, 3, 1, 1, 3, 4, 1, 2, 3, 2, 1
         };
-        if ((command & 0x0fu) == 0x07u && (command & 0x10u))
+        const uint8_t operation{ static_cast<uint8_t>(command & 0x0fu) };
+        if ((operation == 0x07u || operation == 0x0fu) && (command & 0x10u))
             return 1024;
+        if (command == 0x10u || command == 0x30u)
+            return 2;
+        if (command == 0x1cu || command == 0x3cu)
+            return 3;
         if (command == 0x08u)
             return 2;
         if (command == 0x14u || command == 0x34u)
@@ -169,7 +183,7 @@ namespace clover::core
             return;
         }
 
-        if (_command == 0x0au && _data_register != 0x8000u)
+        if (_command == 0x0au && !_raster_output_written)
         {
             ++_parameters[0];
             execute();
@@ -318,6 +332,12 @@ namespace clover::core
         const uint8_t op{ static_cast<uint8_t>(_command & 0x0fu) };
         const size_t matrix{ (_command & 0x30u) == 0x10u ? 1u
                              : (_command & 0x30u) == 0x20u ? 2u : 0u };
+        if (_command == 0x10u || _command == 0x30u)
+        {
+            DSP1_Inverse(_parameters[0], _parameters[1], _results[0], _results[1]);
+            return;
+        }
+
         switch (op)
         {
         case 0x00:

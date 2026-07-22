@@ -1325,6 +1325,28 @@ int main()
                         return fail("dsp1_memory_size");
                     }
 
+                    // Op0A streams a fresh four-word raster block after a block is read.
+                    dsp1_console.write_u8(0x006000u, 0x0au);
+                    dsp1_console.write_u8(0x006000u, 0x00u);
+                    dsp1_console.write_u8(0x006000u, 0x00u);
+                    for (uint8_t byte{}; byte < 8u; ++byte)
+                        static_cast<void>(dsp1_console.read_u8(0x006000u));
+                    if (dsp1_console.read_u8(0x007000u) != 0u
+                        || dsp1_console.read_u8(0x007000u) != 0x80u)
+                    {
+                        return fail("dsp1_raster_continuous_output");
+                    }
+
+                    // Writing while that next block is pending consumes it and terminates
+                    // raster mode, as on the DSP-1B host interface.
+                    for (uint8_t byte{}; byte < 8u; ++byte)
+                        dsp1_console.write_u8(0x006000u, 0x00u);
+                    if (dsp1_console.read_u8(0x007000u) != 0u
+                        || dsp1_console.read_u8(0x007000u) != 0x84u)
+                    {
+                        return fail("dsp1_raster_write_termination");
+                    }
+
                     // The physical DSP data register advances on every access. A read while
                     // parameters are expected therefore supplies the register's current word.
                     dsp1_console.write_u8(0x006000u, 0x00u);

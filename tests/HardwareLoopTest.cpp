@@ -9,6 +9,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdio>
+#include <string_view>
 #include <vector>
 
 namespace
@@ -1378,6 +1379,153 @@ int main()
                     {
                         return fail("dsp1_lorom_status_map");
                     }
+
+                    return 0;
+                }();
+                result != 0)
+            {
+                return result;
+            }
+
+            if (const int result = []() -> int
+                {
+                    clover::core::dsp2_t dsp2{};
+                    dsp2.power_on();
+
+                    if (dsp2.read_data() != 0xffu)
+                        return fail("dsp2_idle_read");
+
+                    // Op01 planarizes rows of eight chunky 4-bit pixels. Each row
+                    // below contains colors 0 through 7.
+                    dsp2.write_data(0x01u);
+                    for (size_t row{}; row < 8; ++row)
+                    {
+                        dsp2.write_data(0x01u);
+                        dsp2.write_data(0x23u);
+                        dsp2.write_data(0x45u);
+                        dsp2.write_data(0x67u);
+                    }
+                    for (size_t row{}; row < 8; ++row)
+                    {
+                        if (dsp2.read_data() != 0x55u || dsp2.read_data() != 0x33u)
+                            return fail("dsp2_bitmap_low_bitplanes");
+                    }
+                    for (size_t row{}; row < 8; ++row)
+                    {
+                        if (dsp2.read_data() != 0x0fu || dsp2.read_data() != 0x00u)
+                            return fail("dsp2_bitmap_high_bitplanes");
+                    }
+                    if (dsp2.read_data() != 0xffu)
+                        return fail("dsp2_bitmap_output_exhaustion");
+
+                    dsp2.write_data(0x03u);
+                    dsp2.write_data(0x0fu);
+                    if (dsp2.read_data() != 0xffu)
+                        return fail("dsp2_transparency_has_no_output");
+
+                    dsp2.write_data(0x05u);
+                    dsp2.write_data(0x02u);
+                    dsp2.write_data(0x12u);
+                    dsp2.write_data(0x34u);
+                    dsp2.write_data(0xf5u);
+                    dsp2.write_data(0x6fu);
+                    if (dsp2.read_data() != 0x15u || dsp2.read_data() != 0x64u)
+                        return fail("dsp2_transparency_overlay");
+
+                    dsp2.write_data(0x06u);
+                    dsp2.write_data(0x03u);
+                    dsp2.write_data(0x12u);
+                    dsp2.write_data(0xabu);
+                    dsp2.write_data(0xf0u);
+                    if (dsp2.read_data() != 0x0fu
+                        || dsp2.read_data() != 0xbau
+                        || dsp2.read_data() != 0x21u)
+                    {
+                        return fail("dsp2_bitmap_reverse");
+                    }
+
+                    dsp2.write_data(0x09u);
+                    dsp2.write_data(0x34u);
+                    dsp2.write_data(0x12u);
+                    dsp2.write_data(0x20u);
+                    dsp2.write_data(0x00u);
+                    if (dsp2.read_data() != 0x80u
+                        || dsp2.read_data() != 0x46u
+                        || dsp2.read_data() != 0x02u
+                        || dsp2.read_data() != 0x00u)
+                    {
+                        return fail("dsp2_unsigned_multiply");
+                    }
+
+                    // Op0D's 16.16 step is (4 * 2) / (2 * 1 + 1), so the
+                    // two output samples select packed-nibble pixels 0 and 2.
+                    dsp2.write_data(0x0du);
+                    dsp2.write_data(0x04u);
+                    dsp2.write_data(0x01u);
+                    dsp2.write_data(0xabu);
+                    dsp2.write_data(0xcdu);
+                    if (dsp2.read_data() != 0xacu || dsp2.read_data() != 0xffu)
+                        return fail("dsp2_fixed_point_scale");
+
+                    dsp2.write_data(0x07u);
+                    if (dsp2.read_data() != 0xffu)
+                        return fail("dsp2_unsupported_command");
+
+                    dsp2.write_data(0x05u);
+                    dsp2.write_data(0x00u);
+                    if (dsp2.read_data() != 0xffu)
+                        return fail("dsp2_zero_length_command");
+
+                    std::array<std::byte, 0x8000> dsp2_image{};
+                    constexpr std::string_view title{ "DUNGEON MASTER" };
+                    for (size_t index{}; index < title.size(); ++index)
+                        dsp2_image[0x7fc0u + index] = static_cast<std::byte>(title[index]);
+                    dsp2_image[0x7fd5u] = std::byte{ 0x20 }; // LoROM
+                    dsp2_image[0x7fd6u] = std::byte{ 0x05 }; // DSP with RAM and battery
+                    dsp2_image[0x7fd8u] = std::byte{ 0x05 };
+                    dsp2_image[0x7ffcu] = std::byte{ 0x00 };
+                    dsp2_image[0x7ffdu] = std::byte{ 0x80 };
+
+                    clover::core::cartridge_t dsp2_cartridge{};
+                    if (!dsp2_cartridge.load(dsp2_image)
+                        || dsp2_cartridge.hardware() != clover::core::cartridge_hardware_t::dsp2)
+                    {
+                        return fail("dsp2_cartridge_detection");
+                    }
+                    dsp2_cartridge.reset();
+
+                    if (dsp2_cartridge.read_u8(0x206000u) != 0xffu
+                        || dsp2_cartridge.read_u8(0xa06fffu) != 0xffu
+                        || dsp2_cartridge.read_u8(0x208000u) != 0xffu
+                        || dsp2_cartridge.read_u8(0xabbfffu) != 0xffu)
+                    {
+                        return fail("dsp2_mapped_idle_reads");
+                    }
+                    if (dsp2_cartridge.read_u8(0x1f6000u) != 0u
+                        || dsp2_cartridge.read_u8(0x207000u) != 0u
+                        || dsp2_cartridge.read_u8(0x20c000u) != 0u)
+                    {
+                        return fail("dsp2_mapping_boundaries");
+                    }
+
+                    dsp2_cartridge.write_u8(0x206000u, 0x09u);
+                    dsp2_cartridge.write_u8(0xa08000u, 0x34u);
+                    dsp2_cartridge.write_u8(0x2a6fffu, 0x12u);
+                    dsp2_cartridge.write_u8(0xbbbfffu, 0x20u);
+                    dsp2_cartridge.write_u8(0x208000u, 0x00u);
+                    if (dsp2_cartridge.read_u8(0xa06000u) != 0x80u
+                        || dsp2_cartridge.read_u8(0x3f6fffu) != 0x46u
+                        || dsp2_cartridge.read_u8(0xa08000u) != 0x02u
+                        || dsp2_cartridge.read_u8(0xbfbfffu) != 0x00u)
+                    {
+                        return fail("dsp2_mapper_protocol_aliases");
+                    }
+
+                    dsp2_cartridge.write_u8(0x206000u, 0x09u);
+                    dsp2_cartridge.write_u8(0x206000u, 0x34u);
+                    dsp2_cartridge.reset();
+                    if (dsp2_cartridge.read_u8(0x206000u) != 0xffu)
+                        return fail("dsp2_power_on_resets_protocol");
 
                     return 0;
                 }();

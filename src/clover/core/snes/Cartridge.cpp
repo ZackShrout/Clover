@@ -19,6 +19,8 @@ namespace clover::core
             _cx4.power_on(_rom_data);
         else if (_hardware == cartridge_hardware_t::dsp1)
             _dsp1->power_on();
+        else if (_hardware == cartridge_hardware_t::dsp2)
+            _dsp2.power_on();
     }
 
     bool cartridge_t::load(std::span<const std::byte> rom_data) noexcept
@@ -61,6 +63,8 @@ namespace clover::core
                 if (is_dsp1_status_address(address))
                     return _dsp1->read_status();
             }
+            if (_hardware == cartridge_hardware_t::dsp2 && is_dsp2_address(address))
+                return _dsp2.read_data();
             if (!_ram_data.empty())
             {
                 if (_mapping_mode == cartridge_mapping_mode_t::lorom
@@ -108,6 +112,11 @@ namespace clover::core
             if (_hardware == cartridge_hardware_t::dsp1 && is_dsp1_data_address(address))
             {
                 _dsp1->write_data(value);
+                return;
+            }
+            if (_hardware == cartridge_hardware_t::dsp2 && is_dsp2_address(address))
+            {
+                _dsp2.write_data(value);
                 return;
             }
             if (!_ram_data.empty())
@@ -303,6 +312,18 @@ namespace clover::core
         return bank >= 0x30u && bank <= 0x3fu && offset >= 0xc000u;
     }
 
+    bool cartridge_t::is_dsp2_address(uint32_t address) noexcept
+    {
+        const uint8_t bank{ static_cast<uint8_t>(address >> 16u) };
+        const uint16_t offset{ static_cast<uint16_t>(address) };
+        const bool mapped_bank{
+            (bank >= 0x20u && bank <= 0x3fu) || (bank >= 0xa0u && bank <= 0xbfu)
+        };
+        return mapped_bank
+            && ((offset >= 0x6000u && offset <= 0x6fffu)
+                || (offset >= 0x8000u && offset <= 0xbfffu));
+    }
+
     cartridge_t::header_candidate_t cartridge_t::score_lorom_header(
         std::span<const uint8_t> rom_data
     ) noexcept
@@ -431,6 +452,10 @@ namespace clover::core
         {
             _dsp1 = std::make_unique<dsp1_t>();
             _dsp1->power_on();
+        }
+        else if (_hardware == cartridge_hardware_t::dsp2)
+        {
+            _dsp2.power_on();
         }
         if (winner.raw_ram_size != 0u && winner.raw_ram_size < 16u)
             _ram_data.assign(static_cast<size_t>(1024u) << winner.raw_ram_size, 0u);

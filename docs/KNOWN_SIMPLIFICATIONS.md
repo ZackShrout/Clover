@@ -6,9 +6,17 @@ hardware behavior.
 
 ## Cartridge Hardware
 
-Clover currently maps ordinary LoROM and HiROM cartridges with SRAM and detects
-and emulates CX4 cartridges. Super FX, SA-1, and cartridge DSP families remain
-unsupported.
+Clover currently maps ordinary LoROM and HiROM cartridges with SRAM and
+supports CX4, DSP-1B, and DSP-2 command devices.
+
+| Cartridge hardware | Status | Current evidence and boundary |
+|---|---|---|
+| CX4 | Supported at command level | Mega Man X2 has an 800-frame exact retail lane; Mega Man X3's eight-part CX4 self-test is replayed through controller port 2. |
+| DSP-1B | Supported at command level | Deterministic arithmetic, data-ROM, status, bidirectional-register, continuous-raster, termination, and LoROM/HiROM mapping tests. DSP-1/DSP-1A silicon differences and instruction timing are not modeled separately. |
+| DSP-2 | Supported at command level | Commands `$01`, `$03`, `$05`, `$06`, `$09`, and `$0d` plus every mapper window have deterministic coverage; unsupported commands produce no output. Dungeon Master completed a 9,000-frame scripted run with 25 sampled frames matching bsnes exactly, plus manual play through hero resurrection. |
+| DSP-3 | Unsupported | Detection exists, but there is no command processor or mapper implementation. |
+| DSP-4 | Unsupported | Detection exists, but there is no command processor or mapper implementation. |
+| Super FX / SA-1 | Unsupported | No processor or cartridge mapping implementation. |
 
 Consequences:
 
@@ -16,9 +24,13 @@ Consequences:
   register interface, data transfer, arithmetic, sprite construction, and
   graphics commands are implemented, but HG51BS169 instruction timing, command
   latency, and contention are not yet modeled.
-- Mega Man X2 is hash-pinned in an 800-frame exact differential fence. Mega
-  Man X3 is expected to use the same interface but has not yet received an
-  equivalent local retail lane.
+- DSP-1B and DSP-2 are high-level command models. Their internal NEC uPD77C25
+  instruction execution, command latency, and host contention are not modeled.
+- DSP-1B has not yet received an exact commercial-game lane comparable to the
+  CX4 and DSP-2 retail evidence.
+- DSP-2's automated commercial-game path covers power-on and the long animated
+  introduction. The later in-game check was manual rather than a replayable
+  accuracy-fence scenario.
 - ExLoROM/ExHiROM and unusual cartridge layouts have not been established as
   supported.
 - Header scoring recognizes a base mapping; it is not a substitute for parsing
@@ -75,9 +87,9 @@ hardware tests.
 Deterministic Clover-versus-bsnes comparison is the default regression mode.
 Entropy mode exists for undefined cold-boot-state investigations.
 
-The five-ROM 2000-frame base-console baseline, the 800-frame Mega Man X2 CX4
-lane, and later interactive captures cover
-only the paths executed. They do not imply universal compatibility. Exact
-pixels, audio evidence, hardware state, and equivalent observation points are
-required according to the fault being investigated; a game merely reaching a
-screen is not sufficient.
+The five-ROM 2000-frame base-console baseline, the CX4 lanes, DSP-1B
+command-level tests, DSP-2's Dungeon Master evidence, and later interactive
+captures cover only the paths executed. They do not imply universal
+compatibility. Exact pixels, audio evidence, hardware state, and equivalent
+observation points are required according to the fault being investigated; a
+game merely reaching a screen is not sufficient.

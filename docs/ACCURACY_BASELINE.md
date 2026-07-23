@@ -83,6 +83,30 @@ encoded in `validation/accuracy_fence.json` and reproduced by
 still a smaller regression checkpoint loop and should not be confused with the
 full milestone sweep.
 
+## Post-Milestone Cartridge Hardware
+
+The base-console milestone deliberately excludes cartridge coprocessors. The
+following support and evidence were added afterward:
+
+- CX4 command-level emulation, with Mega Man X2's 800-frame exact retail lane
+  and Mega Man X3's controller-driven eight-part CX4 self-test;
+- DSP-1B command-level emulation, including arithmetic/data-ROM operations,
+  status and bidirectional data-register behavior, continuous raster output,
+  raster termination, and LoROM/HiROM mapping tests;
+- DSP-2 commands `$01`, `$03`, `$05`, `$06`, `$09`, and `$0d` plus the
+  Dungeon Master mapper, covered by deterministic command vectors and mapper
+  boundaries; unsupported commands produce no output.
+
+Dungeon Master additionally completed a 9,000-frame scripted run without a
+terminal PC, placeholder CPU opcode, or halted APU. Five-frame windows sampled
+at frames 795, 1495, 2995, 4995, and 8995 matched bsnes exactly at frame offset
+zero. A subsequent manual session reached normal in-game play and resurrected
+multiple heroes without an observed problem. That manual result closes an
+important gameplay smoke-test gap, but it is not yet a deterministic checked-in
+accuracy-fence scenario.
+
+DSP-3 and DSP-4 remain unsupported.
+
 ## Interactive Validation Record
 
 Deterministic power-on sweeps do not reach input-gated paths. SDL capture and

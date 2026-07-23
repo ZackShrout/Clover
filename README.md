@@ -13,7 +13,8 @@ Clover currently includes:
 
 - a headless SNES core with 65C816 CPU, PPU, SPC700/DSP audio, DMA/HDMA,
   interrupts, controller input, LoROM/HiROM cartridge mapping, CX4 cartridge
-  enhancement hardware, and automatic NTSC/PAL timing
+  enhancement hardware, DSP-1B and DSP-2 cartridge processors, and automatic
+  NTSC/PAL timing
 - a system-neutral frontend seam around the SNES core
 - an SDL3 desktop app with video, audio, keyboard/gamepad input, frame pacing,
   and deterministic investigation captures
@@ -37,6 +38,14 @@ CX4 support was added after that milestone. Mega Man X2 now participates in the
 retail accuracy fence and compares exactly with bsnes across its 800-frame
 power-on sequence. CX4 is modeled at its command interface; instruction-level
 HG51BS169 execution and command latency remain future accuracy work.
+
+DSP-1B and DSP-2 support were added after CX4. DSP-1B has deterministic
+command, protocol, status-register, raster-streaming, and LoROM/HiROM mapper
+coverage. DSP-2 implements commands `$01`, `$03`, `$05`, `$06`, `$09`, and
+`$0d` plus the Dungeon Master mapper; unsupported commands return no output.
+Dungeon Master ran for 9,000 scripted frames with sampled animated output
+matching bsnes exactly, followed by a successful manual in-game session through
+hero resurrection. DSP-3 and DSP-4 remain unsupported.
 
 ## Repository Layout
 

@@ -63,6 +63,16 @@
       "end_frame": 400
     },
     {
+      "id": "pilotwings-dsp1-flight-area-1",
+      "suite": "interactive",
+      "rom": "roms/local/Pilotwings (USA).sfc",
+      "sha256": "03d0127f5de3237e22ad00de0c20763274da7b71142dde693240ac96d10983a3",
+      "input_script": "validation/input/pilotwings-flight-area-1.joypad1.script",
+      "bsnes_input_frame_offset": 1,
+      "start_frame": 6200,
+      "end_frame": 6500
+    },
+    {
       "id": "zelda-player-select",
       "suite": "investigation",
       "rom": "roms/local/Legend of Zelda, The - A Link to the Past (USA).sfc",

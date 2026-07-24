@@ -1316,6 +1316,45 @@ int main()
                         return fail("dsp1_multiply_protocol");
                     }
 
+                    const auto write_dsp1_word = [&](int16_t value)
+                    {
+                        const auto raw{ static_cast<uint16_t>(value) };
+                        dsp1_console.write_u8(0x006000u, static_cast<uint8_t>(raw));
+                        dsp1_console.write_u8(0x006000u, static_cast<uint8_t>(raw >> 8u));
+                    };
+                    const auto read_dsp1_word = [&]()
+                    {
+                        const uint16_t low{ dsp1_console.read_u8(0x006000u) };
+                        return static_cast<int16_t>(
+                            low | static_cast<uint16_t>(dsp1_console.read_u8(0x006000u)) << 8u
+                        );
+                    };
+
+                    // Op02 establishes a camera, then Op06 projects a point into
+                    // screen coordinates. This vector exercises the shared
+                    // depth exponent, Q15-normalized horizontal basis, and
+                    // preserved magnification exponent.
+                    dsp1_console.write_u8(0x006000u, 0x02u);
+                    for (const int16_t parameter : { int16_t{ 0 }, int16_t{ 0 }, int16_t{ 0 },
+                                                     int16_t{ 1000 }, int16_t{ 256 },
+                                                     int16_t{ 514 }, int16_t{ 0 } })
+                    {
+                        write_dsp1_word(parameter);
+                    }
+                    for (uint8_t result{}; result < 4u; ++result)
+                        static_cast<void>(read_dsp1_word());
+
+                    dsp1_console.write_u8(0x006000u, 0x06u);
+                    write_dsp1_word(202);
+                    write_dsp1_word(67);
+                    write_dsp1_word(744);
+                    if (read_dsp1_word() != 204
+                        || read_dsp1_word() != 56
+                        || read_dsp1_word() != 255)
+                    {
+                        return fail("dsp1_project_fixed_point");
+                    }
+
                     // Op2F reports the DSP-1B data-ROM size as 0x0100.
                     dsp1_console.write_u8(0x006000u, 0x2fu);
                     dsp1_console.write_u8(0x006000u, 0x00u);

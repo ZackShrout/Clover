@@ -12,7 +12,7 @@ supports CX4, DSP-1B, and DSP-2 command devices.
 | Cartridge hardware | Status | Current evidence and boundary |
 |---|---|---|
 | CX4 | Supported at command level | Mega Man X2 has an 800-frame exact retail lane; Mega Man X3's eight-part CX4 self-test is replayed through controller port 2. |
-| DSP-1B | Supported at command level | Deterministic arithmetic, data-ROM, status, bidirectional-register, continuous-raster, termination, and LoROM/HiROM mapping tests. DSP-1/DSP-1A silicon differences and instruction timing are not modeled separately. |
+| DSP-1B | Supported at command level | Deterministic arithmetic, projection, data-ROM, status, bidirectional-register, continuous-raster, termination, and LoROM/HiROM mapping tests. Pilotwings has a replayable active-flight exact retail lane and manual play through its first challenge. DSP-1/DSP-1A silicon differences and instruction timing are not modeled separately. |
 | DSP-2 | Supported at command level | Commands `$01`, `$03`, `$05`, `$06`, `$09`, and `$0d` plus every mapper window have deterministic coverage; unsupported commands produce no output. Dungeon Master completed a 9,000-frame scripted run with 25 sampled frames matching bsnes exactly, plus manual play through hero resurrection. |
 | DSP-3 | Unsupported | Detection exists, but there is no command processor or mapper implementation. |
 | DSP-4 | Unsupported | Detection exists, but there is no command processor or mapper implementation. |
@@ -26,8 +26,10 @@ Consequences:
   latency, and contention are not yet modeled.
 - DSP-1B and DSP-2 are high-level command models. Their internal NEC uPD77C25
   instruction execution, command latency, and host contention are not modeled.
-- DSP-1B has not yet received an exact commercial-game lane comparable to the
-  CX4 and DSP-2 retail evidence.
+- DSP-1B's automated commercial-game path covers Pilotwings power-on, menus,
+  and an active light-plane flight. Manual play completed the first challenge
+  and reached the second. This does not exercise every vehicle, viewpoint, or
+  DSP-1 command sequence used later in the game.
 - DSP-2's automated commercial-game path covers power-on and the long animated
   introduction. The later in-game check was manual rather than a replayable
   accuracy-fence scenario.
@@ -88,8 +90,8 @@ Deterministic Clover-versus-bsnes comparison is the default regression mode.
 Entropy mode exists for undefined cold-boot-state investigations.
 
 The five-ROM 2000-frame base-console baseline, the CX4 lanes, DSP-1B
-command-level tests, DSP-2's Dungeon Master evidence, and later interactive
-captures cover only the paths executed. They do not imply universal
-compatibility. Exact pixels, audio evidence, hardware state, and equivalent
-observation points are required according to the fault being investigated; a
-game merely reaching a screen is not sufficient.
+command-level tests and Pilotwings flight lane, DSP-2's Dungeon Master
+evidence, and later interactive captures cover only the paths executed. They
+do not imply universal compatibility. Exact pixels, audio evidence, hardware
+state, and equivalent observation points are required according to the fault
+being investigated; a game merely reaching a screen is not sufficient.

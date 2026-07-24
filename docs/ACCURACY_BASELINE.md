@@ -92,7 +92,10 @@ following support and evidence were added afterward:
   and Mega Man X3's controller-driven eight-part CX4 self-test;
 - DSP-1B command-level emulation, including arithmetic/data-ROM operations,
   status and bidirectional data-register behavior, continuous raster output,
-  raster termination, and LoROM/HiROM mapping tests;
+  raster termination, and LoROM/HiROM mapping tests. Pilotwings additionally
+  has a deterministic controller replay through its menus into active
+  light-plane flight, with frames 6200-6500 compared exactly against bsnes.
+  Manual play also completed its first challenge and reached the second;
 - DSP-2 commands `$01`, `$03`, `$05`, `$06`, `$09`, and `$0d` plus the
   Dungeon Master mapper, covered by deterministic command vectors and mapper
   boundaries; unsupported commands produce no output.

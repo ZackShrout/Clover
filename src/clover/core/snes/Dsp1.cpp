@@ -309,17 +309,22 @@ namespace clover::core
             int16_t operation_exponent{};
             DSP1_Normalize(matrix_term(dot, scale_coefficient), coefficient, operation_exponent);
             return DSP1_Truncate(coefficient, static_cast<int16_t>(
-                Les_E - depth_exponent + common_exponent + operation_exponent
+                Les_E - depth_exponent + depth_shift + operation_exponent
             ));
         };
 
-        _results[0] = project_axis(CosAas, SinAas, 0);
+        // The horizontal screen basis is normalized through a Q15 multiply by
+        // 0x7fff before the point is projected. Keeping the multiply explicit
+        // preserves the DSP-1's one-bit truncation at cardinal directions.
+        _results[0] = project_axis(matrix_term(CosAas, 0x7fff),
+                                   matrix_term(SinAas, 0x7fff),
+                                   0);
         _results[1] = project_axis(matrix_term(CosAzs, static_cast<int16_t>(-SinAas)),
                                    matrix_term(CosAzs, CosAas),
                                    matrix_term(static_cast<int16_t>(-SinAzs), 0x7fff));
 
         int16_t magnification_coefficient{};
-        int16_t magnification_exponent{};
+        int16_t magnification_exponent{ inverse_exponent };
         DSP1_Normalize(scale_coefficient, magnification_coefficient, magnification_exponent);
         _results[2] = DSP1_Truncate(magnification_coefficient, static_cast<int16_t>(
             magnification_exponent + Les_E - depth_exponent - 7

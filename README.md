@@ -41,11 +41,14 @@ HG51BS169 execution and command latency remain future accuracy work.
 
 DSP-1B and DSP-2 support were added after CX4. DSP-1B has deterministic
 command, protocol, status-register, raster-streaming, and LoROM/HiROM mapper
-coverage. DSP-2 implements commands `$01`, `$03`, `$05`, `$06`, `$09`, and
-`$0d` plus the Dungeon Master mapper; unsupported commands return no output.
-Dungeon Master ran for 9,000 scripted frames with sampled animated output
-matching bsnes exactly, followed by a successful manual in-game session through
-hero resurrection. DSP-3 and DSP-4 remain unsupported.
+coverage. A deterministic Pilotwings replay reaches active light-plane flight,
+where frames 6200-6500 are compared exactly against bsnes; manual play also
+completed the first challenge and reached the second. DSP-2 implements commands
+`$01`, `$03`, `$05`, `$06`, `$09`, and `$0d` plus the Dungeon Master mapper;
+unsupported commands return no output. Dungeon Master ran for 9,000 scripted
+frames with sampled animated output matching bsnes exactly, followed by a
+successful manual in-game session through hero resurrection. DSP-3 and DSP-4
+remain unsupported.
 
 ## Repository Layout
 

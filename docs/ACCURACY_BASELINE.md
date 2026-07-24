@@ -137,9 +137,11 @@ Super FX bringup runs without a terminal PC or placeholder CPU opcode.
 Deterministic instruction tests are supplemented by a complete 32 KiB Star Fox
 GSU-RAM match at frame 154 and a complete 64 KiB Yoshi's Island VRAM match at
 frame 600 against bsnes. The Yoshi frame is not pixel-exact despite identical
-VRAM, which localizes the missing storybook border to PPU composition/timing
-rather than Super FX execution. Super FX therefore has processor and cartridge
-support, but does not yet have a late pixel-exact commercial-game lane.
+VRAM. This rules out a missing tile upload at that checkpoint, but does not
+distinguish CGRAM, OAM, PPU register/latch state, observation timing, or earlier
+CPU/GSU timing as the cause of the missing storybook border. Super FX therefore
+has processor and cartridge support, but the later display divergence is not
+yet isolated and it does not have a late pixel-exact commercial-game lane.
 
 ## Interactive Validation Record
 

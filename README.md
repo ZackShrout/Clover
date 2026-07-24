@@ -72,7 +72,9 @@ bringup runs without a terminal PC or placeholder CPU opcode; Star Fox, Stunt
 Race FX, and Yoshi's Island also match bsnes exactly at frame 120. Star Fox's
 full 32 KiB GSU RAM matched bsnes at the first graphics upload, and Yoshi's
 Island produced byte-exact 64 KiB VRAM at frame 600. Later rendered frames still
-expose a separate PPU composition gap, recorded in the known-simplifications
+diverge. Matching VRAM rules out a missing tile upload at that Yoshi checkpoint,
+but does not distinguish PPU state or rendering from earlier CPU/GSU timing
+differences; that unresolved boundary is recorded in the known-simplifications
 document.
 
 ## Repository Layout

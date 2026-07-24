@@ -16,7 +16,7 @@ supports CX4, DSP-1B through DSP-4 command devices, and Super FX processors.
 | DSP-2 | Supported at command level | Commands `$01`, `$03`, `$05`, `$06`, `$09`, and `$0d` plus every mapper window have deterministic coverage; unsupported commands produce no output. Dungeon Master completed a 9,000-frame scripted run with 25 sampled frames matching bsnes exactly, plus manual play through hero resurrection. |
 | DSP-3 | Supported at command level | Data/status protocol, fixed 1,024-word data ROM, bitmap conversion, cell operations, pathfinding, Shannon-Fano decoding, and mirrored mapper windows have deterministic coverage. SD Gundam GX completed an 11,000-frame intro/menu run and exercised commands `$2f`, `$0f`, `$1f`, `$38`, `$02`, and `$18`; pathfinding remains covered deterministically rather than by the retail lane. |
 | DSP-4 | Supported at command level | Complete arithmetic, track/polygon/sprite projection, OAM, lookup, streaming-resume, termination, and mirrored mapper behavior is implemented with per-cartridge state. Deterministic command tests cover the cartridge interface; Top Gear 3000 completed a clean 4,887-frame interactive run, and its checked-in movie reproduces the active-race marker at frame 4,732 exactly in Clover. Internal uPD77C25 instruction timing is not modeled. |
-| Super FX | Supported at instruction level | Complete opcode dispatch, registers, cache, ROM/RAM buffers and arbitration, IRQ, PLOT/RPIX, MARIO/GSU-1/GSU-2 maps, and volatile/battery RAM are implemented. Deterministic tests cover arithmetic/flags, cache execution, planar pixels, mapping, contention, and IRQ. Star Fox, Stunt Race FX, Doom, and Yoshi's Island complete 600-frame bringup runs, with the first, second, and fourth matching bsnes exactly at frame 120; later frame-image differences remain attributable to PPU composition/timing rather than missing GSU output. |
+| Super FX | Supported at instruction level | Complete opcode dispatch, registers, cache, ROM/RAM buffers and arbitration, IRQ, PLOT/RPIX, MARIO/GSU-1/GSU-2 maps, and volatile/battery RAM are implemented. Deterministic tests cover arithmetic/flags, cache execution, planar pixels, mapping, contention, and IRQ. Star Fox, Stunt Race FX, Doom, and Yoshi's Island complete 600-frame bringup runs, with the first, second, and fourth matching bsnes exactly at frame 120. Later frame-image differences remain unresolved. |
 | SA-1 | Unsupported | No SA-1 processor or cartridge mapping implementation. |
 
 Consequences:
@@ -47,11 +47,12 @@ Consequences:
   documented cycle level without a separate coroutine. Star Fox's complete
   32 KiB GSU RAM matched bsnes at frame 154, and Yoshi's Island's complete
   64 KiB VRAM matched at frame 600. At that same Yoshi frame Clover omits the
-  reference storybook border despite identical VRAM, isolating the visible
-  discrepancy to remaining PPU composition/timing work. Star Fox likewise
-  diverges visually later in its attract sequence. These are not treated as
-  GSU command or mapping failures, but they prevent claiming pixel-exact retail
-  lanes for Super FX games today.
+  reference storybook border despite identical VRAM. That rules out a missing
+  tile upload at this checkpoint, but CGRAM, OAM, PPU registers and latches,
+  observation timing, and earlier CPU/GSU timing have not yet been compared.
+  Star Fox likewise diverges visually later in its attract sequence. The
+  responsible subsystem is therefore not yet isolated, and these discrepancies
+  prevent claiming late pixel-exact retail lanes for Super FX games today.
 - ExLoROM/ExHiROM and unusual cartridge layouts have not been established as
   supported.
 - Header scoring recognizes a base mapping; it is not a substitute for parsing

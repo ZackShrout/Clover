@@ -108,6 +108,6 @@ struct DSP4_vars_t
   int16 OAM_Row[32];          // current number of tiles per row
 };
 
-extern struct DSP4_vars_t DSP4_vars;
+void BindDSP4State(DSP4_t* protocol, DSP4_vars_t* variables) noexcept;
 
 #endif

@@ -222,7 +222,8 @@ currently include CX4 and DSP-1B through DSP-4:
 - DSP-3 exposes its word-oriented data/status protocol across banks `$20-$3f`
   and `$a0-$bf`, backed by its fixed data ROM and resumable command processor.
 - DSP-4 exposes its word-oriented data/status protocol across banks `$30-$3f`
-  and `$b0-$bf`; projection commands retain their state across host transfers.
+  and `$b0-$bf`; projection commands retain per-cartridge state across host
+  transfers, and multiple DSP-4 instances do not share command state.
 
 Super FX and SA-1 remain unsupported. Current unresolved
 accuracy areas are tracked in

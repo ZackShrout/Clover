@@ -1326,11 +1326,16 @@ int main()
                         );
                     };
 
-                    write_word(0x0000u);
+                    dsp4.write_data(0x00u);
+                    clover::core::dsp4_t isolated_dsp4{};
+                    isolated_dsp4.power_on();
+                    if (isolated_dsp4.read_data() != 0xffu)
+                        return fail("dsp4_instance_idle");
+                    dsp4.write_data(0x00u);
                     write_word(0x1234u);
                     write_word(0x0020u);
                     if (read_word() != 0x4680u || read_word() != 0x0002u)
-                        return fail("dsp4_signed_multiply");
+                        return fail("dsp4_isolated_signed_multiply");
 
                     write_word(0x0001u);
                     for (size_t word{}; word < 22u; ++word)

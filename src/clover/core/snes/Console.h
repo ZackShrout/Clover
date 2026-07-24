@@ -49,6 +49,7 @@ namespace clover::core
         [[nodiscard]] hardware_step_result_t step_hardware() noexcept;
         void run_scanline() noexcept;
         void run_frame() noexcept;
+        void begin_audio_frame() noexcept;
         void set_controller_state(uint8_t port, uint16_t state) noexcept;
         [[nodiscard]] uint8_t read_u8(uint32_t address) noexcept;
         void write_u8(uint32_t address, uint8_t value) noexcept;

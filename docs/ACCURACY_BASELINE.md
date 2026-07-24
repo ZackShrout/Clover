@@ -120,9 +120,14 @@ lane. The similarly named SD Gundam X is not a DSP-3 cartridge.
 Top Gear 3000 completed a 4,887-frame interactive run with zero audio
 discontinuities or empty-queue observations. Its frame-4,732 marker shows an
 active race on lap 2 of 6 with projected road, traffic, scenery, and HUD intact.
-A headless replay of the captured controller movie also reached an active race
-cleanly, but did not reproduce the marker pixel-exactly; a checked-in exact
-differential comparison therefore remains desirable.
+The checked-in
+[`controller movie`](../validation/input/top-gear-3000-active-race.joypad1.script)
+reproduces the captured marker pixel-exactly through both frame-at-a-time and
+minimally instrumented hardware-step replay (SHA-256
+`a0788041d812fb332e7b4b19876aa8797bc0c0f235b484b64ea8f5ead68a5841`).
+The same movie reaches a race under bsnes, but the late race simulation has
+already followed a different trajectory, so frame 4,732 is not treated as a
+cross-emulator exact comparison.
 
 ## Interactive Validation Record
 

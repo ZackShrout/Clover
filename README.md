@@ -56,7 +56,11 @@ deterministic command and mapper coverage. SD Gundam GX now provides a stable
 Shannon-Fano decode, coordinate streaming, and bitmap conversion. DSP-4 has
 deterministic arithmetic, lookup, OAM, streaming-projection, termination, and
 mapper coverage. Top Gear 3000 completed a 4,887-frame interactive run with a
-captured active-race frame at 4,732 and clean audio-queue telemetry.
+captured active-race frame at 4,732 and clean audio-queue telemetry. Its
+checked-in
+[`controller movie`](validation/input/top-gear-3000-active-race.joypad1.script)
+reproduces that marker exactly through both frame-at-a-time and hardware-step
+replay.
 
 ## Repository Layout
 
@@ -172,6 +176,10 @@ CLOVER_JOYPAD1_SCRIPT_FILE=/path/to/capture/joypad1.script \
   CLOVER_SAVE_RAM_FILE=/path/to/capture/initial_save_ram.srm \
   ./build/clover_rom_bringup "/path/to/game.sfc" 1000 2000000000
 ```
+
+Set `CLOVER_RUN_FRAME_REPLAY=1` when reproducing an SDL marker or measuring the
+frontend-equivalent frame path. The default diagnostic mode advances individual
+hardware steps so it can report timing, DMA, and failure state.
 
 `clover_bsnes_bringup` accepts the same environment variable, allowing the
 same input sequence to be compared against bsnes.

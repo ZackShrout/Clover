@@ -24,8 +24,17 @@ Fixed-point math reminder:
 
 #include "Dsp4Legacy.h"
 
-struct DSP4_t DSP4;
-struct DSP4_vars_t DSP4_vars;
+thread_local DSP4_t* active_dsp4 = nullptr;
+thread_local DSP4_vars_t* active_dsp4_vars = nullptr;
+
+void BindDSP4State(DSP4_t* protocol, DSP4_vars_t* variables) noexcept
+{
+  active_dsp4 = protocol;
+  active_dsp4_vars = variables;
+}
+
+#define DSP4 (*active_dsp4)
+#define DSP4_vars (*active_dsp4_vars)
 
 //////////////////////////////////////////////////////////////
 
@@ -2153,3 +2162,6 @@ void DSP4GetByte()
     dsp4_byte = 0xff;
   }
 }
+
+#undef DSP4_vars
+#undef DSP4

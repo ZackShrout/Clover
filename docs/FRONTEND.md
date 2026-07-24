@@ -181,6 +181,13 @@ CLOVER_JOYPAD1_SCRIPT_FILE=/path/to/joypad1.script
 CLOVER_JOYPAD2_SCRIPT_FILE=/path/to/joypad2.script
 ```
 
+For an exact replay of the SDL execution surface, set
+`CLOVER_RUN_FRAME_REPLAY=1` when invoking `clover_rom_bringup`. Its default
+mode advances individual hardware steps to collect lower-level timing and
+failure diagnostics. `CLOVER_STEP_FRAME_REPLAY=1` provides a minimally
+instrumented hardware-step path for confirming that both execution surfaces
+reach the same frame.
+
 That makes an input-gated path repeatable under Clover and bsnes while the WAV
 and CSV preserve audio and host-performance evidence.
 

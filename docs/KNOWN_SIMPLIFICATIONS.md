@@ -15,7 +15,7 @@ supports CX4 and DSP-1B through DSP-4 command devices.
 | DSP-1B | Supported at command level | Deterministic arithmetic, projection, data-ROM, status, bidirectional-register, continuous-raster, termination, and LoROM/HiROM mapping tests. Pilotwings has a replayable active-flight exact retail lane and manual play through its first challenge. DSP-1/DSP-1A silicon differences and instruction timing are not modeled separately. |
 | DSP-2 | Supported at command level | Commands `$01`, `$03`, `$05`, `$06`, `$09`, and `$0d` plus every mapper window have deterministic coverage; unsupported commands produce no output. Dungeon Master completed a 9,000-frame scripted run with 25 sampled frames matching bsnes exactly, plus manual play through hero resurrection. |
 | DSP-3 | Supported at command level | Data/status protocol, fixed 1,024-word data ROM, bitmap conversion, cell operations, pathfinding, Shannon-Fano decoding, and mirrored mapper windows have deterministic coverage. SD Gundam GX completed an 11,000-frame intro/menu run and exercised commands `$2f`, `$0f`, `$1f`, `$38`, `$02`, and `$18`; pathfinding remains covered deterministically rather than by the retail lane. |
-| DSP-4 | Supported at command level | Complete arithmetic, track/polygon/sprite projection, OAM, lookup, streaming-resume, termination, and mirrored mapper behavior is implemented. Deterministic command tests cover the cartridge interface; Top Gear 3000 completed a clean 4,887-frame interactive run with an active-race marker at frame 4,732. Internal uPD77C25 instruction timing is not modeled. |
+| DSP-4 | Supported at command level | Complete arithmetic, track/polygon/sprite projection, OAM, lookup, streaming-resume, termination, and mirrored mapper behavior is implemented with per-cartridge state. Deterministic command tests cover the cartridge interface; Top Gear 3000 completed a clean 4,887-frame interactive run, and its checked-in movie reproduces the active-race marker at frame 4,732 exactly in Clover. Internal uPD77C25 instruction timing is not modeled. |
 | Super FX / SA-1 | Unsupported | No processor or cartridge mapping implementation. |
 
 Consequences:
@@ -38,9 +38,10 @@ Consequences:
   bitmap commands. It does not yet reach gameplay pathfinding commands. The
   similarly named SD Gundam X is a different, non-DSP cartridge.
 - DSP-4's Top Gear 3000 capture reaches an active race with road projection,
-  traffic, scenery, and HUD intact. Its controller movie replays into a race,
-  but the captured marker is not yet pixel-exact across runs; a checked-in
-  differential comparison remains desirable.
+  traffic, scenery, and HUD intact. Its controller movie reproduces the marker
+  exactly through Clover's frame and hardware-step replay paths. The same movie
+  reaches a different late-race state under bsnes, so this lane is a Clover
+  determinism fence rather than a cross-emulator exact comparison.
 - ExLoROM/ExHiROM and unusual cartridge layouts have not been established as
   supported.
 - Header scoring recognizes a base mapping; it is not a substitute for parsing

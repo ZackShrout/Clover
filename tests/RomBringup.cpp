@@ -2117,6 +2117,117 @@ int main(int argc, char** argv)
                      "Invalid CLOVER_RESET_FRAMES; expected frame[,frame...]\n");
         return 1;
     }
+    const bool run_frame_replay{ parse_bool_env("CLOVER_RUN_FRAME_REPLAY") };
+    const bool step_frame_replay{ parse_bool_env("CLOVER_STEP_FRAME_REPLAY") };
+    if (run_frame_replay && step_frame_replay)
+    {
+        std::fprintf(stderr,
+                     "CLOVER_RUN_FRAME_REPLAY and CLOVER_STEP_FRAME_REPLAY "
+                     "are mutually exclusive\n");
+        return 1;
+    }
+    if (run_frame_replay || step_frame_replay)
+    {
+        if (!dump_directory.empty())
+        {
+            std::error_code error{};
+            std::filesystem::create_directories(dump_directory, error);
+            if (error)
+            {
+                std::fprintf(stderr,
+                             "Failed to create dump directory: %s\n",
+                             dump_directory.string().c_str());
+                return 1;
+            }
+        }
+
+        uint64_t steps{ 0 };
+        uint64_t dumped_frames{ 0 };
+        if (step_frame_replay)
+            console.set_frame_capture_enabled(true);
+        for (uint64_t frame{ 1 }; frame <= target_frames; ++frame)
+        {
+            if (reset_script.contains(frame))
+                console.reset();
+            console.set_controller_state(0u, input_script_1.state_for_frame(frame));
+            console.set_controller_state(1u, input_script_2.state_for_frame(frame));
+
+            if (run_frame_replay)
+            {
+                console.run_frame();
+            }
+            else
+            {
+                console.begin_audio_frame();
+                uint64_t completed_frames{ 0 };
+                while (completed_frames == 0u && steps < step_limit)
+                {
+                    const clover::core::hardware_step_result_t step{ console.step_hardware() };
+                    ++steps;
+                    completed_frames += step.ppu.frames_completed;
+                }
+                if (completed_frames == 0u)
+                {
+                    std::fprintf(stderr,
+                                 "Step limit hit before frame %llu\n",
+                                 static_cast<unsigned long long>(frame));
+                    return 1;
+                }
+            }
+            if (console.audio_output_overflowed())
+            {
+                std::fprintf(stderr,
+                             "Audio output overflow at frame %llu\n",
+                             static_cast<unsigned long long>(frame));
+                return 1;
+            }
+            const clover::core::cpu_state_t cpu{ console.cpu_state() };
+            if (cpu.pb == 0x00u && cpu.pc == 0xffffu)
+            {
+                std::fprintf(stderr,
+                             "Terminal PC at frame %llu\n",
+                             static_cast<unsigned long long>(frame));
+                return 1;
+            }
+
+            if (frame < dump_start_frame
+                || frame >= dump_start_frame + dump_count)
+            {
+                continue;
+            }
+
+            const std::filesystem::path frame_path{
+                dump_directory / ("frame_" + std::to_string(frame) + ".ppm")
+            };
+            if (!write_framebuffer_ppm(frame_path, console.framebuffer()))
+            {
+                std::fprintf(stderr,
+                             "Failed to write frame dump: %s\n",
+                             frame_path.string().c_str());
+                return 1;
+            }
+            ++dumped_frames;
+        }
+
+        std::printf("%s replay: target_frames=%llu frames_completed=%llu steps=%llu\n",
+                    run_frame_replay ? "Run-frame" : "Step-frame",
+                    static_cast<unsigned long long>(target_frames),
+                    static_cast<unsigned long long>(target_frames),
+                    static_cast<unsigned long long>(steps));
+        const uint64_t placeholder_opcodes{ console.cpu_placeholder_opcode_count() };
+        const bool apu_halted{ console.apu_state().halted };
+        std::printf("Diagnostics: terminal_pc=0 cpu_placeholder_opcodes=%llu apu_halted=%u\n",
+                    static_cast<unsigned long long>(placeholder_opcodes),
+                    apu_halted ? 1u : 0u);
+        if (!dump_directory.empty() && dump_count != 0u)
+        {
+            std::printf("Frame dumps: directory=%s dumped=%llu start_frame=%llu\n",
+                        dump_directory.string().c_str(),
+                        static_cast<unsigned long long>(dumped_frames),
+                        static_cast<unsigned long long>(dump_start_frame));
+        }
+        return placeholder_opcodes == 0u && !apu_halted ? 0 : 1;
+    }
     if (const char* const audio_path{ std::getenv("CLOVER_AUDIO_FILE") };
         audio_path != nullptr && *audio_path != '\0')
     {

@@ -163,11 +163,16 @@ namespace clover::core
         if (!_powered_on)
             return;
 
-        _apu.begin_audio_frame();
+        begin_audio_frame();
         _ppu.set_frame_capture_enabled(true);
         _scheduler.run_frame(_cpu, _bus, _ppu, _apu, _dma, _interrupts);
         _ppu.set_frame_capture_enabled(false);
         _ppu.present(_framebuffer);
+    }
+
+    void console_t::begin_audio_frame() noexcept
+    {
+        _apu.begin_audio_frame();
     }
 
     void console_t::set_controller_state(uint8_t port, uint16_t state) noexcept

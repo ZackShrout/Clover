@@ -54,13 +54,32 @@ namespace clover::core::dsp4_legacy
 
 namespace clover::core
 {
+    struct dsp4_t::state_t
+    {
+        dsp4_legacy::DSP4_t protocol{};
+        dsp4_legacy::DSP4_vars_t variables{};
+    };
+
+    dsp4_t::dsp4_t()
+        : _state{ std::make_unique<state_t>() }
+    {
+    }
+
+    dsp4_t::~dsp4_t() = default;
+    dsp4_t::dsp4_t(dsp4_t&&) noexcept = default;
+    dsp4_t& dsp4_t::operator=(dsp4_t&&) noexcept = default;
+
     void dsp4_t::power_on() noexcept
     {
+        _state->protocol = {};
+        _state->variables = {};
+        dsp4_legacy::BindDSP4State(&_state->protocol, &_state->variables);
         dsp4_legacy::InitDSP4();
     }
 
     uint8_t dsp4_t::read_data() noexcept
     {
+        dsp4_legacy::BindDSP4State(&_state->protocol, &_state->variables);
         dsp4_legacy::DSP4GetByte();
         return dsp4_legacy::dsp4_byte;
     }
@@ -72,6 +91,7 @@ namespace clover::core
 
     void dsp4_t::write_data(uint8_t value) noexcept
     {
+        dsp4_legacy::BindDSP4State(&_state->protocol, &_state->variables);
         dsp4_legacy::dsp4_byte = value;
         dsp4_legacy::DSP4SetByte();
     }

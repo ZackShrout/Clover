@@ -117,10 +117,12 @@ PC, placeholder CPU opcode, or DSP state corruption. The lane exercised
 commands `$2f`, `$0f`, `$1f`, `$38`, `$02`, and `$18`; gameplay pathfinding
 commands remain covered by deterministic command tests rather than this retail
 lane. The similarly named SD Gundam X is not a DSP-3 cartridge.
-DSP-4's pre-race cartridge path is exercised with Top Gear 3000, but the
-automated replay has not yet entered a race or produced retail DSP-4 command
-traffic. An active-race manual smoke test and checked-in exact comparison remain
-desirable.
+Top Gear 3000 completed a 4,887-frame interactive run with zero audio
+discontinuities or empty-queue observations. Its frame-4,732 marker shows an
+active race on lap 2 of 6 with projected road, traffic, scenery, and HUD intact.
+A headless replay of the captured controller movie also reached an active race
+cleanly, but did not reproduce the marker pixel-exactly; a checked-in exact
+differential comparison therefore remains desirable.
 
 ## Interactive Validation Record
 

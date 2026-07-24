@@ -55,7 +55,8 @@ deterministic command and mapper coverage. SD Gundam GX now provides a stable
 11,000-frame retail intro/menu lane exercising ROM identification/test/dump,
 Shannon-Fano decode, coordinate streaming, and bitmap conversion. DSP-4 has
 deterministic arithmetic, lookup, OAM, streaming-projection, termination, and
-mapper coverage, with Top Gear 3000 used for retail bring-up.
+mapper coverage. Top Gear 3000 completed a 4,887-frame interactive run with a
+captured active-race frame at 4,732 and clean audio-queue telemetry.
 
 ## Repository Layout
 

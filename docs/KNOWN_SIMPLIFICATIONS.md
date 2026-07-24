@@ -7,7 +7,7 @@ hardware behavior.
 ## Cartridge Hardware
 
 Clover currently maps ordinary LoROM and HiROM cartridges with SRAM and
-supports CX4 and DSP-1B through DSP-4 command devices.
+supports CX4, DSP-1B through DSP-4 command devices, and Super FX processors.
 
 | Cartridge hardware | Status | Current evidence and boundary |
 |---|---|---|
@@ -16,7 +16,8 @@ supports CX4 and DSP-1B through DSP-4 command devices.
 | DSP-2 | Supported at command level | Commands `$01`, `$03`, `$05`, `$06`, `$09`, and `$0d` plus every mapper window have deterministic coverage; unsupported commands produce no output. Dungeon Master completed a 9,000-frame scripted run with 25 sampled frames matching bsnes exactly, plus manual play through hero resurrection. |
 | DSP-3 | Supported at command level | Data/status protocol, fixed 1,024-word data ROM, bitmap conversion, cell operations, pathfinding, Shannon-Fano decoding, and mirrored mapper windows have deterministic coverage. SD Gundam GX completed an 11,000-frame intro/menu run and exercised commands `$2f`, `$0f`, `$1f`, `$38`, `$02`, and `$18`; pathfinding remains covered deterministically rather than by the retail lane. |
 | DSP-4 | Supported at command level | Complete arithmetic, track/polygon/sprite projection, OAM, lookup, streaming-resume, termination, and mirrored mapper behavior is implemented with per-cartridge state. Deterministic command tests cover the cartridge interface; Top Gear 3000 completed a clean 4,887-frame interactive run, and its checked-in movie reproduces the active-race marker at frame 4,732 exactly in Clover. Internal uPD77C25 instruction timing is not modeled. |
-| Super FX / SA-1 | Unsupported | No processor or cartridge mapping implementation. |
+| Super FX | Supported at instruction level | Complete opcode dispatch, registers, cache, ROM/RAM buffers and arbitration, IRQ, PLOT/RPIX, MARIO/GSU-1/GSU-2 maps, and volatile/battery RAM are implemented. Deterministic tests cover arithmetic/flags, cache execution, planar pixels, mapping, contention, and IRQ. Star Fox, Stunt Race FX, Doom, and Yoshi's Island complete 600-frame bringup runs, with the first, second, and fourth matching bsnes exactly at frame 120; later frame-image differences remain attributable to PPU composition/timing rather than missing GSU output. |
+| SA-1 | Unsupported | No SA-1 processor or cartridge mapping implementation. |
 
 Consequences:
 
@@ -42,6 +43,15 @@ Consequences:
   exactly through Clover's frame and hardware-step replay paths. The same movie
   reaches a different late-race state under bsnes, so this lane is a Clover
   determinism fence rather than a cross-emulator exact comparison.
+- Super FX instruction timing and buffered memory latency are modeled at the
+  documented cycle level without a separate coroutine. Star Fox's complete
+  32 KiB GSU RAM matched bsnes at frame 154, and Yoshi's Island's complete
+  64 KiB VRAM matched at frame 600. At that same Yoshi frame Clover omits the
+  reference storybook border despite identical VRAM, isolating the visible
+  discrepancy to remaining PPU composition/timing work. Star Fox likewise
+  diverges visually later in its attract sequence. These are not treated as
+  GSU command or mapping failures, but they prevent claiming pixel-exact retail
+  lanes for Super FX games today.
 - ExLoROM/ExHiROM and unusual cartridge layouts have not been established as
   supported.
 - Header scoring recognizes a base mapping; it is not a substitute for parsing
@@ -101,7 +111,9 @@ Entropy mode exists for undefined cold-boot-state investigations.
 The five-ROM 2000-frame base-console baseline, the CX4 lanes, DSP-1B
 command-level tests and Pilotwings flight lane, DSP-2's Dungeon Master
 evidence, DSP-3/DSP-4 command coverage, and later interactive captures cover
-only the paths executed. They
+only the paths executed. Super FX deterministic tests and four-game bringup
+coverage add processor and mapper evidence, but not a pixel-exact late retail
+lane. They
 do not imply universal compatibility. Exact pixels, audio evidence, hardware
 state, and equivalent observation points are required according to the fault
 being investigated; a game merely reaching a screen is not sufficient.

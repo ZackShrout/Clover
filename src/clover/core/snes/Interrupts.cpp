@@ -12,6 +12,8 @@ namespace clover::core
     void interrupt_controller_t::reset() noexcept
     {
         _state = {};
+        _cpu_irq_line = false;
+        _cartridge_irq_line = false;
         _nmi_transition_clock = 0;
         _irq_transition_clock = 0;
     }
@@ -37,30 +39,51 @@ namespace clover::core
 
     void interrupt_controller_t::assert_irq_line() noexcept
     {
-        if (!_state.irq_line)
-            _state.irq_hold = true;
-
-        _state.irq_line = true;
+        _cpu_irq_line = true;
+        refresh_irq_line();
     }
 
     void interrupt_controller_t::clear_irq_line() noexcept
     {
-        _state.irq_line = false;
+        _cpu_irq_line = false;
+        refresh_irq_line();
+    }
+
+    void interrupt_controller_t::set_cartridge_irq_line(bool asserted) noexcept
+    {
+        _cartridge_irq_line = asserted;
+        refresh_irq_line();
+    }
+
+    void interrupt_controller_t::refresh_irq_line() noexcept
+    {
+        const bool combined{ _cpu_irq_line || _cartridge_irq_line };
+        if (combined && !_state.irq_line)
+            _state.irq_hold = true;
+        _state.irq_line = combined;
     }
 
     void interrupt_controller_t::clear_irq_status_line() noexcept
     {
-        _state.irq_line = false;
-        _state.irq_hold = false;
-        _state.irq_transition = false;
+        _cpu_irq_line = false;
+        refresh_irq_line();
+        if (!_state.irq_line)
+        {
+            _state.irq_hold = false;
+            _state.irq_transition = false;
+        }
     }
 
     void interrupt_controller_t::cancel_irq_delivery() noexcept
     {
-        _state.irq_line = false;
-        _state.irq_hold = false;
-        _state.irq_transition = false;
-        _state.irq_pending = false;
+        _cpu_irq_line = false;
+        refresh_irq_line();
+        if (!_state.irq_line)
+        {
+            _state.irq_hold = false;
+            _state.irq_transition = false;
+            _state.irq_pending = false;
+        }
     }
 
     void interrupt_controller_t::force_irq_transition() noexcept

@@ -873,6 +873,11 @@ namespace clover::core
             apply_system_timing(elapsed_master_clocks, _ppu->video_timing())
         };
         _dma_counter += adjusted_elapsed;
+        if (_bus != nullptr)
+        {
+            _bus->step_cartridge(adjusted_elapsed);
+            interrupts.set_cartridge_irq_line(_bus->cartridge_irq_pending());
+        }
         const timing_snapshot_t starting_timing{ _ppu->timing() };
         const master_clock_delta_t clocks_to_scanline{
             static_cast<master_clock_delta_t>(

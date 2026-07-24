@@ -113,6 +113,9 @@ namespace clover::core
 
         _master_clock += result.elapsed_master_clocks;
         _frame_index += result.ppu.frames_completed;
+        if (result.slot_owner == hardware_slot_owner_t::dma)
+            bus.step_cartridge(result.elapsed_master_clocks);
+        interrupts.set_cartridge_irq_line(bus.cartridge_irq_pending());
 
         return result;
     }

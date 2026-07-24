@@ -13,8 +13,8 @@ Clover currently includes:
 
 - a headless SNES core with 65C816 CPU, PPU, SPC700/DSP audio, DMA/HDMA,
   interrupts, controller input, LoROM/HiROM cartridge mapping, CX4 cartridge
-  enhancement hardware, DSP-1B through DSP-4 cartridge processors, and automatic
-  NTSC/PAL timing
+  enhancement hardware, DSP-1B through DSP-4 cartridge processors, Super FX
+  cartridge processing, and automatic NTSC/PAL timing
 - a system-neutral frontend seam around the SNES core
 - an SDL3 desktop app with video, audio, keyboard/gamepad input, frame pacing,
   and deterministic investigation captures
@@ -61,6 +61,19 @@ checked-in
 [`controller movie`](validation/input/top-gear-3000-active-race.joypad1.script)
 reproduces that marker exactly through both frame-at-a-time and hardware-step
 replay.
+
+Super FX support now implements the GSU instruction set, register interface,
+instruction cache, ROM/RAM buffering and contention, IRQ signaling, PLOT/RPIX
+pixel caches, MARIO/GSU-1/GSU-2 cartridge maps, and volatile versus
+battery-backed expansion RAM. Deterministic tests cover execution, flags,
+bitplane output, bus arbitration, mapper variants, and IRQ acknowledgement.
+Star Fox, Stunt Race FX, Doom, and Yoshi's Island all complete 600-frame
+bringup runs without a terminal PC or placeholder CPU opcode; Star Fox, Stunt
+Race FX, and Yoshi's Island also match bsnes exactly at frame 120. Star Fox's
+full 32 KiB GSU RAM matched bsnes at the first graphics upload, and Yoshi's
+Island produced byte-exact 64 KiB VRAM at frame 600. Later rendered frames still
+expose a separate PPU composition gap, recorded in the known-simplifications
+document.
 
 ## Repository Layout
 

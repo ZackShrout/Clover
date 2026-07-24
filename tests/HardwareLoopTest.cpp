@@ -1418,6 +1418,185 @@ int main()
 
             if (const int result = []() -> int
                 {
+                    std::array<uint8_t, 0x8000> rom{};
+                    std::array<uint8_t, 0x8000> ram{};
+                    clover::core::super_fx_t gsu{};
+                    gsu.power_on(rom, ram);
+
+                    // Grant both cartridge buses, then run a cache-resident
+                    // program: IWT R0,$1234; IWT R1,$0002; ADD R1; STOP.
+                    gsu.cpu_write_register(0x303au, 0x18u);
+                    constexpr std::array<uint8_t, 16> program{
+                        0xf0u, 0x34u, 0x12u,
+                        0xf1u, 0x02u, 0x00u,
+                        0x51u, 0x00u,
+                        0x01u, 0x01u, 0x01u, 0x01u,
+                        0x01u, 0x01u, 0x01u, 0x01u
+                    };
+                    for (uint16_t index{}; index < program.size(); ++index)
+                        gsu.cpu_write_register(static_cast<uint16_t>(0x3100u + index),
+                                               program[index]);
+                    gsu.cpu_write_register(0x301eu, 0x00u);
+                    gsu.cpu_write_register(0x301fu, 0x00u);
+                    gsu.step_master_clocks(1000u);
+                    const uint16_t r0{ static_cast<uint16_t>(
+                        gsu.cpu_read_register(0x3000u, 0u)
+                        | (static_cast<uint16_t>(
+                            gsu.cpu_read_register(0x3001u, 0u)
+                        ) << 8u)
+                    ) };
+                    if (r0 != 0x1236u || gsu.running() || !gsu.irq_pending())
+                        return fail("super_fx_cache_program");
+                    if ((gsu.cpu_read_register(0x3031u, 0u) & 0x80u) == 0u
+                        || gsu.irq_pending())
+                    {
+                        return fail("super_fx_irq_acknowledge");
+                    }
+
+                    // LOB uses bit 7, rather than bit 15, for its sign flag.
+                    gsu.power_on(rom, ram);
+                    gsu.cpu_write_register(0x303au, 0x18u);
+                    constexpr std::array<uint8_t, 16> lob_program{
+                        0xf0u, 0x80u, 0x00u, 0x9eu, 0x00u,
+                        0x01u, 0x01u, 0x01u, 0x01u, 0x01u, 0x01u,
+                        0x01u, 0x01u, 0x01u, 0x01u, 0x01u
+                    };
+                    for (uint16_t index{}; index < lob_program.size(); ++index)
+                        gsu.cpu_write_register(static_cast<uint16_t>(0x3100u + index),
+                                               lob_program[index]);
+                    gsu.cpu_write_register(0x301eu, 0x00u);
+                    gsu.cpu_write_register(0x301fu, 0x00u);
+                    gsu.step_master_clocks(1000u);
+                    if (gsu.cpu_read_register(0x3000u, 0u) != 0x80u
+                        || (gsu.cpu_read_register(0x3030u, 0u) & 0x0au) != 0x08u)
+                    {
+                        return fail("super_fx_lob_flags");
+                    }
+
+                    // Eight color-3 pixels form $ff in each plane; RPIX must
+                    // read the same packed pixel back through the cache.
+                    gsu.power_on(rom, ram);
+                    ram.fill(0u);
+                    gsu.cpu_write_register(0x303au, 0x18u);
+                    constexpr std::array<uint8_t, 32> plot_program{
+                        0xf0u, 0x03u, 0x00u, 0x4eu,
+                        0xf1u, 0x00u, 0x00u,
+                        0xf2u, 0x00u, 0x00u,
+                        0x4cu, 0x4cu, 0x4cu, 0x4cu,
+                        0x4cu, 0x4cu, 0x4cu, 0x4cu,
+                        0xf1u, 0x00u, 0x00u, 0x3du, 0x4cu, 0x00u,
+                        0x01u, 0x01u, 0x01u, 0x01u,
+                        0x01u, 0x01u, 0x01u, 0x01u
+                    };
+                    for (uint16_t index{}; index < plot_program.size(); ++index)
+                        gsu.cpu_write_register(static_cast<uint16_t>(0x3100u + index),
+                                               plot_program[index]);
+                    gsu.cpu_write_register(0x301eu, 0x00u);
+                    gsu.cpu_write_register(0x301fu, 0x00u);
+                    gsu.step_master_clocks(4000u);
+                    if (ram[0] != 0xffu || ram[1] != 0xffu
+                        || gsu.cpu_read_register(0x3000u, 0u) != 0x03u
+                        || !gsu.take_ram_written() || gsu.take_ram_written())
+                    {
+                        return fail("super_fx_plot_rpix");
+                    }
+
+                    std::array<std::byte, 0x10000> image{};
+                    image[0x0000u] = std::byte{ 0x42 };
+                    image[0x7fbdu] = std::byte{ 0x05 };
+                    image[0x7fd5u] = std::byte{ 0x20 };
+                    image[0x7fd6u] = std::byte{ 0x15 };
+                    image[0x7ffcu] = std::byte{ 0x00 };
+                    image[0x7ffdu] = std::byte{ 0x80 };
+
+                    clover::core::cartridge_t cartridge{};
+                    if (!cartridge.load(image)
+                        || cartridge.hardware()
+                            != clover::core::cartridge_hardware_t::super_fx
+                        || cartridge.persistent_memory().size() != 0x8000u)
+                    {
+                        return fail("super_fx_cartridge_detection");
+                    }
+                    if (cartridge.read_u8(0x008000u) != 0x42u)
+                        return fail("super_fx_lorom_window");
+                    cartridge.write_u8(0x006123u, 0x5au);
+                    if (cartridge.read_u8(0x006123u) != 0x5au
+                        || cartridge.read_u8(0x700123u) != 0x5au)
+                    {
+                        return fail("super_fx_ram_mirror");
+                    }
+                    if (cartridge.read_u8(0x00303bu) != 0x04u)
+                        return fail("super_fx_version_register");
+
+                    // While GO and the corresponding SCMR grants are set,
+                    // the S-CPU sees the documented ROM vector and open RAM.
+                    image[0x0004u] = std::byte{ 0x99 };
+                    if (!cartridge.load(image))
+                        return fail("super_fx_bus_conflict_reload");
+                    cartridge.write_u8(0x00303au, 0x18u);
+                    cartridge.write_u8(0x00301eu, 0x00u);
+                    cartridge.write_u8(0x00301fu, 0x00u);
+                    if (cartridge.read_u8(0x008004u, 0xa5u) != 0x04u
+                        || cartridge.read_u8(0x006000u, 0xa5u) != 0xa5u)
+                    {
+                        return fail("super_fx_bus_arbitration");
+                    }
+                    cartridge.write_u8(0x003030u, 0x00u);
+
+                    // MARIO/GSU-1 RAM is volatile and has no low-bank mirror;
+                    // GSU-2 battery variants expose the size declared at $7fbd.
+                    image[0x7fbdu] = std::byte{ 0x05 };
+                    image[0x7fd6u] = std::byte{ 0x13 };
+                    if (!cartridge.load(image)
+                        || !cartridge.persistent_memory().empty())
+                    {
+                        return fail("super_fx_mario_volatile_ram");
+                    }
+                    cartridge.write_u8(0x006000u, 0x33u);
+                    cartridge.write_u8(0x600000u, 0x44u);
+                    if (cartridge.read_u8(0x006000u) != 0u
+                        || cartridge.read_u8(0x600000u) != 0x44u)
+                    {
+                        return fail("super_fx_mario_ram_map");
+                    }
+
+                    image[0x7fbdu] = std::byte{ 0x06 };
+                    image[0x7fd6u] = std::byte{ 0x1a };
+                    if (!cartridge.load(image)
+                        || cartridge.persistent_memory().size() != 0x10000u)
+                    {
+                        return fail("super_fx_gsu2_battery_ram");
+                    }
+                    constexpr std::array<uint8_t, 16> store_program{
+                        0xf0u, 0xaau, 0x55u,
+                        0xf1u, 0x10u, 0x00u,
+                        0x31u, 0x00u,
+                        0x01u, 0x01u, 0x01u, 0x01u,
+                        0x01u, 0x01u, 0x01u, 0x01u
+                    };
+                    cartridge.write_u8(0x00303au, 0x18u);
+                    for (uint16_t index{}; index < store_program.size(); ++index)
+                        cartridge.write_u8(0x003100u + index, store_program[index]);
+                    cartridge.write_u8(0x00301eu, 0x00u);
+                    cartridge.write_u8(0x00301fu, 0x00u);
+                    cartridge.step_coprocessor(4000u);
+                    const std::span<const std::byte> save{ cartridge.persistent_memory() };
+                    if (save[0x10u] != std::byte{ 0xaau }
+                        || save[0x11u] != std::byte{ 0x55u }
+                        || !cartridge.persistent_memory_dirty())
+                    {
+                        return fail("super_fx_gsu2_battery_dirty");
+                    }
+
+                    return 0;
+                }();
+                result != 0)
+            {
+                return result;
+            }
+
+            if (const int result = []() -> int
+                {
                     std::array<std::byte, 0x8000> cx4_image{};
                     cx4_image[0x0000] = std::byte{ 0x42 };
                     cx4_image[0x7fd5u] = std::byte{ 0x20 }; // LoROM

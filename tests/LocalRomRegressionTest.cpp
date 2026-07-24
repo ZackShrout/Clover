@@ -138,7 +138,9 @@ int main(int argc, char** argv)
 {
     std::filesystem::path rom_path{};
     uint64_t target_frames{ 800u };
-    uint64_t step_limit{ 20'000'000u };
+    // Coprocessor polling loops can legitimately retire substantially more
+    // S-CPU instructions per video frame than ordinary cartridges.
+    uint64_t step_limit{ 40'000'000u };
 
     if (argc >= 2)
         rom_path = argv[1];

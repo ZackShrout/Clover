@@ -31,6 +31,7 @@ namespace clover::core
         void force_nmi_transition() noexcept;
         void assert_irq_line() noexcept;
         void clear_irq_line() noexcept;
+        void set_cartridge_irq_line(bool asserted) noexcept;
         void clear_irq_status_line() noexcept;
         void cancel_irq_delivery() noexcept;
         void force_irq_transition() noexcept;
@@ -47,7 +48,10 @@ namespace clover::core
         void clear_irq_lock() noexcept;
 
     private:
+        void refresh_irq_line() noexcept;
         interrupt_state_t _state{};
+        bool _cpu_irq_line{ false };
+        bool _cartridge_irq_line{ false };
         // The 65816 samples transitions on its last-cycle edge. Preserve the
         // poll clock so a transition raised during that final cycle waits for
         // the following instruction.

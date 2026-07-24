@@ -111,6 +111,8 @@ namespace clover::core
         [[nodiscard]] ppu_step_result_t step_ppu_with_cpu_writes(master_clock_delta_t elapsed_master_clocks) noexcept;
         void step_apu_with_cpu_writes(master_clock_delta_t elapsed_master_clocks) noexcept;
         void step_apu(master_clock_delta_t elapsed_master_clocks) noexcept;
+        void step_cartridge(master_clock_delta_t elapsed_master_clocks) noexcept;
+        [[nodiscard]] bool cartridge_irq_pending() const noexcept;
         void synchronize_apu_cpu_thread() noexcept;
         void synchronize_apu_io_access(master_clock_delta_t target_clocks) noexcept;
         [[nodiscard]] uint8_t open_bus() const noexcept;

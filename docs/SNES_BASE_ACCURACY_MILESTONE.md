@@ -48,8 +48,8 @@ This milestone is not a claim that every possible SNES state has been tested or
 that every cartridge is supported. In particular, it does not include:
 
 - enhancement hardware such as CX4, Super FX, SA-1, or cartridge DSP families
-  (CX4, DSP-1B, and DSP-2 support were added after this base-console
-  milestone);
+  (CX4, DSP-1B through DSP-4, and Super FX support were added after this
+  base-console milestone);
 - ExLoROM, ExHiROM, and other unusual cartridge configurations;
 - mouse, multitap, Super Scope, and other specialized input devices;
 - equivalent evidence depth for PAL or for early 3-chip, S-CPU-A, and 1CHIP

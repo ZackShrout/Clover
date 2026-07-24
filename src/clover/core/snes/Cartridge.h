@@ -18,6 +18,7 @@
 #include "clover/core/snes/Dsp2.h"
 #include "clover/core/snes/Dsp3.h"
 #include "clover/core/snes/Dsp4.h"
+#include "clover/core/snes/SuperFx.h"
 
 namespace clover::core
 {
@@ -36,7 +37,8 @@ namespace clover::core
         dsp1,
         dsp2,
         dsp3,
-        dsp4
+        dsp4,
+        super_fx
     };
 
     struct cartridge_header_t
@@ -67,6 +69,8 @@ namespace clover::core
         [[nodiscard]] bool load_persistent_memory(std::span<const std::byte> data) noexcept;
         [[nodiscard]] bool persistent_memory_dirty() const noexcept;
         void mark_persistent_memory_clean() noexcept;
+        void step_coprocessor(master_clock_delta_t clocks) noexcept;
+        [[nodiscard]] bool coprocessor_irq_pending() const noexcept;
 
     private:
         struct header_candidate_t
@@ -98,6 +102,11 @@ namespace clover::core
         [[nodiscard]] static bool is_dsp3_status_address(uint32_t address) noexcept;
         [[nodiscard]] static bool is_dsp4_data_address(uint32_t address) noexcept;
         [[nodiscard]] static bool is_dsp4_status_address(uint32_t address) noexcept;
+        [[nodiscard]] static bool is_super_fx_register_address(uint32_t address) noexcept;
+        [[nodiscard]] bool is_super_fx_rom_address(uint32_t address) const noexcept;
+        [[nodiscard]] bool is_super_fx_ram_address(uint32_t address) const noexcept;
+        [[nodiscard]] uint32_t super_fx_rom_offset(uint32_t address) const noexcept;
+        [[nodiscard]] uint32_t super_fx_ram_offset(uint32_t address) const noexcept;
         [[nodiscard]] static header_candidate_t score_lorom_header(std::span<const uint8_t> rom_data) noexcept;
         [[nodiscard]] static header_candidate_t score_hirom_header(std::span<const uint8_t> rom_data) noexcept;
         [[nodiscard]] static int score_header_candidate(std::span<const uint8_t> rom_data,
@@ -118,7 +127,9 @@ namespace clover::core
         mutable dsp2_t _dsp2{};
         mutable std::unique_ptr<dsp3_t> _dsp3{};
         mutable std::unique_ptr<dsp4_t> _dsp4{};
+        mutable super_fx_t _super_fx{};
         bool _loaded{ false };
+        bool _ram_persistent{ false };
         bool _ram_dirty{ false };
     };
 }

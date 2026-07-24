@@ -103,6 +103,9 @@ following support and evidence were added afterward:
   Shannon-Fano command paths, plus mirrored mapper windows;
 - DSP-4's complete command state machine, including resumable track, polygon,
   sprite, OAM, lookup, and arithmetic paths plus its mirrored mapper windows.
+- Super FX instruction-level execution, registers, cache, pixel cache,
+  cycle-accounted ROM/RAM access, contention, IRQ behavior, and the
+  MARIO/GSU-1/GSU-2 cartridge layouts.
 
 Dungeon Master additionally completed a 9,000-frame scripted run without a
 terminal PC, placeholder CPU opcode, or halted APU. Five-frame windows sampled
@@ -128,6 +131,15 @@ minimally instrumented hardware-step replay (SHA-256
 The same movie reaches a race under bsnes, but the late race simulation has
 already followed a different trajectory, so frame 4,732 is not treated as a
 cross-emulator exact comparison.
+
+Star Fox, Stunt Race FX, Doom, and Yoshi's Island each complete 600-frame
+Super FX bringup runs without a terminal PC or placeholder CPU opcode.
+Deterministic instruction tests are supplemented by a complete 32 KiB Star Fox
+GSU-RAM match at frame 154 and a complete 64 KiB Yoshi's Island VRAM match at
+frame 600 against bsnes. The Yoshi frame is not pixel-exact despite identical
+VRAM, which localizes the missing storybook border to PPU composition/timing
+rather than Super FX execution. Super FX therefore has processor and cartridge
+support, but does not yet have a late pixel-exact commercial-game lane.
 
 ## Interactive Validation Record
 

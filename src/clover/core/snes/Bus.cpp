@@ -261,6 +261,17 @@ namespace clover::core
         _dma = &dma;
     }
 
+    void bus_t::step_cartridge(master_clock_delta_t elapsed_master_clocks) noexcept
+    {
+        if (_cartridge != nullptr)
+            _cartridge->step_coprocessor(elapsed_master_clocks);
+    }
+
+    bool bus_t::cartridge_irq_pending() const noexcept
+    {
+        return _cartridge != nullptr && _cartridge->coprocessor_irq_pending();
+    }
+
     void bus_t::power_on() noexcept
     {
         initialize(false);

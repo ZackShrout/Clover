@@ -37,6 +37,7 @@ set(CLOVER_CORE_SOURCES
     src/clover/core/snes/Interrupts.cpp
     src/clover/core/snes/Ppu.cpp
     src/clover/core/snes/Scheduler.cpp
+    src/clover/core/snes/SuperFx.cpp
 )
 
 set(CLOVER_APP_SOURCES

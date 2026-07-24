@@ -25,6 +25,8 @@ namespace clover::core
             _dsp3->power_on();
         else if (_hardware == cartridge_hardware_t::dsp4)
             _dsp4->power_on();
+        else if (_hardware == cartridge_hardware_t::super_fx)
+            _super_fx.power_on(_rom_data, _ram_data);
     }
 
     bool cartridge_t::load(std::span<const std::byte> rom_data) noexcept
@@ -82,6 +84,36 @@ namespace clover::core
                     return _dsp4->read_data();
                 if (is_dsp4_status_address(address))
                     return _dsp4->read_status();
+            }
+            if (_hardware == cartridge_hardware_t::super_fx)
+            {
+                if (is_super_fx_register_address(address))
+                    return _super_fx.cpu_read_register(
+                        static_cast<uint16_t>(address), open_bus
+                    );
+                if (is_super_fx_ram_address(address))
+                {
+                    if (_super_fx.owns_ram_bus())
+                        return open_bus;
+                    if (_ram_data.empty())
+                        return open_bus;
+                    return _ram_data[super_fx_ram_offset(address)];
+                }
+                if (is_super_fx_rom_address(address))
+                {
+                    if (_super_fx.owns_rom_bus())
+                    {
+                        static constexpr std::array<uint8_t, 16> vector{
+                            0x00u, 0x01u, 0x00u, 0x01u,
+                            0x04u, 0x01u, 0x00u, 0x01u,
+                            0x00u, 0x01u, 0x08u, 0x01u,
+                            0x00u, 0x01u, 0x0cu, 0x01u
+                        };
+                        return vector[address & 15u];
+                    }
+                    return _rom_data[super_fx_rom_offset(address)];
+                }
+                return open_bus;
             }
             if (!_ram_data.empty())
             {
@@ -145,6 +177,24 @@ namespace clover::core
             if (_hardware == cartridge_hardware_t::dsp4 && is_dsp4_data_address(address))
             {
                 _dsp4->write_data(value);
+                return;
+            }
+            if (_hardware == cartridge_hardware_t::super_fx)
+            {
+                if (is_super_fx_register_address(address))
+                {
+                    _super_fx.cpu_write_register(static_cast<uint16_t>(address), value);
+                    return;
+                }
+                if (is_super_fx_ram_address(address) && !_ram_data.empty())
+                {
+                    uint8_t& destination{ _ram_data[super_fx_ram_offset(address)] };
+                    if (destination != value)
+                    {
+                        destination = value;
+                        _ram_dirty = _ram_persistent;
+                    }
+                }
                 return;
             }
             if (!_ram_data.empty())
@@ -211,11 +261,15 @@ namespace clover::core
 
     std::span<const std::byte> cartridge_t::persistent_memory() const noexcept
     {
+        if (!_ram_persistent)
+            return {};
         return std::as_bytes(std::span<const uint8_t>{ _ram_data });
     }
 
     bool cartridge_t::load_persistent_memory(std::span<const std::byte> data) noexcept
     {
+        if (!_ram_persistent)
+            return data.empty();
         if (data.size() != _ram_data.size())
             return false;
 
@@ -233,6 +287,22 @@ namespace clover::core
     void cartridge_t::mark_persistent_memory_clean() noexcept
     {
         _ram_dirty = false;
+    }
+
+    void cartridge_t::step_coprocessor(master_clock_delta_t clocks) noexcept
+    {
+        if (_hardware == cartridge_hardware_t::super_fx)
+        {
+            _super_fx.step_master_clocks(clocks);
+            if (_super_fx.take_ram_written() && _ram_persistent)
+                _ram_dirty = true;
+        }
+    }
+
+    bool cartridge_t::coprocessor_irq_pending() const noexcept
+    {
+        return _hardware == cartridge_hardware_t::super_fx
+            && _super_fx.irq_pending();
     }
 
     bool cartridge_t::is_bootstrap_program_rom_address(uint32_t address) noexcept
@@ -382,6 +452,65 @@ namespace clover::core
         return bank >= 0x30u && bank <= 0x3fu && offset >= 0xc000u;
     }
 
+    bool cartridge_t::is_super_fx_register_address(uint32_t address) noexcept
+    {
+        const uint8_t bank{ static_cast<uint8_t>(address >> 16u) };
+        const uint16_t offset{ static_cast<uint16_t>(address) };
+        return (bank <= 0x3fu || (bank >= 0x80u && bank <= 0xbfu))
+            && offset >= 0x3000u && offset <= 0x34ffu;
+    }
+
+    bool cartridge_t::is_super_fx_rom_address(uint32_t address) const noexcept
+    {
+        const uint8_t bank{ static_cast<uint8_t>(address >> 16u) };
+        const uint8_t mirrored_bank{ static_cast<uint8_t>(bank & 0x7fu) };
+        const uint16_t offset{ static_cast<uint16_t>(address) };
+        if (mirrored_bank <= 0x3fu && offset >= 0x8000u)
+        {
+            // Original MARIO-chip boards decode only the first 1 MiB window.
+            return _header.raw_cartridge_type != 0x13u || mirrored_bank <= 0x1fu;
+        }
+        return _header.raw_cartridge_type != 0x13u
+            && mirrored_bank >= 0x40u && mirrored_bank <= 0x5fu;
+    }
+
+    bool cartridge_t::is_super_fx_ram_address(uint32_t address) const noexcept
+    {
+        const uint8_t bank{ static_cast<uint8_t>(address >> 16u) };
+        if (_header.raw_cartridge_type == 0x13u)
+            return (bank >= 0x60u && bank <= 0x7du) || bank >= 0xe0u;
+
+        const uint8_t mirrored_bank{ static_cast<uint8_t>(bank & 0x7fu) };
+        const uint16_t offset{ static_cast<uint16_t>(address) };
+        if (mirrored_bank <= 0x3fu && offset >= 0x6000u && offset <= 0x7fffu)
+            return true;
+        return mirrored_bank >= 0x60u && mirrored_bank <= 0x7du;
+    }
+
+    uint32_t cartridge_t::super_fx_rom_offset(uint32_t address) const noexcept
+    {
+        const uint8_t bank{ static_cast<uint8_t>(address >> 16u) };
+        const uint8_t mirrored_bank{ static_cast<uint8_t>(bank & 0x7fu) };
+        const uint16_t offset{ static_cast<uint16_t>(address) };
+        uint32_t linear{};
+        if (mirrored_bank <= 0x3fu)
+            linear = (static_cast<uint32_t>(mirrored_bank) << 15u) | (offset & 0x7fffu);
+        else
+            linear = (static_cast<uint32_t>(mirrored_bank & 0x1fu) << 16u) | offset;
+        return linear % static_cast<uint32_t>(_rom_data.size());
+    }
+
+    uint32_t cartridge_t::super_fx_ram_offset(uint32_t address) const noexcept
+    {
+        const uint8_t bank{ static_cast<uint8_t>(address >> 16u) };
+        const uint8_t mirrored_bank{ static_cast<uint8_t>(bank & 0x7fu) };
+        const uint16_t offset{ static_cast<uint16_t>(address) };
+        const uint32_t linear{ mirrored_bank <= 0x3fu
+            ? static_cast<uint32_t>(offset & 0x1fffu)
+            : (static_cast<uint32_t>(mirrored_bank & 1u) << 16u) | offset };
+        return linear % static_cast<uint32_t>(_ram_data.size());
+    }
+
     cartridge_t::header_candidate_t cartridge_t::score_lorom_header(
         std::span<const uint8_t> rom_data
     ) noexcept
@@ -488,6 +617,8 @@ namespace clover::core
         _hardware = cartridge_hardware_t::base;
         if (winner.raw_cartridge_type == 0xf3u)
             _hardware = cartridge_hardware_t::cx4;
+        else if ((winner.raw_cartridge_type & 0xf0u) == 0x10u)
+            _hardware = cartridge_hardware_t::super_fx;
         else if ((winner.raw_cartridge_type & 0xf0u) == 0u
                  && (winner.raw_cartridge_type & 0x0fu) >= 3u
                  && (winner.raw_cartridge_type & 0x0fu) <= 6u)
@@ -506,6 +637,23 @@ namespace clover::core
             else
                 _hardware = cartridge_hardware_t::dsp1;
         }
+        if (_hardware == cartridge_hardware_t::super_fx)
+        {
+            const size_t header_offset{ winner.mapping_mode == cartridge_mapping_mode_t::hirom
+                ? 0xffc0u : 0x7fc0u };
+            uint8_t expansion_ram_size{ 5u };
+            if (header_offset >= 3u && _rom_data[header_offset - 3u] < 16u)
+                expansion_ram_size = _rom_data[header_offset - 3u];
+            _ram_data.assign(static_cast<size_t>(1024u) << expansion_ram_size, 0u);
+            _ram_persistent = winner.raw_cartridge_type == 0x15u
+                || winner.raw_cartridge_type == 0x1au;
+        }
+        else if (winner.raw_ram_size != 0u && winner.raw_ram_size < 16u)
+        {
+            _ram_data.assign(static_cast<size_t>(1024u) << winner.raw_ram_size, 0u);
+            _ram_persistent = true;
+        }
+
         if (_hardware == cartridge_hardware_t::dsp1)
         {
             _dsp1 = std::make_unique<dsp1_t>();
@@ -525,8 +673,10 @@ namespace clover::core
             _dsp4 = std::make_unique<dsp4_t>();
             _dsp4->power_on();
         }
-        if (winner.raw_ram_size != 0u && winner.raw_ram_size < 16u)
-            _ram_data.assign(static_cast<size_t>(1024u) << winner.raw_ram_size, 0u);
+        else if (_hardware == cartridge_hardware_t::super_fx)
+        {
+            _super_fx.power_on(_rom_data, _ram_data);
+        }
         _ram_dirty = false;
         return true;
     }
@@ -539,6 +689,7 @@ namespace clover::core
         _mapping_mode = cartridge_mapping_mode_t::bootstrap;
         _hardware = cartridge_hardware_t::base;
         _loaded = false;
+        _ram_persistent = false;
         _dsp1.reset();
         _dsp3.reset();
         _dsp4.reset();

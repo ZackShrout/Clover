@@ -1185,6 +1185,234 @@ int main()
 
             if (const int result = []() -> int
                 {
+                    clover::core::dsp3_t dsp3{};
+                    dsp3.power_on();
+                    if (dsp3.read_status() != 0x84u || dsp3.read_data() != 0x80u)
+                        return fail("dsp3_idle_registers");
+
+                    const auto write_word = [&](uint16_t value)
+                    {
+                        dsp3.write_data(static_cast<uint8_t>(value));
+                        dsp3.write_data(static_cast<uint8_t>(value >> 8u));
+                    };
+                    const auto read_word = [&]()
+                    {
+                        const uint16_t low{ dsp3.read_data() };
+                        return static_cast<uint16_t>(
+                            low | (static_cast<uint16_t>(dsp3.read_data()) << 8u)
+                        );
+                    };
+
+                    dsp3.write_data(0x06u);
+                    write_word(0x0304u);
+                    dsp3.write_data(0x03u);
+                    write_word(0x0102u);
+                    if (read_word() != 6u || dsp3.read_status() != 0x84u)
+                        return fail("dsp3_cell_offset");
+
+                    dsp3.write_data(0x07u);
+                    write_word(2u);
+                    write_word(0x0102u);
+                    if (read_word() != 0x0103u || read_word() != 7u)
+                        return fail("dsp3_adjacent_cell");
+
+                    dsp3.write_data(0x18u);
+                    write_word(1u);
+                    write_word(0x0201u);
+                    write_word(0x0804u);
+                    write_word(0x2010u);
+                    write_word(0x8040u);
+                    if (read_word() != 0x4080u
+                        || read_word() != 0x1020u
+                        || read_word() != 0x0408u
+                        || read_word() != 0x0102u)
+                    {
+                        return fail("dsp3_bitmap_bitplanes");
+                    }
+
+                    dsp3.write_data(0x38u);
+                    write_word(8u);
+                    write_word(1u);
+                    write_word(0x002au);
+                    write_word(0xaa80u);
+                    write_word(0u);
+                    if (dsp3.read_status() != 0x80u
+                        || read_word() != 1u
+                        || dsp3.read_status() != 0x84u)
+                    {
+                        return fail("dsp3_decode_completion");
+                    }
+
+                    dsp3.write_data(0x0fu);
+                    write_word(0x5a5au);
+                    if (read_word() != 0u)
+                        return fail("dsp3_memory_test");
+
+                    dsp3.write_data(0x2fu);
+                    write_word(0x5a5au);
+                    if (read_word() != 0x0300u || dsp3.read_status() != 0x84u)
+                        return fail("dsp3_rom_version");
+
+                    dsp3.write_data(0x1fu);
+                    for (size_t word{}; word < 1024u; ++word)
+                    {
+                        const uint16_t value{ read_word() };
+                        if (word == 0u && value != 0x8000u)
+                            return fail("dsp3_data_rom_first");
+                        if (word == 25u && value != 0x000fu)
+                            return fail("dsp3_data_rom_early");
+                        if (word == 973u && value != 0x0044u)
+                            return fail("dsp3_data_rom_late");
+                        if (word == 1023u && value != 0xffffu)
+                            return fail("dsp3_data_rom_last");
+                    }
+                    if (dsp3.read_status() != 0x84u)
+                        return fail("dsp3_data_rom_completion");
+
+                    std::array<std::byte, 0x10000> image{};
+                    constexpr std::string_view title{ "SD GUNDAM GX" };
+                    for (size_t index{}; index < title.size(); ++index)
+                        image[0x7fc0u + index] = static_cast<std::byte>(title[index]);
+                    image[0x7fd5u] = std::byte{ 0x20 };
+                    image[0x7fd6u] = std::byte{ 0x03 };
+                    image[0x7fd8u] = std::byte{ 0x03 };
+                    image[0x7ffcu] = std::byte{ 0x00 };
+                    image[0x7ffdu] = std::byte{ 0x80 };
+
+                    clover::core::cartridge_t cartridge{};
+                    if (!cartridge.load(image)
+                        || cartridge.hardware() != clover::core::cartridge_hardware_t::dsp3)
+                    {
+                        return fail("dsp3_cartridge_detection");
+                    }
+                    cartridge.reset();
+                    if (cartridge.read_u8(0x208000u) != 0x80u
+                        || cartridge.read_u8(0xa0bfffu) != 0x80u
+                        || cartridge.read_u8(0x20c000u) != 0x84u
+                        || cartridge.read_u8(0xbfffffu) != 0x84u)
+                    {
+                        return fail("dsp3_mapper_registers");
+                    }
+                    if (cartridge.read_u8(0x1f8000u) != 0u
+                        || cartridge.read_u8(0x207fffu) != 0u)
+                    {
+                        return fail("dsp3_mapping_boundaries");
+                    }
+
+                    return 0;
+                }();
+                result != 0)
+            {
+                return result;
+            }
+
+            if (const int result = []() -> int
+                {
+                    clover::core::dsp4_t dsp4{};
+                    dsp4.power_on();
+                    if (dsp4.read_status() != 0x80u || dsp4.read_data() != 0xffu)
+                        return fail("dsp4_idle_registers");
+
+                    const auto write_word = [&](uint16_t value)
+                    {
+                        dsp4.write_data(static_cast<uint8_t>(value));
+                        dsp4.write_data(static_cast<uint8_t>(value >> 8u));
+                    };
+                    const auto read_word = [&]()
+                    {
+                        const uint16_t low{ dsp4.read_data() };
+                        return static_cast<uint16_t>(
+                            low | (static_cast<uint16_t>(dsp4.read_data()) << 8u)
+                        );
+                    };
+
+                    write_word(0x0000u);
+                    write_word(0x1234u);
+                    write_word(0x0020u);
+                    if (read_word() != 0x4680u || read_word() != 0x0002u)
+                        return fail("dsp4_signed_multiply");
+
+                    write_word(0x0001u);
+                    for (size_t word{}; word < 22u; ++word)
+                        write_word(0u);
+                    for (size_t word{}; word < 5u; ++word)
+                    {
+                        if (read_word() != 0u)
+                            return fail("dsp4_projection_initial_packet");
+                    }
+                    write_word(0x8000u);
+                    if (dsp4.read_data() != 0xffu)
+                        return fail("dsp4_projection_termination");
+
+                    write_word(0x000au);
+                    write_word(0xaaaau);
+                    write_word(0x1234u);
+                    write_word(0x5555u);
+                    if (read_word() != 0x0060u
+                        || read_word() != 0x0030u
+                        || read_word() != 0x00c0u
+                        || read_word() != 0x0090u)
+                    {
+                        return fail("dsp4_nibble_lookup");
+                    }
+
+                    write_word(0x0003u);
+                    write_word(0x0005u);
+                    write_word(0x000bu);
+                    write_word(0x0020u);
+                    write_word(0x0010u);
+                    write_word(0x3456u);
+                    if (read_word() != 1u
+                        || dsp4.read_data() != 0x20u
+                        || dsp4.read_data() != 0x10u
+                        || read_word() != 0x3456u)
+                    {
+                        return fail("dsp4_oam_sprite");
+                    }
+                    write_word(0x0006u);
+                    if (read_word() != 0u)
+                        return fail("dsp4_oam_attributes");
+                    for (size_t byte{}; byte < 30u; ++byte)
+                        static_cast<void>(dsp4.read_data());
+
+                    std::array<std::byte, 0x10000> image{};
+                    constexpr std::string_view title{ "TOP GEAR 3000" };
+                    for (size_t index{}; index < title.size(); ++index)
+                        image[0x7fc0u + index] = static_cast<std::byte>(title[index]);
+                    image[0x7fd5u] = std::byte{ 0x30 };
+                    image[0x7fd6u] = std::byte{ 0x03 };
+                    image[0x7ffcu] = std::byte{ 0x00 };
+                    image[0x7ffdu] = std::byte{ 0x80 };
+
+                    clover::core::cartridge_t cartridge{};
+                    if (!cartridge.load(image)
+                        || cartridge.hardware() != clover::core::cartridge_hardware_t::dsp4)
+                    {
+                        return fail("dsp4_cartridge_detection");
+                    }
+                    cartridge.reset();
+                    if (cartridge.read_u8(0x308000u) != 0xffu
+                        || cartridge.read_u8(0xb0bfffu) != 0xffu
+                        || cartridge.read_u8(0x30c000u) != 0x80u
+                        || cartridge.read_u8(0xbfffffu) != 0x80u)
+                    {
+                        return fail("dsp4_mapper_registers");
+                    }
+                    if (cartridge.read_u8(0x2f8000u) != 0u
+                        || cartridge.read_u8(0x307fffu) != 0u)
+                    {
+                        return fail("dsp4_mapping_boundaries");
+                    }
+
+                    return 0;
+                }();
+                result != 0)
+            {
+                return result;
+            }
+
+            if (const int result = []() -> int
+                {
                     std::array<std::byte, 0x8000> cx4_image{};
                     cx4_image[0x0000] = std::byte{ 0x42 };
                     cx4_image[0x7fd5u] = std::byte{ 0x20 }; // LoROM

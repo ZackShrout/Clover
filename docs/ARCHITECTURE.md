@@ -209,7 +209,7 @@ Rules for diagnostics:
 
 Clover currently implements the late 3-chip SNES/SFC hardware model with NTSC
 and PAL timing plus LoROM and HiROM mapping. Cartridge-owned command devices
-currently include CX4, DSP-1B, and DSP-2:
+currently include CX4 and DSP-1B through DSP-4:
 
 - CX4 cartridges expose RAM and command registers through the LoROM bus window.
   The synchronous command model does not yet reproduce HG51BS169 instruction
@@ -219,7 +219,11 @@ currently include CX4, DSP-1B, and DSP-2:
   not separately modeled.
 - DSP-2 uses its byte-command protocol and Dungeon Master mapping across banks
   `$20-$3f` and `$a0-$bf`.
+- DSP-3 exposes its word-oriented data/status protocol across banks `$20-$3f`
+  and `$a0-$bf`, backed by its fixed data ROM and resumable command processor.
+- DSP-4 exposes its word-oriented data/status protocol across banks `$30-$3f`
+  and `$b0-$bf`; projection commands retain their state across host transfers.
 
-Super FX, SA-1, DSP-3, and DSP-4 remain unsupported. Current unresolved
+Super FX and SA-1 remain unsupported. Current unresolved
 accuracy areas are tracked in
 [`KNOWN_SIMPLIFICATIONS.md`](KNOWN_SIMPLIFICATIONS.md).

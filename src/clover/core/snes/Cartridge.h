@@ -16,6 +16,8 @@
 #include "clover/core/snes/Cx4.h"
 #include "clover/core/snes/Dsp1.h"
 #include "clover/core/snes/Dsp2.h"
+#include "clover/core/snes/Dsp3.h"
+#include "clover/core/snes/Dsp4.h"
 
 namespace clover::core
 {
@@ -92,6 +94,10 @@ namespace clover::core
         [[nodiscard]] bool is_dsp1_data_address(uint32_t address) const noexcept;
         [[nodiscard]] bool is_dsp1_status_address(uint32_t address) const noexcept;
         [[nodiscard]] static bool is_dsp2_address(uint32_t address) noexcept;
+        [[nodiscard]] static bool is_dsp3_data_address(uint32_t address) noexcept;
+        [[nodiscard]] static bool is_dsp3_status_address(uint32_t address) noexcept;
+        [[nodiscard]] static bool is_dsp4_data_address(uint32_t address) noexcept;
+        [[nodiscard]] static bool is_dsp4_status_address(uint32_t address) noexcept;
         [[nodiscard]] static header_candidate_t score_lorom_header(std::span<const uint8_t> rom_data) noexcept;
         [[nodiscard]] static header_candidate_t score_hirom_header(std::span<const uint8_t> rom_data) noexcept;
         [[nodiscard]] static int score_header_candidate(std::span<const uint8_t> rom_data,
@@ -110,6 +116,8 @@ namespace clover::core
         cx4_t _cx4{};
         mutable std::unique_ptr<dsp1_t> _dsp1{};
         mutable dsp2_t _dsp2{};
+        mutable std::unique_ptr<dsp3_t> _dsp3{};
+        mutable std::unique_ptr<dsp4_t> _dsp4{};
         bool _loaded{ false };
         bool _ram_dirty{ false };
     };

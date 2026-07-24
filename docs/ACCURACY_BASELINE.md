@@ -98,7 +98,11 @@ following support and evidence were added afterward:
   Manual play also completed its first challenge and reached the second;
 - DSP-2 commands `$01`, `$03`, `$05`, `$06`, `$09`, and `$0d` plus the
   Dungeon Master mapper, covered by deterministic command vectors and mapper
-  boundaries; unsupported commands produce no output.
+  boundaries; unsupported commands produce no output;
+- DSP-3's data/status protocol, complete fixed data ROM, cell/bitmap/path and
+  Shannon-Fano command paths, plus mirrored mapper windows;
+- DSP-4's complete command state machine, including resumable track, polygon,
+  sprite, OAM, lookup, and arithmetic paths plus its mirrored mapper windows.
 
 Dungeon Master additionally completed a 9,000-frame scripted run without a
 terminal PC, placeholder CPU opcode, or halted APU. Five-frame windows sampled
@@ -108,7 +112,15 @@ multiple heroes without an observed problem. That manual result closes an
 important gameplay smoke-test gap, but it is not yet a deterministic checked-in
 accuracy-fence scenario.
 
-DSP-3 and DSP-4 remain unsupported.
+SD Gundam GX completed an 11,000-frame retail intro/menu run without a terminal
+PC, placeholder CPU opcode, or DSP state corruption. The lane exercised
+commands `$2f`, `$0f`, `$1f`, `$38`, `$02`, and `$18`; gameplay pathfinding
+commands remain covered by deterministic command tests rather than this retail
+lane. The similarly named SD Gundam X is not a DSP-3 cartridge.
+DSP-4's pre-race cartridge path is exercised with Top Gear 3000, but the
+automated replay has not yet entered a race or produced retail DSP-4 command
+traffic. An active-race manual smoke test and checked-in exact comparison remain
+desirable.
 
 ## Interactive Validation Record
 

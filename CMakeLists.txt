@@ -31,6 +31,8 @@ set(CLOVER_CORE_SOURCES
     src/clover/core/snes/Dma.cpp
     src/clover/core/snes/Dsp1.cpp
     src/clover/core/snes/Dsp2.cpp
+    src/clover/core/snes/Dsp3.cpp
+    src/clover/core/snes/Dsp4.cpp
     src/clover/core/FrameBuffer.cpp
     src/clover/core/snes/Interrupts.cpp
     src/clover/core/snes/Ppu.cpp

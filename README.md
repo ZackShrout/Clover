@@ -13,7 +13,7 @@ Clover currently includes:
 
 - a headless SNES core with 65C816 CPU, PPU, SPC700/DSP audio, DMA/HDMA,
   interrupts, controller input, LoROM/HiROM cartridge mapping, CX4 cartridge
-  enhancement hardware, DSP-1B and DSP-2 cartridge processors, and automatic
+  enhancement hardware, DSP-1B through DSP-4 cartridge processors, and automatic
   NTSC/PAL timing
 - a system-neutral frontend seam around the SNES core
 - an SDL3 desktop app with video, audio, keyboard/gamepad input, frame pacing,
@@ -47,8 +47,15 @@ completed the first challenge and reached the second. DSP-2 implements commands
 `$01`, `$03`, `$05`, `$06`, `$09`, and `$0d` plus the Dungeon Master mapper;
 unsupported commands return no output. Dungeon Master ran for 9,000 scripted
 frames with sampled animated output matching bsnes exactly, followed by a
-successful manual in-game session through hero resurrection. DSP-3 and DSP-4
-remain unsupported.
+successful manual in-game session through hero resurrection.
+
+DSP-3 and DSP-4 support now covers their cartridge maps, byte/word transfer
+protocols, fixed data, and complete command state machines. DSP-3 has
+deterministic command and mapper coverage. SD Gundam GX now provides a stable
+11,000-frame retail intro/menu lane exercising ROM identification/test/dump,
+Shannon-Fano decode, coordinate streaming, and bitmap conversion. DSP-4 has
+deterministic arithmetic, lookup, OAM, streaming-projection, termination, and
+mapper coverage, with Top Gear 3000 used for retail bring-up.
 
 ## Repository Layout
 

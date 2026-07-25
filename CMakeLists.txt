@@ -290,6 +290,28 @@ add_executable(clover_file_system_test
 target_include_directories(clover_file_system_test PRIVATE src)
 target_link_libraries(clover_file_system_test PRIVATE clover_utils)
 
+if(MSVC)
+    set(CLOVER_TEST_TARGETS
+        clover_smoke_test
+        clover_hardware_loop_test
+        clover_hardware_profile_test
+        clover_save_ram_test
+        clover_frontend_capability_test
+        clover_analysis_boundary_test
+        clover_machine_state_test
+        clover_checkpoint_test
+        clover_local_rom_regression_test
+        clover_sdl_audio_pacing_test
+        clover_file_system_test
+    )
+    if(TARGET clover_rom_library_test)
+        list(APPEND CLOVER_TEST_TARGETS clover_rom_library_test)
+    endif()
+    foreach(CLOVER_TEST_TARGET IN LISTS CLOVER_TEST_TARGETS)
+        target_link_options(${CLOVER_TEST_TARGET} PRIVATE "/STACK:67108864")
+    endforeach()
+endif()
+
 enable_testing()
 add_test(NAME clover_smoke_test COMMAND clover_smoke_test)
 add_test(NAME clover_hardware_loop_test COMMAND clover_hardware_loop_test)

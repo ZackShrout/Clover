@@ -102,6 +102,7 @@ int main()
     const std::vector<char> central_bytes{
         std::istreambuf_iterator<char>{ central_input }, std::istreambuf_iterator<char>{}
     };
+    central_input.close();
     if (central_bytes.empty() || static_cast<unsigned char>(central_bytes.front()) != 0xa5u)
         return 12;
 

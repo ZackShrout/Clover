@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "clover-emulator",
+  "version-semver": "0.1.0",
+  "description": "Cross-platform dependencies for the Clover SDL desktop application.",
+  "builtin-baseline": "40f3c709db80acf154ac4b17a1f83c564ebd022e",
+  "dependencies": [
+    "sdl3",
+    "sqlite3"
+  ]
+}

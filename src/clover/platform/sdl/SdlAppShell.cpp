@@ -7,6 +7,7 @@
 #include "clover/frontend/SnesEmulatorCore.h"
 #include "clover/platform/RomLibrary.h"
 #include "clover/platform/sdl/SdlAudioPacing.h"
+#include "clover/utils/FileSystem.h"
 
 #include <SDL3/SDL.h>
 
@@ -672,7 +673,7 @@ namespace clover::platform
                     _reset_requested = true;
                 else if (menu_shortcut && event.key.scancode == SDL_SCANCODE_Q)
                     _quit_requested = true;
-                else if (!menu_shortcut && event.key.scancode == SDL_SCANCODE_SPACE)
+                else if (!menu_shortcut && event.key.scancode == SDL_SCANCODE_LSHIFT)
                     _pause_requested = true;
                 else if (!menu_shortcut && event.key.scancode == SDL_SCANCODE_PERIOD)
                     _frame_advance_requested = true;
@@ -1288,22 +1289,22 @@ namespace clover::platform
             return (port == 0u && key_pressed(SDL_SCANCODE_X))
                 || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_SOUTH, port);
         case button_t::face_east:
-            return (port == 0u && key_pressed(SDL_SCANCODE_Z))
+            return (port == 0u && key_pressed(SDL_SCANCODE_C))
                 || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_EAST, port);
         case button_t::face_west:
-            return (port == 0u && key_pressed(SDL_SCANCODE_A))
+            return (port == 0u && key_pressed(SDL_SCANCODE_S))
                 || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_WEST, port);
         case button_t::face_north:
-            return (port == 0u && key_pressed(SDL_SCANCODE_S))
+            return (port == 0u && key_pressed(SDL_SCANCODE_D))
                 || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_NORTH, port);
         case button_t::left_shoulder:
-            return (port == 0u && key_pressed(SDL_SCANCODE_Q))
+            return (port == 0u && key_pressed(SDL_SCANCODE_F))
                 || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, port);
         case button_t::right_shoulder:
-            return (port == 0u && key_pressed(SDL_SCANCODE_W))
+            return (port == 0u && key_pressed(SDL_SCANCODE_V))
                 || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, port);
         case button_t::back:
-            return (port == 0u && key_pressed(SDL_SCANCODE_RSHIFT))
+            return (port == 0u && key_pressed(SDL_SCANCODE_SPACE))
                 || gamepad_button_pressed(SDL_GAMEPAD_BUTTON_BACK, port);
         case button_t::start:
             return (port == 0u && key_pressed(SDL_SCANCODE_RETURN))
@@ -1428,7 +1429,7 @@ namespace clover::platform
             return 1;
         }
 
-        static_cast<void>(SDL_SetAppMetadata("Clover", "0.1", "com.bunnysoft.clover"));
+        static_cast<void>(SDL_SetAppMetadata("Clover", CLOVER_VERSION, "com.bunnysoft.clover"));
         if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD))
         {
             std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
@@ -1479,7 +1480,7 @@ namespace clover::platform
         if (!command_line.rom_path.empty())
         {
             rom_path = command_line.rom_path;
-            media = load_file_bytes(rom_path.string().c_str());
+            media = utils::read_binary_file(rom_path);
             if (media.empty() || !core->load_media(media))
             {
                 std::fprintf(stderr, "Unable to load media: %s\n", rom_path.string().c_str());
@@ -1616,7 +1617,9 @@ namespace clover::platform
                     window_focus_restore_attempts = 0u;
                     if (event.user.code == 0 && event.user.data1 != nullptr)
                     {
-                        selected_rom_path = static_cast<const char*>(event.user.data1);
+                        selected_rom_path = utils::path_from_utf8(
+                            static_cast<const char*>(event.user.data1)
+                        );
                         selected_rom_source = event.type == import_rom_dialog_event_type
                             ? pending_rom_source_t::import
                             : pending_rom_source_t::temporary;
@@ -1798,13 +1801,13 @@ namespace clover::platform
                 const std::filesystem::path requested_path{ std::move(selected_rom_path) };
                 selected_rom_path.clear();
                 std::vector<std::byte> requested_media{
-                    load_file_bytes(requested_path.string().c_str())
+                    utils::read_binary_file(requested_path)
                 };
                 auto replacement{ frontend::create_emulator_core(frontend::system_id_t::snes) };
                 std::filesystem::path active_requested_path{ requested_path };
                 std::string active_display_name{
                     selected_rom_display_name.empty()
-                        ? requested_path.stem().string()
+                        ? utils::path_to_utf8(requested_path.stem())
                         : std::move(selected_rom_display_name)
                 };
                 selected_rom_display_name.clear();
@@ -2102,22 +2105,6 @@ namespace clover::platform
         return save_flushed ? 0 : 1;
     }
 
-    std::vector<std::byte> sdl_app_shell_t::load_file_bytes(const char* path) noexcept
-    {
-        std::ifstream input{ path, std::ios::binary };
-        if (!input)
-            return {};
-
-        const std::vector<char> raw{
-            std::istreambuf_iterator<char>{ input },
-            std::istreambuf_iterator<char>{}
-        };
-        std::vector<std::byte> bytes(raw.size());
-        for (size_t index{ 0 }; index < raw.size(); ++index)
-            bytes[index] = static_cast<std::byte>(static_cast<unsigned char>(raw[index]));
-        return bytes;
-    }
-
     bool sdl_app_shell_t::load_persistent_memory(frontend::emulator_core_t& core,
                                                   const std::filesystem::path& save_path) noexcept
     {
@@ -2139,7 +2126,7 @@ namespace clover::platform
             return true;
         }
 
-        const std::vector<std::byte> data{ load_file_bytes(save_path.string().c_str()) };
+        const std::vector<std::byte> data{ utils::read_binary_file(save_path) };
         if (data.size() != memory.size() || !core.load_persistent_memory(data))
         {
             std::fprintf(stderr,
@@ -2163,43 +2150,10 @@ namespace clover::platform
         if (memory.empty() || !core.persistent_memory_dirty())
             return true;
 
-        std::error_code directory_error{};
-        std::filesystem::create_directories(save_path.parent_path(), directory_error);
-        if (directory_error)
+        std::string error{};
+        if (!utils::write_binary_file_atomic(save_path, memory, error))
         {
-            std::fprintf(stderr, "Unable to create save RAM directory %s: %s\n",
-                         save_path.parent_path().string().c_str(),
-                         directory_error.message().c_str());
-            return false;
-        }
-
-        std::filesystem::path temporary_path{ save_path };
-        temporary_path += ".tmp";
-        std::ofstream output{ temporary_path, std::ios::binary | std::ios::trunc };
-        if (!output)
-        {
-            std::fprintf(stderr, "Unable to open temporary save RAM file: %s\n",
-                         temporary_path.string().c_str());
-            return false;
-        }
-        output.write(reinterpret_cast<const char*>(memory.data()),
-                     static_cast<std::streamsize>(memory.size()));
-        output.close();
-        if (!output)
-        {
-            std::fprintf(stderr, "Unable to write temporary save RAM file: %s\n",
-                         temporary_path.string().c_str());
-            return false;
-        }
-
-        if (!SDL_RenamePath(temporary_path.string().c_str(), save_path.string().c_str()))
-        {
-            std::fprintf(stderr,
-                         "Unable to replace save RAM file %s: %s\n",
-                         save_path.string().c_str(),
-                         SDL_GetError());
-            std::error_code cleanup_error{};
-            static_cast<void>(std::filesystem::remove(temporary_path, cleanup_error));
+            std::fprintf(stderr, "Unable to save RAM: %s\n", error.c_str());
             return false;
         }
 

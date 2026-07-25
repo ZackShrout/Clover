@@ -1,11 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
-project(Clover LANGUAGES CXX)
+project(Clover VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(CLOVER_BUILD_SDL_FRONTEND "Build the SDL3 desktop frontend." OFF)
+option(CLOVER_PACKAGE_DISTRIBUTION "Build an OS-native distributable application." OFF)
 
 set(CLOVER_CORE_SOURCES
     src/clover/core/snes/Apu.cpp
@@ -47,6 +48,11 @@ set(CLOVER_APP_SOURCES
     src/main.cpp
 )
 
+add_library(clover_utils STATIC
+    src/clover/utils/FileSystem.cpp
+)
+target_include_directories(clover_utils PUBLIC src)
+
 add_library(clover_core STATIC ${CLOVER_CORE_SOURCES})
 target_include_directories(clover_core PUBLIC src)
 
@@ -74,16 +80,97 @@ if(CLOVER_BUILD_SDL_FRONTEND)
     target_include_directories(clover_rom_library PUBLIC src)
     target_link_libraries(clover_rom_library PUBLIC
         clover_media_identity
+        clover_utils
         SQLite::SQLite3
     )
-    add_executable(clover_sdl
-        src/clover/frontend/EmulatorCore.cpp
-        src/clover/frontend/SnesEmulatorCore.cpp
-        src/clover/platform/sdl/SdlAppShell.cpp
-        src/sdl_main.cpp
-    )
+    if(APPLE AND CLOVER_PACKAGE_DISTRIBUTION)
+        add_executable(clover_sdl MACOSX_BUNDLE
+            src/clover/frontend/EmulatorCore.cpp
+            src/clover/frontend/SnesEmulatorCore.cpp
+            src/clover/platform/sdl/SdlAppShell.cpp
+            src/sdl_main.cpp
+        )
+    elseif(WIN32 AND CLOVER_PACKAGE_DISTRIBUTION)
+        add_executable(clover_sdl WIN32
+            src/clover/frontend/EmulatorCore.cpp
+            src/clover/frontend/SnesEmulatorCore.cpp
+            src/clover/platform/sdl/SdlAppShell.cpp
+            src/sdl_main.cpp
+        )
+    else()
+        add_executable(clover_sdl
+            src/clover/frontend/EmulatorCore.cpp
+            src/clover/frontend/SnesEmulatorCore.cpp
+            src/clover/platform/sdl/SdlAppShell.cpp
+            src/sdl_main.cpp
+        )
+    endif()
     target_include_directories(clover_sdl PRIVATE src)
-    target_link_libraries(clover_sdl PRIVATE clover_core clover_rom_library SDL3::SDL3)
+    target_link_libraries(clover_sdl PRIVATE
+        clover_core
+        clover_rom_library
+        clover_utils
+        SDL3::SDL3
+    )
+    target_compile_definitions(clover_sdl PRIVATE CLOVER_VERSION="${PROJECT_VERSION}")
+    if(CLOVER_PACKAGE_DISTRIBUTION)
+        set_target_properties(clover_sdl PROPERTIES OUTPUT_NAME Clover)
+        if(APPLE)
+            set_target_properties(clover_sdl PROPERTIES
+                MACOSX_BUNDLE_BUNDLE_NAME Clover
+                MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+                MACOSX_BUNDLE_COPYRIGHT "Copyright (c) 2026 BunnySoft"
+                MACOSX_BUNDLE_GUI_IDENTIFIER "com.bunnysoft.clover"
+                MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/packaging/macos/Info.plist.in"
+                MACOSX_BUNDLE_LONG_VERSION_STRING "${PROJECT_VERSION}"
+                MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+            )
+        endif()
+    endif()
+
+    include(GNUInstallDirs)
+    if(APPLE AND CLOVER_PACKAGE_DISTRIBUTION)
+        install(TARGETS clover_sdl BUNDLE DESTINATION . COMPONENT Runtime)
+        install(FILES
+            "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
+            "${CMAKE_SOURCE_DIR}/LICENSES/LGPL-2.1.txt"
+            "${CMAKE_SOURCE_DIR}/LICENSES/SDL3.txt"
+            "${CMAKE_SOURCE_DIR}/LICENSES/Snes9x.txt"
+            DESTINATION "Clover.app/Contents/Resources/licenses"
+            COMPONENT Runtime
+        )
+    elseif(WIN32)
+        install(TARGETS clover_sdl RUNTIME DESTINATION . COMPONENT Runtime)
+        install(FILES
+            "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
+            "${CMAKE_SOURCE_DIR}/LICENSES/LGPL-2.1.txt"
+            "${CMAKE_SOURCE_DIR}/LICENSES/SDL3.txt"
+            "${CMAKE_SOURCE_DIR}/LICENSES/Snes9x.txt"
+            DESTINATION licenses
+            COMPONENT Runtime
+        )
+    elseif(UNIX AND NOT APPLE)
+        install(TARGETS clover_sdl RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT Runtime)
+        install(FILES "${CMAKE_SOURCE_DIR}/packaging/linux/com.bunnysoft.clover.desktop"
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/applications"
+            COMPONENT Runtime
+        )
+        install(FILES "${CMAKE_SOURCE_DIR}/packaging/Clover.svg"
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps"
+            RENAME com.bunnysoft.clover.svg
+            COMPONENT Runtime
+        )
+        install(FILES
+            "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
+            "${CMAKE_SOURCE_DIR}/LICENSES/LGPL-2.1.txt"
+            "${CMAKE_SOURCE_DIR}/LICENSES/SDL3.txt"
+            "${CMAKE_SOURCE_DIR}/LICENSES/Snes9x.txt"
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/clover/licenses"
+            COMPONENT Runtime
+        )
+    else()
+        install(TARGETS clover_sdl RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT Runtime)
+    endif()
 
     add_executable(clover_rom_library_test
         tests/RomLibraryTest.cpp
@@ -188,6 +275,12 @@ add_executable(clover_sdl_audio_pacing_test
 )
 target_include_directories(clover_sdl_audio_pacing_test PRIVATE src)
 
+add_executable(clover_file_system_test
+    tests/FileSystemTest.cpp
+)
+target_include_directories(clover_file_system_test PRIVATE src)
+target_link_libraries(clover_file_system_test PRIVATE clover_utils)
+
 enable_testing()
 add_test(NAME clover_smoke_test COMMAND clover_smoke_test)
 add_test(NAME clover_hardware_loop_test COMMAND clover_hardware_loop_test)
@@ -199,9 +292,27 @@ add_test(NAME clover_machine_state_test COMMAND clover_machine_state_test)
 add_test(NAME clover_checkpoint_test COMMAND clover_checkpoint_test)
 add_test(NAME clover_local_rom_regression_test COMMAND clover_local_rom_regression_test)
 add_test(NAME clover_sdl_audio_pacing_test COMMAND clover_sdl_audio_pacing_test)
+add_test(NAME clover_file_system_test COMMAND clover_file_system_test)
 if(CLOVER_BUILD_SDL_FRONTEND)
     add_test(NAME clover_rom_library_test COMMAND clover_rom_library_test)
 endif()
 set_tests_properties(clover_local_rom_regression_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
+
+if(WIN32 AND CLOVER_BUILD_SDL_FRONTEND AND CLOVER_PACKAGE_DISTRIBUTION)
+    set(CPACK_PACKAGE_NAME "Clover")
+    set(CPACK_PACKAGE_VENDOR "BunnySoft")
+    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Clover Super Nintendo emulator")
+    set(CPACK_PACKAGE_INSTALL_DIRECTORY "Clover")
+    set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+    set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md")
+    set(CPACK_NSIS_DISPLAY_NAME "Clover")
+    set(CPACK_NSIS_PACKAGE_NAME "Clover")
+    set(CPACK_NSIS_EXECUTABLES_DIRECTORY ".")
+    set(CPACK_NSIS_INSTALLED_ICON_NAME "Clover.exe")
+    set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+    set(CPACK_NSIS_MODIFY_PATH OFF)
+    set(CPACK_PACKAGE_EXECUTABLES "Clover" "Clover")
+    include(CPack)
+endif()

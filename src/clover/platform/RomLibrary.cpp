@@ -6,6 +6,7 @@
 #include "clover/platform/RomLibrary.h"
 
 #include "clover/frontend/MediaIdentity.h"
+#include "clover/utils/FileSystem.h"
 
 #include <cstring>
 #include <fstream>
@@ -47,7 +48,8 @@ namespace clover::platform
         }
         _data_root = data_root;
         const std::filesystem::path database_path{ data_root / "library" / "library.sqlite3" };
-        if (sqlite3_open(database_path.string().c_str(), &_database) != SQLITE_OK)
+        const std::string database_path_utf8{ utils::path_to_utf8(database_path) };
+        if (sqlite3_open(database_path_utf8.c_str(), &_database) != SQLITE_OK)
         {
             error = _database != nullptr ? sqlite3_errmsg(_database) : "Unable to open SQLite database";
             shutdown();
@@ -139,8 +141,8 @@ namespace clover::platform
             error = sqlite3_errmsg(_database);
             return result;
         }
-        const std::string source_filename{ source_path.filename().string() };
-        const std::string display_name{ source_path.stem().string() };
+        const std::string source_filename{ utils::path_to_utf8(source_path.filename()) };
+        const std::string display_name{ utils::path_to_utf8(source_path.stem()) };
         const std::string relative_string{ relative_path.generic_string() };
         sqlite3_bind_text(statement, 1, system_name(system), -1, SQLITE_STATIC);
         sqlite3_bind_text(statement, 2, hash.c_str(), -1, SQLITE_TRANSIENT);
@@ -280,33 +282,6 @@ namespace clover::platform
                                      std::span<const std::byte> data,
                                      std::string& error) const noexcept
     {
-        std::error_code filesystem_error{};
-        std::filesystem::create_directories(path.parent_path(), filesystem_error);
-        if (filesystem_error)
-        {
-            error = "Unable to create directory for " + path.string() + ": "
-                + filesystem_error.message();
-            return false;
-        }
-        std::filesystem::path temporary{ path };
-        temporary += ".tmp";
-        std::ofstream output{ temporary, std::ios::binary | std::ios::trunc };
-        output.write(reinterpret_cast<const char*>(data.data()),
-                     static_cast<std::streamsize>(data.size()));
-        output.close();
-        if (!output)
-        {
-            error = "Unable to write temporary file: " + temporary.string();
-            return false;
-        }
-        std::filesystem::rename(temporary, path, filesystem_error);
-        if (filesystem_error)
-        {
-            std::error_code cleanup_error{};
-            std::filesystem::remove(temporary, cleanup_error);
-            error = "Unable to replace " + path.string() + ": " + filesystem_error.message();
-            return false;
-        }
-        return true;
+        return utils::write_binary_file_atomic(path, data, error);
     }
 }

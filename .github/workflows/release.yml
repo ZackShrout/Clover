@@ -1,0 +1,377 @@
+name: Cross-platform release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: 3
+
+jobs:
+  windows:
+    name: Windows x64
+    runs-on: windows-2025
+    steps:
+      - name: Check out Clover
+        uses: actions/checkout@v6
+
+      - name: Check out pinned vcpkg
+        uses: actions/checkout@v6
+        with:
+          repository: microsoft/vcpkg
+          ref: 40f3c709db80acf154ac4b17a1f83c564ebd022e
+          path: .vcpkg
+
+      - name: Bootstrap vcpkg
+        shell: pwsh
+        run: .\.vcpkg\bootstrap-vcpkg.bat -disableMetrics
+
+      - name: Select artifact version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $version = $env:GITHUB_REF_NAME.TrimStart("v")
+          } else {
+            $version = "0.1.0-ci.$env:GITHUB_RUN_NUMBER"
+          }
+          "CLOVER_ARTIFACT_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S . -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCLOVER_BUILD_SDL_FRONTEND=ON `
+            -DCLOVER_PACKAGE_DISTRIBUTION=ON `
+            -DCMAKE_TOOLCHAIN_FILE="$env:GITHUB_WORKSPACE/.vcpkg/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows-static
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis -y --no-progress
+
+      - name: Install and package
+        shell: pwsh
+        run: |
+          cmake --install build --config Release --prefix stage
+          $archive = "Clover-$env:CLOVER_ARTIFACT_VERSION-windows-x64.zip"
+          Compress-Archive -Path "stage/*" -DestinationPath $archive
+          cpack --config build/CPackConfig.cmake -G NSIS `
+            -D "CPACK_PACKAGE_FILE_NAME=Clover-$env:CLOVER_ARTIFACT_VERSION-windows-x64-setup"
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v6
+        with:
+          name: clover-windows-x64
+          path: |
+            Clover-*-windows-x64.zip
+            Clover-*-windows-x64-setup.exe
+          if-no-files-found: error
+
+  macos:
+    name: macOS universal
+    runs-on: macos-15
+    steps:
+      - name: Check out Clover
+        uses: actions/checkout@v6
+
+      - name: Check out pinned vcpkg
+        uses: actions/checkout@v6
+        with:
+          repository: microsoft/vcpkg
+          ref: 40f3c709db80acf154ac4b17a1f83c564ebd022e
+          path: .vcpkg
+
+      - name: Bootstrap vcpkg
+        shell: bash
+        run: ./.vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Select artifact version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="0.1.0-ci.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "CLOVER_ARTIFACT_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Configure Apple silicon
+        shell: bash
+        run: |
+          cmake -S . -B build-arm64 -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCLOVER_BUILD_SDL_FRONTEND=ON \
+            -DCLOVER_PACKAGE_DISTRIBUTION=ON \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
+            -DCMAKE_TOOLCHAIN_FILE="$GITHUB_WORKSPACE/.vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_OVERLAY_TRIPLETS="$GITHUB_WORKSPACE/packaging/vcpkg/triplets" \
+            -DVCPKG_TARGET_TRIPLET=arm64-osx-clover
+
+      - name: Build and test Apple silicon
+        shell: bash
+        run: |
+          cmake --build build-arm64 --config Release
+          if [[ "$(uname -m)" == "arm64" ]]; then
+            ctest --test-dir build-arm64 -C Release --output-on-failure
+          fi
+
+      - name: Configure Intel
+        shell: bash
+        run: |
+          cmake -S . -B build-x86_64 -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCLOVER_BUILD_SDL_FRONTEND=ON \
+            -DCLOVER_PACKAGE_DISTRIBUTION=ON \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
+            -DCMAKE_TOOLCHAIN_FILE="$GITHUB_WORKSPACE/.vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_OVERLAY_TRIPLETS="$GITHUB_WORKSPACE/packaging/vcpkg/triplets" \
+            -DVCPKG_TARGET_TRIPLET=x64-osx-clover
+
+      - name: Build and test Intel
+        shell: bash
+        run: |
+          cmake --build build-x86_64 --config Release
+          if [[ "$(uname -m)" == "x86_64" ]]; then
+            ctest --test-dir build-x86_64 -C Release --output-on-failure
+          fi
+
+      - name: Assemble universal application
+        shell: bash
+        run: |
+          cmake --install build-arm64 --config Release --prefix stage
+          lipo -create \
+            stage/Clover.app/Contents/MacOS/Clover \
+            build-x86_64/Clover.app/Contents/MacOS/Clover \
+            -output Clover-universal
+          mv Clover-universal stage/Clover.app/Contents/MacOS/Clover
+          lipo -archs stage/Clover.app/Contents/MacOS/Clover
+          minos_count="$(
+            otool -l stage/Clover.app/Contents/MacOS/Clover |
+              grep -c 'minos 12.0'
+          )"
+          if [[ "$minos_count" -ne 2 ]]; then
+            echo "Both macOS slices must target macOS 12.0."
+            exit 1
+          fi
+
+      - name: Verify bundled macOS dependencies
+        shell: bash
+        run: |
+          unexpected="$(
+            otool -L stage/Clover.app/Contents/MacOS/Clover |
+              tail -n +2 |
+              awk '{print $1}' |
+              grep -Ev '^(/usr/lib/|/System/Library/)' || true
+          )"
+          if [[ -n "$unexpected" ]]; then
+            echo "Unexpected non-system dependencies:"
+            echo "$unexpected"
+            exit 1
+          fi
+
+      - name: Import Developer ID certificate
+        shell: bash
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          if [[ -z "$MACOS_CERTIFICATE" ]]; then
+            echo "No Developer ID certificate configured; producing an ad-hoc-signed beta."
+            exit 0
+          fi
+          certificate_path="$RUNNER_TEMP/clover-certificate.p12"
+          keychain_path="$RUNNER_TEMP/clover-signing.keychain-db"
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$certificate_path"
+          security create-keychain -p clover-ci "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p clover-ci "$keychain_path"
+          security import "$certificate_path" -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$keychain_path"
+          security list-keychain -d user -s "$keychain_path"
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k clover-ci "$keychain_path"
+
+      - name: Sign macOS application
+        shell: bash
+        env:
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: |
+          if [[ -n "$MACOS_SIGNING_IDENTITY" ]]; then
+            codesign --force --options runtime --timestamp \
+              --sign "$MACOS_SIGNING_IDENTITY" stage/Clover.app
+          else
+            codesign --force --sign - stage/Clover.app
+          fi
+          codesign --verify --deep --strict --verbose=2 stage/Clover.app
+
+      - name: Create disk image
+        shell: bash
+        run: |
+          artifact="Clover-${CLOVER_ARTIFACT_VERSION}-macos-universal.dmg"
+          hdiutil create -volname Clover -srcfolder stage/Clover.app \
+            -ov -format UDZO "$artifact"
+
+      - name: Notarize tagged disk image when configured
+        if: ${{ github.ref_type == 'tag' }}
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [[ -z "$APPLE_ID" || -z "$APPLE_APP_PASSWORD" || -z "$APPLE_TEAM_ID" ]]; then
+            echo "Notarization secrets are not configured; skipping notarization."
+            exit 0
+          fi
+          artifact="Clover-${CLOVER_ARTIFACT_VERSION}-macos-universal.dmg"
+          xcrun notarytool submit "$artifact" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$artifact"
+
+      - name: Upload macOS package
+        uses: actions/upload-artifact@v6
+        with:
+          name: clover-macos-universal
+          path: Clover-*-macos-universal.dmg
+          if-no-files-found: error
+
+  linux:
+    name: Linux x86_64
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out Clover
+        uses: actions/checkout@v6
+
+      - name: Check out pinned vcpkg
+        uses: actions/checkout@v6
+        with:
+          repository: microsoft/vcpkg
+          ref: 40f3c709db80acf154ac4b17a1f83c564ebd022e
+          path: .vcpkg
+
+      - name: Bootstrap vcpkg
+        shell: bash
+        run: ./.vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Select artifact version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="0.1.0-ci.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "CLOVER_ARTIFACT_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Install Linux build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            autoconf automake libtool ninja-build pkg-config \
+            libasound2-dev libdbus-1-dev libgl1-mesa-dev libibus-1.0-dev \
+            libpulse-dev libudev-dev libwayland-dev libx11-dev libxcursor-dev \
+            libxext-dev libxfixes-dev libxi-dev libxinerama-dev libxkbcommon-dev \
+            libxrandr-dev libxss-dev libxtst-dev wayland-protocols
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCLOVER_BUILD_SDL_FRONTEND=ON \
+            -DCLOVER_PACKAGE_DISTRIBUTION=ON \
+            -DCMAKE_TOOLCHAIN_FILE="$GITHUB_WORKSPACE/.vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=x64-linux
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Install into AppDir
+        shell: bash
+        run: |
+          DESTDIR="$PWD/AppDir" cmake --install build --config Release --prefix /usr
+
+      - name: Build AppImage
+        shell: bash
+        run: |
+          curl -fsSLo linuxdeploy.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy.AppImage
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          export OUTPUT="Clover-${CLOVER_ARTIFACT_VERSION}-linux-x86_64.AppImage"
+          ./linuxdeploy.AppImage \
+            --appdir AppDir \
+            --executable AppDir/usr/bin/Clover \
+            --desktop-file packaging/linux/com.bunnysoft.clover.desktop \
+            --icon-file AppDir/usr/share/icons/hicolor/scalable/apps/com.bunnysoft.clover.svg \
+            --output appimage
+
+      - name: Upload Linux package
+        uses: actions/upload-artifact@v6
+        with:
+          name: clover-linux-x86_64
+          path: Clover-*-linux-x86_64.AppImage
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    if: ${{ github.ref_type == 'tag' }}
+    needs:
+      - windows
+      - macos
+      - linux
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download packaged applications
+        uses: actions/download-artifact@v7
+        with:
+          pattern: clover-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate checksums
+        shell: bash
+        working-directory: release-assets
+        run: sha256sum Clover-* > SHA256SUMS.txt
+
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
+          else
+            release_flags=(--generate-notes --verify-tag)
+            if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+              release_flags+=(--prerelease)
+            fi
+            gh release create "$GITHUB_REF_NAME" \
+              "${release_flags[@]}" \
+              --title "Clover ${GITHUB_REF_NAME#v}" \
+              release-assets/*
+          fi

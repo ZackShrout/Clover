@@ -119,7 +119,6 @@ namespace clover::platform
         [[nodiscard]] int run(int argc, char** argv) noexcept;
 
     private:
-        [[nodiscard]] static std::vector<std::byte> load_file_bytes(const char* path) noexcept;
         [[nodiscard]] static bool load_persistent_memory(frontend::emulator_core_t& core,
                                                          const std::filesystem::path& save_path) noexcept;
         [[nodiscard]] static bool flush_persistent_memory(frontend::emulator_core_t& core,

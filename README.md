@@ -124,6 +124,14 @@ The app also accepts `--frames <count>` to stop after a fixed number of frames.
 Controls and capture details are documented in
 [`docs/FRONTEND.md`](docs/FRONTEND.md).
 
+### Downloadable beta builds
+
+GitHub Actions builds portable Clover packages for Windows x64, universal
+macOS, and Linux x86-64 on every push to `main`. Version tags such as
+`v0.1.0-beta.1` publish those packages together as a GitHub prerelease.
+The complete workflow, signing-secret setup, and release commands are in
+[`docs/RELEASING.md`](docs/RELEASING.md).
+
 ### ROM library, Save RAM, and app menu
 
 Imported ROMs and battery saves live under Clover's SDL-resolved application

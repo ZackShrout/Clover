@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Clover
+Comment=Play Super Nintendo games
+Exec=Clover
+Icon=com.bunnysoft.clover
+Categories=Game;Emulator;
+Terminal=false
+MimeType=application/vnd.nintendo.snes.rom;

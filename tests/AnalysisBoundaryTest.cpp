@@ -126,29 +126,29 @@ int main()
         return fail("hirom_translation");
     }
 
-    core::console_t console{};
-    if (!console.load_cartridge(media))
+    const auto console{ std::make_unique<core::console_t>() };
+    if (!console->load_cartridge(media))
         return fail("console_load");
-    console.power_on();
-    console.write_u8(0x7e1234u, 0x5au);
-    console.write_u8(0x7e4321u, 0xa5u);
-    const uint8_t open_bus_before{ console.open_bus() };
+    console->power_on();
+    console->write_u8(0x7e1234u, 0x5au);
+    console->write_u8(0x7e4321u, 0xa5u);
+    const uint8_t open_bus_before{ console->open_bus() };
     uint8_t inspected{};
-    if (!console.inspect_u8(0x7e1234u, inspected)
+    if (!console->inspect_u8(0x7e1234u, inspected)
         || inspected != 0x5au
-        || console.open_bus() != open_bus_before)
+        || console->open_bus() != open_bus_before)
     {
         return fail("side_effect_free_wram");
     }
-    if (console.inspect_u8(0x002100u, inspected)
-        || console.open_bus() != open_bus_before)
+    if (console->inspect_u8(0x002100u, inspected)
+        || console->open_bus() != open_bus_before)
     {
         return fail("volatile_mmio_unavailable");
     }
 
-    core::console_t boundary_console{};
-    core::console_t hardware_console{};
-    core::console_t observed_console{};
+    const auto boundary_console{ std::make_unique<core::console_t>() };
+    const auto hardware_console{ std::make_unique<core::console_t>() };
+    const auto observed_console{ std::make_unique<core::console_t>() };
     std::array<core::snes_observation_event_t, 4> disabled_observation_storage{};
     std::array<core::snes_observation_event_t, 4> enabled_observation_storage{};
     core::snes_observation_sink_t disabled_observation_sink{};
@@ -158,43 +158,43 @@ int main()
         enabled_observation_storage,
         core::k_snes_observe_cpu_boundary
     );
-    boundary_console.set_observation_sink(&disabled_observation_sink);
-    observed_console.set_observation_sink(&enabled_observation_sink);
-    boundary_console.power_on();
-    hardware_console.power_on();
-    observed_console.power_on();
-    boundary_console.write_u8(0x000000u, 0xeau);
-    hardware_console.write_u8(0x000000u, 0xeau);
-    observed_console.write_u8(0x000000u, 0xeau);
+    boundary_console->set_observation_sink(&disabled_observation_sink);
+    observed_console->set_observation_sink(&enabled_observation_sink);
+    boundary_console->power_on();
+    hardware_console->power_on();
+    observed_console->power_on();
+    boundary_console->write_u8(0x000000u, 0xeau);
+    hardware_console->write_u8(0x000000u, 0xeau);
+    observed_console->write_u8(0x000000u, 0xeau);
     const core::cpu_boundary_step_result_t boundary_step{
-        boundary_console.step_cpu_boundary()
+        boundary_console->step_cpu_boundary()
     };
     const core::cpu_boundary_step_result_t observed_step{
-        observed_console.step_cpu_boundary()
+        observed_console->step_cpu_boundary()
     };
     core::hardware_step_result_t hardware_step{};
     do
     {
-        hardware_step = hardware_console.step_hardware();
+        hardware_step = hardware_console->step_hardware();
     }
     while (hardware_step.cpu_boundary == core::cpu_step_boundary_t::none);
     if (boundary_step.status != core::cpu_boundary_step_status_t::complete
         || boundary_step.boundary != core::cpu_step_boundary_t::instruction_retired
         || boundary_step.elapsed_master_clocks == 0u
         || hardware_step.cpu_boundary != core::cpu_step_boundary_t::instruction_retired
-        || boundary_console.master_clock() != hardware_console.master_clock()
-        || boundary_console.cpu_state().pc != hardware_console.cpu_state().pc
-        || boundary_console.cpu_state().p != hardware_console.cpu_state().p
+        || boundary_console->master_clock() != hardware_console->master_clock()
+        || boundary_console->cpu_state().pc != hardware_console->cpu_state().pc
+        || boundary_console->cpu_state().p != hardware_console->cpu_state().p
         || observed_step.boundary != core::cpu_step_boundary_t::instruction_retired
-        || observed_console.master_clock() != hardware_console.master_clock()
-        || observed_console.cpu_state().pc != hardware_console.cpu_state().pc
-        || observed_console.cpu_state().p != hardware_console.cpu_state().p
-        || observed_console.timing().raster.scanline
-            != hardware_console.timing().raster.scanline
-        || observed_console.timing().raster.dot != hardware_console.timing().raster.dot
-        || boundary_console.timing().raster.scanline
-            != hardware_console.timing().raster.scanline
-        || boundary_console.timing().raster.dot != hardware_console.timing().raster.dot)
+        || observed_console->master_clock() != hardware_console->master_clock()
+        || observed_console->cpu_state().pc != hardware_console->cpu_state().pc
+        || observed_console->cpu_state().p != hardware_console->cpu_state().p
+        || observed_console->timing().raster.scanline
+            != hardware_console->timing().raster.scanline
+        || observed_console->timing().raster.dot != hardware_console->timing().raster.dot
+        || boundary_console->timing().raster.scanline
+            != hardware_console->timing().raster.scanline
+        || boundary_console->timing().raster.dot != hardware_console->timing().raster.dot)
     {
         return fail("cpu_boundary_step_equivalence");
     }
@@ -212,14 +212,14 @@ int main()
         return fail("enabled_observation_non_interference");
     }
 
-    core::console_t wait_console{};
-    wait_console.power_on();
-    wait_console.write_u8(0x000000u, 0xcbu);
+    const auto wait_console{ std::make_unique<core::console_t>() };
+    wait_console->power_on();
+    wait_console->write_u8(0x000000u, 0xcbu);
     const core::cpu_boundary_step_result_t wait_instruction{
-        wait_console.step_cpu_boundary()
+        wait_console->step_cpu_boundary()
     };
     const core::cpu_boundary_step_result_t waiting{
-        wait_console.step_cpu_boundary()
+        wait_console->step_cpu_boundary()
     };
     if (wait_instruction.boundary != core::cpu_step_boundary_t::instruction_retired
         || waiting.boundary != core::cpu_step_boundary_t::waiting)
@@ -227,14 +227,14 @@ int main()
         return fail("cpu_wait_boundary");
     }
 
-    core::console_t stop_console{};
-    stop_console.power_on();
-    stop_console.write_u8(0x000000u, 0xdbu);
+    const auto stop_console{ std::make_unique<core::console_t>() };
+    stop_console->power_on();
+    stop_console->write_u8(0x000000u, 0xdbu);
     const core::cpu_boundary_step_result_t stop_instruction{
-        stop_console.step_cpu_boundary()
+        stop_console->step_cpu_boundary()
     };
     const core::cpu_boundary_step_result_t stopped{
-        stop_console.step_cpu_boundary()
+        stop_console->step_cpu_boundary()
     };
     if (stop_instruction.boundary != core::cpu_step_boundary_t::instruction_retired
         || stopped.boundary != core::cpu_step_boundary_t::stopped)

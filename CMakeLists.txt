@@ -243,10 +243,12 @@ add_executable(clover_local_rom_regression_test
 target_include_directories(clover_local_rom_regression_test PRIVATE src)
 target_link_libraries(clover_local_rom_regression_test PRIVATE clover_core)
 
-add_executable(clover_bsnes_bringup
-    tests/BsnesBringup.cpp
-)
-target_include_directories(clover_bsnes_bringup PRIVATE src)
+if(UNIX)
+    add_executable(clover_bsnes_bringup
+        tests/BsnesBringup.cpp
+    )
+    target_include_directories(clover_bsnes_bringup PRIVATE src)
+endif()
 
 add_executable(clover_seeded_micro_bringup
     tests/SeededMicroBringup.cpp

@@ -105,24 +105,25 @@ and validate immutable media/configuration identity, while pointers, platform
 objects, observation buffers, and legacy traces remain outside the payload.
 Restore is transactional: decode and validate into a temporary console,
 reconnect wiring locally, and replace the live machine only after all
-cross-subsystem invariants pass. The first in-memory causal snapshot types cover
-the scheduler, S-CPU, DMA/HDMA, interrupt controller, CPU bus, base cartridge,
-PPU, and APU. Alongside WRAM, open bus, pending device writes, bootstrap memory,
-and SRAM continuity, PPU state retains video memory, register/latch state,
-raster timing, live render pipelines, compositor samples, and partial frame
-pixels. APU state retains SPC700 execution and replay state, APURAM, ports,
-timers, exact S-DSP state, and in-progress audio output.
+cross-subsystem invariants pass. The in-memory causal snapshot types cover the
+scheduler, S-CPU, DMA/HDMA, interrupt controller, CPU bus, cartridge, PPU, and
+APU. Alongside WRAM, open bus, pending device writes, bootstrap memory, and
+SRAM continuity, PPU state retains video memory, register/latch state, raster
+timing, live render pipelines, compositor samples, and partial frame pixels.
+APU state retains SPC700 execution and replay state, APURAM, ports, timers,
+exact S-DSP state, and in-progress audio output.
 Cartridge restore also validates immutable header, mapper, ROM-size, and
 RAM-topology fields; canonical SHA-256 validation belongs to the outer
-checkpoint envelope. Enhancement cartridges are rejected until their devices
-have complete causal snapshots. These types are core-internal building blocks
-rather than a frontend checkpoint capability. They now compose into one
-transactional in-memory console state for powered bootstrap and base-cartridge
-machines. Restore builds and wires an independent candidate, validates every
-subsystem and shared clock/configuration invariant, and only then performs
-non-failing field commits into the live address-stable console. The caller must
-validate canonical SHA-256 before invoking this core restore; topology checks
-alone cannot distinguish two same-layout ROM revisions.
+checkpoint envelope. CX4, DSP-1 through DSP-4, and Super FX each own a
+versioned, explicit little-endian causal-state blob; cartridge state selects
+the device implied by the immutable loaded-media topology. They now compose
+into one transactional in-memory console state for powered bootstrap, base,
+and enhancement-cartridge machines. Restore builds and wires an independent
+candidate, validates every subsystem and shared clock/configuration invariant,
+and only then performs non-failing field commits into the live address-stable
+console. The caller must validate canonical SHA-256 before invoking this core
+restore; topology checks alone cannot distinguish two same-layout ROM
+revisions.
 
 `frontend/SnesCheckpoint` is that portable caller boundary. Version 1 uses a
 fixed 128-byte little-endian envelope followed by an explicit field-wise
@@ -135,6 +136,20 @@ ROM identity, decodes into temporary state, and only then invokes the core
 transaction. Unknown required versions, invalid scalar encodings, malformed
 geometry, truncation, trailing bytes, and identity mismatches therefore cannot
 mutate the running machine.
+
+The optional `checkpoint_control_t` debug-target capability exposes this
+portable boundary without adding checkpoint operations to the ordinary player
+contract. Capture and restore require a running, paused debug session. A
+successful restore retains debugger pause and presentation policy while
+clearing observations from the abandoned timeline.
+
+The checkpoint boundary is guarded by a deterministic replay matrix. Tests
+capture a portable checkpoint, execute scripted controller and cartridge I/O
+through a completed frame, restore, and replay. Exact hardware-step
+observations, causal state, re-encoded checkpoint bytes, framebuffer, audio,
+and device responses must match. Coverage includes NTSC/PAL mid-frame state,
+SRAM, reset, WAI/IRQ entry, general DMA, HDMA, APU-port synchronization, CX4,
+DSP-1 through DSP-4, and Super FX.
 
 Battery-backed SRAM bytes and dirty state are emulated cartridge state. Save
 identity, filenames, filesystem access, migration, temporary-file replacement,

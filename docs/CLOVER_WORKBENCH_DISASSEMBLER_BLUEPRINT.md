@@ -2857,28 +2857,39 @@ through an isolated DSP instance, and audio-output bounds before mutation; DSP
 RAM and output pointers are then rebound to the destination APU. Deterministic
 continuation tests compare two independently restored APUs.
 
-The subsystem states are now composed into a versioned transactional
-base-console state. Capture is available only for powered bootstrap or
-base-cartridge machines and rejects active CPU/APU call windows and enhancement
-hardware. Restore first validates requested hardware, resolved region, media
-topology, subsystem payloads, CPU/PPU/APU/scheduler clock agreement, frame
-indexes, revision values, raster state, entropy configuration, and interrupt
-clock bounds in an independently allocated and wired console. Only after that
-candidate succeeds are non-failing field restores committed to the live
-address-stable console, preserving observation and presentation policy while
-clearing abandoned diagnostics. Tests cover PAL base media, bootstrap memory,
-WRAM, SRAM, deterministic continuation in a second console, malformed
-subsystems, cross-clock mismatches, different media topology, and explicit CX4
-refusal.
+The subsystem states are now composed into a versioned transactional console
+state. Capture supports powered bootstrap, base-cartridge, and enhancement-
+cartridge machines while rejecting active CPU/APU call windows. CX4, DSP-1
+through DSP-4, and Super FX own versioned causal-state blobs encoded without
+copying C++ object representations. Restore first validates requested hardware,
+resolved region, media topology, subsystem payloads, CPU/PPU/APU/scheduler
+clock agreement, frame indexes, revision values, raster state, entropy
+configuration, and interrupt clock bounds in an independently allocated and
+wired console. Only after that candidate succeeds are non-failing field
+restores committed to the live address-stable console, preserving observation
+and presentation policy while clearing abandoned diagnostics. Tests cover PAL
+base media, bootstrap memory, WRAM, SRAM, deterministic continuation in a
+second console, malformed subsystems, cross-clock mismatches, different media
+topology, and all implemented enhancement families.
 
-The core causal transaction now has a portable frontend envelope, but is not
-yet a public Workbench capability. `frontend/SnesCheckpoint` writes a fixed
-versioned little-endian header and explicit field-wise payload, including all
-subsystem schema versions, bounded lengths, CRC-32 payload integrity, hardware
-topology, and canonical media length/SHA-256. Restore validates those fields and
-fully decodes temporary state before calling the core transaction, so a wrong
-ROM or malformed checkpoint cannot reach live mutation. Enhancement-device
-payloads and optional debug-target exposure remain.
+The core causal transaction now has a portable frontend envelope and an
+optional Workbench-facing `checkpoint_control_t` capability.
+`frontend/SnesCheckpoint` writes a fixed versioned little-endian header and
+explicit field-wise payload, including all subsystem schema versions, bounded
+lengths, CRC-32 payload integrity, hardware topology, and canonical media
+length/SHA-256. Restore validates those fields and fully decodes temporary state
+before calling the core transaction, so a wrong ROM or malformed checkpoint
+cannot reach live mutation. Capability capture and restore require a paused
+debug session, and restore clears observations from the abandoned timeline.
+
+The deterministic replay-equivalence gate is also complete. Its scenario
+matrix restores the portable envelope and replays scripted input through NTSC
+and PAL mid-frame rendering, SRAM, reset, WAI/IRQ entry, general DMA, HDMA,
+APU-port synchronization, and all implemented enhancement devices. It compares
+the full hardware-step transcript, final causal state, re-encoded checkpoint,
+framebuffer, audio, and device I/O byte-for-byte. Reverse-execution work can
+therefore treat checkpoint restore as a verified primitive rather than adding
+another state format.
 
 The Stage 0 performance boundary is now enforced for the older bring-up
 instrumentation too. APU instruction/I/O history, CPU-bus register/write

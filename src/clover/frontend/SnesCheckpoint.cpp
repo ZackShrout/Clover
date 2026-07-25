@@ -26,6 +26,7 @@ namespace clover::frontend
         constexpr uint32_t k_system_snes{ 1u };
         constexpr uint16_t k_header_size{ 128u };
         constexpr uint64_t k_max_cartridge_ram_bytes{ 1024u * 1024u };
+        constexpr uint64_t k_max_enhancement_state_bytes{ 1024u * 1024u };
 
         template <typename>
         inline constexpr bool k_unsupported_serialized_type{ false };
@@ -960,6 +961,24 @@ namespace clover::frontend
                 value.ram_data.resize(static_cast<size_t>(ram_size));
             }
             scalar(archive, value.ram_data);
+
+            uint64_t enhancement_size{
+                static_cast<uint64_t>(value.enhancement_state.size())
+            };
+            scalar(archive, enhancement_size);
+            if constexpr (std::is_same_v<std::remove_cvref_t<archive_t>, reader_t>)
+            {
+                if (!archive.valid()
+                    || enhancement_size > k_max_enhancement_state_bytes
+                    || enhancement_size > archive.remaining())
+                {
+                    return false;
+                }
+                value.enhancement_state.resize(
+                    static_cast<size_t>(enhancement_size)
+                );
+            }
+            scalar(archive, value.enhancement_state);
 
             uint64_t media_size{ static_cast<uint64_t>(value.canonical_media_size) };
             scalar(archive, media_size);

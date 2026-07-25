@@ -4,9 +4,85 @@
 //
 
 #include "clover/core/snes/SuperFx.h"
+#include "clover/core/snes/CausalStateArchive.h"
 
 namespace clover::core
 {
+    bool super_fx_t::capture_causal_state(std::vector<std::byte>& state) const noexcept
+    {
+        try
+        {
+            causal_state_writer_t archive{};
+            archive.field(uint32_t{ 1 });
+            archive.field(_r); archive.field(_sfr);
+            archive.field(_pbr); archive.field(_rombr); archive.field(_rambr);
+            archive.field(_cbr); archive.field(_scbr); archive.field(_scmr);
+            archive.field(_colr); archive.field(_por); archive.field(_bramr);
+            archive.field(_vcr); archive.field(_cfgr); archive.field(_clsr);
+            archive.field(_pipeline); archive.field(_last_ram_address);
+            archive.field(_rom_data); archive.field(_rom_buffer_clocks);
+            archive.field(_ram_buffer_clocks); archive.field(_ram_buffer_address);
+            archive.field(_ram_buffer_data); archive.field(_source_register);
+            archive.field(_destination_register); archive.field(_r14_modified);
+            archive.field(_r15_modified); archive.field(_waiting_for_bus);
+            archive.field(_ram_written); archive.field(_clock_credit);
+            archive.field(_cache); archive.field(_cache_valid);
+            for (const auto& cache : _pixel_cache)
+            {
+                archive.field(cache.offset);
+                archive.field(cache.pending);
+                archive.field(cache.pixels);
+            }
+            state = std::move(archive).finish();
+            return true;
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
+    bool super_fx_t::restore_causal_state(std::span<const std::byte> state) noexcept
+    {
+        super_fx_t candidate{ *this };
+        causal_state_reader_t archive{ state };
+        uint32_t version{};
+        archive.field(version);
+        archive.field(candidate._r); archive.field(candidate._sfr);
+        archive.field(candidate._pbr); archive.field(candidate._rombr);
+        archive.field(candidate._rambr); archive.field(candidate._cbr);
+        archive.field(candidate._scbr); archive.field(candidate._scmr);
+        archive.field(candidate._colr); archive.field(candidate._por);
+        archive.field(candidate._bramr); archive.field(candidate._vcr);
+        archive.field(candidate._cfgr); archive.field(candidate._clsr);
+        archive.field(candidate._pipeline); archive.field(candidate._last_ram_address);
+        archive.field(candidate._rom_data); archive.field(candidate._rom_buffer_clocks);
+        archive.field(candidate._ram_buffer_clocks);
+        archive.field(candidate._ram_buffer_address);
+        archive.field(candidate._ram_buffer_data);
+        archive.field(candidate._source_register);
+        archive.field(candidate._destination_register);
+        archive.field(candidate._r14_modified); archive.field(candidate._r15_modified);
+        archive.field(candidate._waiting_for_bus); archive.field(candidate._ram_written);
+        archive.field(candidate._clock_credit); archive.field(candidate._cache);
+        archive.field(candidate._cache_valid);
+        for (auto& cache : candidate._pixel_cache)
+        {
+            archive.field(cache.offset);
+            archive.field(cache.pending);
+            archive.field(cache.pixels);
+        }
+        if (version != 1u
+            || candidate._source_register >= candidate._r.size()
+            || candidate._destination_register >= candidate._r.size()
+            || !archive.complete())
+        {
+            return false;
+        }
+        *this = candidate;
+        return true;
+    }
+
     namespace
     {
         [[nodiscard]] constexpr int16_t signed_word(uint16_t value) noexcept

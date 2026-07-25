@@ -73,7 +73,7 @@ target_link_libraries(clover_snes_checkpoint PUBLIC clover_core clover_media_ide
 
 add_executable(clover ${CLOVER_APP_SOURCES})
 target_include_directories(clover PRIVATE src)
-target_link_libraries(clover PRIVATE clover_core)
+target_link_libraries(clover PRIVATE clover_core clover_snes_checkpoint)
 if(WIN32 AND CLOVER_PACKAGE_DISTRIBUTION)
     set_target_properties(clover PROPERTIES OUTPUT_NAME clover-cli)
 endif()
@@ -116,6 +116,7 @@ if(CLOVER_BUILD_SDL_FRONTEND)
     target_link_libraries(clover_sdl PRIVATE
         clover_core
         clover_rom_library
+        clover_snes_checkpoint
         clover_utils
         SDL3::SDL3
     )
@@ -216,7 +217,10 @@ add_executable(clover_frontend_capability_test
     src/clover/frontend/SnesEmulatorCore.cpp
 )
 target_include_directories(clover_frontend_capability_test PRIVATE src)
-target_link_libraries(clover_frontend_capability_test PRIVATE clover_core)
+target_link_libraries(clover_frontend_capability_test PRIVATE
+    clover_core
+    clover_snes_checkpoint
+)
 
 add_executable(clover_analysis_boundary_test
     tests/AnalysisBoundaryTest.cpp
@@ -224,7 +228,11 @@ add_executable(clover_analysis_boundary_test
     src/clover/frontend/SnesEmulatorCore.cpp
 )
 target_include_directories(clover_analysis_boundary_test PRIVATE src)
-target_link_libraries(clover_analysis_boundary_test PRIVATE clover_core clover_media_identity)
+target_link_libraries(clover_analysis_boundary_test PRIVATE
+    clover_core
+    clover_media_identity
+    clover_snes_checkpoint
+)
 
 add_executable(clover_machine_state_test
     tests/MachineStateTest.cpp
@@ -237,6 +245,12 @@ add_executable(clover_checkpoint_test
 )
 target_include_directories(clover_checkpoint_test PRIVATE src)
 target_link_libraries(clover_checkpoint_test PRIVATE clover_snes_checkpoint)
+
+add_executable(clover_checkpoint_replay_test
+    tests/CheckpointReplayTest.cpp
+)
+target_include_directories(clover_checkpoint_replay_test PRIVATE src)
+target_link_libraries(clover_checkpoint_replay_test PRIVATE clover_snes_checkpoint)
 
 add_executable(clover_rom_bringup
     tests/RomBringup.cpp
@@ -321,6 +335,7 @@ add_test(NAME clover_frontend_capability_test COMMAND clover_frontend_capability
 add_test(NAME clover_analysis_boundary_test COMMAND clover_analysis_boundary_test)
 add_test(NAME clover_machine_state_test COMMAND clover_machine_state_test)
 add_test(NAME clover_checkpoint_test COMMAND clover_checkpoint_test)
+add_test(NAME clover_checkpoint_replay_test COMMAND clover_checkpoint_replay_test)
 add_test(NAME clover_local_rom_regression_test COMMAND clover_local_rom_regression_test)
 add_test(NAME clover_sdl_audio_pacing_test COMMAND clover_sdl_audio_pacing_test)
 add_test(NAME clover_file_system_test COMMAND clover_file_system_test)

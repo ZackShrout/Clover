@@ -14,6 +14,7 @@
 #include "clover/core/snes/Scheduler.h"
 
 #include <cstdio>
+#include <string_view>
 #include <vector>
 
 namespace
@@ -24,10 +25,15 @@ namespace
         return 1;
     }
 
-    [[nodiscard]] std::vector<std::byte> make_lorom(uint8_t cartridge_type)
+    [[nodiscard]] std::vector<std::byte> make_lorom(
+        uint8_t cartridge_type,
+        std::string_view title = {}
+    )
     {
         std::vector<std::byte> rom(0x8000u, std::byte{ 0 });
         constexpr size_t header{ 0x7fc0u };
+        for (size_t index{ 0 }; index < title.size() && index < 21u; ++index)
+            rom[header + index] = static_cast<std::byte>(title[index]);
         rom[header + 0x15u] = std::byte{ 0x20u };
         rom[header + 0x16u] = static_cast<std::byte>(cartridge_type);
         rom[header + 0x18u] = std::byte{ 0x03u };
@@ -50,7 +56,7 @@ int main()
     static_assert(dma_causal_state_t::schema_version == 1);
     static_assert(interrupt_controller_causal_state_t::schema_version == 1);
     static_assert(bus_causal_state_t::schema_version == 1);
-    static_assert(cartridge_causal_state_t::schema_version == 1);
+    static_assert(cartridge_causal_state_t::schema_version == 2);
     static_assert(ppu_causal_state_t::schema_version == 1);
     static_assert(apu_causal_state_t::schema_version == 1);
     static_assert(console_causal_state_t::schema_version == 1);
@@ -689,12 +695,65 @@ int main()
 
     cartridge_t enhanced_cartridge{};
     const std::vector<std::byte> cx4_rom{ make_lorom(0xf3u) };
+    cartridge_causal_state_t enhanced_state{};
     if (!enhanced_cartridge.load(cx4_rom)
         || enhanced_cartridge.hardware() != cartridge_hardware_t::cx4
-        || enhanced_cartridge.capture_causal_state(base_state)
-            != cartridge_state_result_t::unsupported_hardware)
+        || enhanced_cartridge.capture_causal_state(enhanced_state)
+            != cartridge_state_result_t::success
+        || enhanced_state.enhancement_state.empty())
     {
-        return fail("cartridge_enhancement_explicitly_unsupported");
+        return fail("cartridge_enhancement_capture");
+    }
+    enhanced_cartridge.write_u8(0x006123u, 0x5au);
+    if (enhanced_cartridge.restore_causal_state(enhanced_state)
+            != cartridge_state_result_t::success
+        || enhanced_cartridge.read_u8(0x006123u) != 0u)
+    {
+        return fail("cartridge_enhancement_restore");
+    }
+    auto invalid_enhanced_state{ enhanced_state };
+    invalid_enhanced_state.enhancement_state.pop_back();
+    if (enhanced_cartridge.restore_causal_state(invalid_enhanced_state)
+            != cartridge_state_result_t::invalid_state
+        || enhanced_cartridge.read_u8(0x006123u) != 0u)
+    {
+        return fail("cartridge_enhancement_reject_atomic");
+    }
+
+    const auto enhancement_round_trip{
+        [](uint8_t type,
+           std::string_view title,
+           cartridge_hardware_t expected_hardware)
+        {
+            cartridge_t cartridge{};
+            const std::vector<std::byte> rom{ make_lorom(type, title) };
+            cartridge_causal_state_t state{};
+            cartridge_causal_state_t restored{};
+            return cartridge.load(rom)
+                && cartridge.hardware() == expected_hardware
+                && cartridge.capture_causal_state(state)
+                    == cartridge_state_result_t::success
+                && !state.enhancement_state.empty()
+                && cartridge.restore_causal_state(state)
+                    == cartridge_state_result_t::success
+                && cartridge.capture_causal_state(restored)
+                    == cartridge_state_result_t::success
+                && restored == state;
+        }
+    };
+    if (!enhancement_round_trip(0x03u, {}, cartridge_hardware_t::dsp1)
+        || !enhancement_round_trip(
+            0x03u, "DUNGEON MASTER", cartridge_hardware_t::dsp2
+        )
+        || !enhancement_round_trip(
+            0x03u, "SD GUNDAM GX", cartridge_hardware_t::dsp3
+        )
+        || !enhancement_round_trip(
+            0x03u, "TOP GEAR 3000", cartridge_hardware_t::dsp4
+        )
+        || !enhancement_round_trip(0x13u, {}, cartridge_hardware_t::super_fx))
+    {
+        return fail("all_enhancement_state_round_trips");
     }
 
     static console_t checkpoint_console{};
@@ -849,10 +908,18 @@ int main()
     if (!enhanced_console.load_cartridge(cx4_rom))
         return fail("console_enhancement_setup");
     enhanced_console.power_on();
+    enhanced_console.write_u8(0x006123u, 0x42u);
     if (enhanced_console.capture_causal_state(console_actual)
-            != console_checkpoint_result_t::unsupported_hardware)
+            != console_checkpoint_result_t::success)
     {
-        return fail("console_enhancement_explicitly_unsupported");
+        return fail("console_enhancement_capture");
+    }
+    enhanced_console.write_u8(0x006123u, 0x24u);
+    if (enhanced_console.restore_causal_state(console_actual)
+            != console_checkpoint_result_t::success
+        || enhanced_console.read_u8(0x006123u) != 0x42u)
+    {
+        return fail("console_enhancement_restore");
     }
 
     return 0;

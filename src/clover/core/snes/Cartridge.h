@@ -84,10 +84,11 @@ namespace clover::core
 
         struct causal_state_t
         {
-            static constexpr uint32_t schema_version{ 1 };
+            static constexpr uint32_t schema_version{ 2 };
 
             std::array<uint8_t, k_bootstrap_program_rom_size> bootstrap_program_rom{};
             std::vector<uint8_t> ram_data{};
+            std::vector<std::byte> enhancement_state{};
             size_t canonical_media_size{ 0 };
             cartridge_header_t header{};
             cartridge_mapping_mode_t mapping_mode{ cartridge_mapping_mode_t::bootstrap };

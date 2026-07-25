@@ -5,8 +5,11 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
+#include <vector>
 
 namespace clover::core
 {
@@ -25,6 +28,12 @@ namespace clover::core
         [[nodiscard]] uint8_t read_data() noexcept;
         [[nodiscard]] static uint8_t read_status() noexcept;
         void write_data(uint8_t value) noexcept;
+        [[nodiscard]] bool capture_causal_state(
+            std::vector<std::byte>& state
+        ) const noexcept;
+        [[nodiscard]] bool restore_causal_state(
+            std::span<const std::byte> state
+        ) noexcept;
 
     private:
         struct state_t;

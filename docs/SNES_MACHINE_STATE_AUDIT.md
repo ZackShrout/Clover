@@ -500,15 +500,16 @@ implemented enhancement device.
 
 The process-global coprocessor and DSP output-continuity blockers are resolved.
 The versioned in-memory causal snapshot types now cover the scheduler, S-CPU,
-DMA/HDMA, interrupt controller, CPU bus, base cartridge, PPU, and APU. Bus state
+DMA/HDMA, interrupt controller, CPU bus, cartridge, PPU, and APU. Bus state
 includes WRAM, startup entropy configuration, open bus, all pending
 CPU/PPU/APU writes, and APU progress within the current CPU interval.
-Base-cartridge state includes bootstrap memory, SRAM bytes, and SRAM dirty
-continuity. Its restore validates the loaded state, header, mapper, ROM size,
-RAM size, and persistence topology before mutation. Canonical ROM SHA-256
-remains an outer checkpoint-envelope precondition. Enhancement cartridges are
-explicitly unsupported until each device has a complete causal snapshot,
-preventing partial checkpoints from being accepted.
+Cartridge state includes bootstrap memory, SRAM bytes, SRAM dirty continuity,
+and a versioned device-owned causal-state blob for CX4, DSP-1, DSP-2, DSP-3,
+DSP-4, or Super FX. Restore validates the loaded state, selected enhancement
+hardware, header, mapper, ROM size, RAM size, and persistence topology before
+mutation. Each enhancement blob uses explicit little-endian field encoding and
+is accepted only by the device selected by the loaded media. Canonical ROM
+SHA-256 remains an outer checkpoint-envelope precondition.
 
 PPU state includes all video memories and register latches, hardware and raster
 timing, entropy continuity, active background/object fetch pipelines,
@@ -532,14 +533,14 @@ Restore paths validate before mutation, preserve existing device wiring and
 trace policy, and clear trace contents from the abandoned timeline. Round-trip,
 pending-write continuation, and atomic-rejection coverage is in place.
 The subsystem states now compose into a transactional in-memory console state
-for powered bootstrap and base-cartridge machines. Restore validates a
-separately allocated and wired console before a non-failing field commit into
+for powered bootstrap, base, and enhancement-cartridge machines. Restore
+validates a separately allocated and wired console before a non-failing field commit into
 the live address-stable instance. Cross-subsystem checks cover requested and
 resolved hardware configuration, CPU/PPU/APU/scheduler clocks, raster counters,
 frame indexes, revision values, entropy configuration, and interrupt clock
 bounds. Whole-console tests cover PAL base media, bootstrap memory, WRAM, SRAM,
 independent-console deterministic continuation, topology mismatch, malformed
-subsystem state, clock disagreement, and enhancement refusal.
+subsystem state, clock disagreement, and enhancement-device round trips.
 
 Portable binary encoding and outer-envelope canonical SHA-256 validation are
 now implemented in `frontend/SnesCheckpoint`. The version-1 format has a fixed
@@ -550,6 +551,20 @@ restore. Exact round-trip coverage compares the complete in-memory causal state
 and verifies that corrupt, truncated, oversized, wrong-version, wrong-ROM, and
 cross-subsystem-invalid checkpoints leave the live console unchanged.
 
-Enhancement-device state and optional debug-target exposure remain. The
-existing inspection, stepping, observation, and debugger-session contracts do
-not need to change to perform that work.
+The optional debug-target `checkpoint_control_t` capability now exposes capture
+and restore only while the debug session is paused. Successful restore clears
+observations from the abandoned timeline while retaining debugger pause and
+presentation policy. All six implemented enhancement families have
+device-state round-trip coverage, and the portable envelope has an end-to-end
+CX4 round trip.
+
+`CheckpointReplayTest` now supplies the deterministic replay gate required
+before reverse execution. Each scenario captures a portable checkpoint, runs a
+scripted controller/device-input timeline through the next completed frame,
+restores, replays, and requires exact equality of the hardware-step transcript,
+complete causal state, re-encoded checkpoint bytes, framebuffer, audio samples,
+and cartridge-device I/O. The matrix covers NTSC and PAL mid-frame state, SRAM,
+reset continuation, WAI through IRQ entry, pending general DMA, active HDMA,
+APU-port synchronization, and partially consumed CX4, DSP-1, DSP-2, DSP-3,
+DSP-4, and running Super FX protocols. This closes the checkpoint milestone;
+reverse-execution policy and history storage can build on this tested boundary.

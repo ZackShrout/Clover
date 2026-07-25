@@ -32,6 +32,7 @@ namespace clover::frontend
         , execution_control_t
         , observation_control_t
         , debug_session_control_t
+        , checkpoint_control_t
     {
     public:
         [[nodiscard]] system_id_t system() const noexcept override;
@@ -80,6 +81,13 @@ namespace clover::frontend
         [[nodiscard]] debug_session_state_t debug_session_state() const noexcept override;
         [[nodiscard]] debug_session_transition_result_t pause_debug_session() noexcept override;
         [[nodiscard]] debug_session_transition_result_t resume_debug_session() noexcept override;
+        [[nodiscard]] checkpoint_control_t* checkpoint_control() noexcept override;
+        [[nodiscard]] checkpoint_operation_result_t capture_checkpoint(
+            std::vector<std::byte>& checkpoint
+        ) noexcept override;
+        [[nodiscard]] checkpoint_operation_result_t restore_checkpoint(
+            std::span<const std::byte> checkpoint
+        ) noexcept override;
         [[nodiscard]] bool set_hardware_configuration(
             core::snes_hardware_configuration_t configuration
         ) noexcept;

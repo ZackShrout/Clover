@@ -4,6 +4,7 @@
 //
 
 #include "clover/core/snes/Dsp1.h"
+#include "clover/core/snes/CausalStateArchive.h"
 
 #include <algorithm>
 
@@ -18,6 +19,81 @@ namespace clover::core::dsp1_reference
 
 namespace clover::core
 {
+    namespace
+    {
+        template <typename archive_t>
+        void projection_fields(archive_t& archive, dsp1_projection_state_t& value)
+        {
+            archive.field(value.Nx); archive.field(value.Ny); archive.field(value.Nz);
+            archive.field(value.CentreX); archive.field(value.CentreY); archive.field(value.CentreZ);
+            archive.field(value.Gx); archive.field(value.Gy); archive.field(value.Gz);
+            archive.field(value.VOffset);
+            archive.field(value.VPlane_C); archive.field(value.VPlane_E);
+            archive.field(value.Les_C); archive.field(value.Les_E); archive.field(value.Les_G);
+            archive.field(value.SinAas); archive.field(value.CosAas);
+            archive.field(value.SinAzs); archive.field(value.CosAzs);
+            archive.field(value.SinAzsB); archive.field(value.CosAzsB);
+            archive.field(value.SecAzs_C1); archive.field(value.SecAzs_E1);
+            archive.field(value.SecAzs_C2); archive.field(value.SecAzs_E2);
+        }
+    }
+
+    bool dsp1_t::capture_causal_state(std::vector<std::byte>& state) const noexcept
+    {
+        try
+        {
+            causal_state_writer_t archive{};
+            archive.field(uint32_t{ 1 });
+            archive.field(_parameters);
+            archive.field(_results);
+            archive.field(_matrices);
+            auto projection{ _projection };
+            projection_fields(archive, projection);
+            archive.field(_phase);
+            archive.field(_command);
+            archive.field(_word_index);
+            archive.field(_byte_index);
+            archive.field(_data_register);
+            archive.field(_status_high_byte);
+            archive.field(_frozen);
+            archive.field(_raster_output_written);
+            state = std::move(archive).finish();
+            return true;
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
+    bool dsp1_t::restore_causal_state(std::span<const std::byte> state) noexcept
+    {
+        dsp1_t candidate{ *this };
+        causal_state_reader_t archive{ state };
+        uint32_t version{};
+        archive.field(version);
+        archive.field(candidate._parameters);
+        archive.field(candidate._results);
+        archive.field(candidate._matrices);
+        projection_fields(archive, candidate._projection);
+        archive.field(candidate._phase);
+        archive.field(candidate._command);
+        archive.field(candidate._word_index);
+        archive.field(candidate._byte_index);
+        archive.field(candidate._data_register);
+        archive.field(candidate._status_high_byte);
+        archive.field(candidate._frozen);
+        archive.field(candidate._raster_output_written);
+        if (version != 1u
+            || candidate._phase > phase_t::results
+            || !archive.complete())
+        {
+            return false;
+        }
+        *this = candidate;
+        return true;
+    }
+
     namespace
     {
         [[nodiscard]] int16_t matrix_term(int16_t lhs, int16_t rhs) noexcept

@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <vector>
 
 #include "clover/core/snes/Timing.h"
 
@@ -32,6 +33,12 @@ namespace clover::core
         [[nodiscard]] bool owns_ram_bus() const noexcept;
         [[nodiscard]] bool irq_pending() const noexcept;
         [[nodiscard]] bool take_ram_written() noexcept;
+        [[nodiscard]] bool capture_causal_state(
+            std::vector<std::byte>& state
+        ) const noexcept;
+        [[nodiscard]] bool restore_causal_state(
+            std::span<const std::byte> state
+        ) noexcept;
 
     private:
         struct pixel_cache_t

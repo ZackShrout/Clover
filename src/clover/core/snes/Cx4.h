@@ -6,8 +6,10 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <span>
+#include <vector>
 
 namespace clover::core
 {
@@ -20,6 +22,12 @@ namespace clover::core
         void power_on(std::span<const uint8_t> program_rom) noexcept;
         [[nodiscard]] uint8_t read(uint32_t address, uint8_t open_bus = 0) const noexcept;
         void write(uint32_t address, uint8_t value) noexcept;
+        [[nodiscard]] bool capture_causal_state(
+            std::vector<std::byte>& state
+        ) const noexcept;
+        [[nodiscard]] bool restore_causal_state(
+            std::span<const std::byte> state
+        ) noexcept;
 
     private:
         [[nodiscard]] uint8_t bus_read(uint32_t address) const noexcept;

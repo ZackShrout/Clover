@@ -653,9 +653,6 @@ namespace clover::core
             return console_checkpoint_result_t::not_powered_on;
         if (_apu.cpu_io_window_active())
             return console_checkpoint_result_t::active_cpu_io_window;
-        if (_cartridge.hardware() != cartridge_hardware_t::base)
-            return console_checkpoint_result_t::unsupported_hardware;
-
         const snes_hardware_profile_t* profile{
             snes_hardware_profile(_hardware_configuration.model)
         };
@@ -713,11 +710,6 @@ namespace clover::core
             return console_checkpoint_result_t::not_powered_on;
         if (_apu.cpu_io_window_active())
             return console_checkpoint_result_t::active_cpu_io_window;
-        if (_cartridge.hardware() != cartridge_hardware_t::base
-            || state.cartridge.hardware != cartridge_hardware_t::base)
-        {
-            return console_checkpoint_result_t::unsupported_hardware;
-        }
         if (_cartridge.loaded() != state.cartridge.loaded)
             return console_checkpoint_result_t::media_mismatch;
 

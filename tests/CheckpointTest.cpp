@@ -20,13 +20,16 @@ namespace
         return 1;
     }
 
-    [[nodiscard]] std::vector<std::byte> make_lorom(uint8_t marker = 0u)
+    [[nodiscard]] std::vector<std::byte> make_lorom(
+        uint8_t marker = 0u,
+        uint8_t cartridge_type = 0x00u
+    )
     {
         std::vector<std::byte> rom(0x8000u, std::byte{ 0 });
         constexpr size_t header{ 0x7fc0u };
         rom[0x100u] = static_cast<std::byte>(marker);
         rom[header + 0x15u] = std::byte{ 0x20u };
-        rom[header + 0x16u] = std::byte{ 0x00u };
+        rom[header + 0x16u] = static_cast<std::byte>(cartridge_type);
         rom[header + 0x18u] = std::byte{ 0x03u };
         rom[header + 0x1cu] = std::byte{ 0xcbu };
         rom[header + 0x1du] = std::byte{ 0xedu };
@@ -225,6 +228,26 @@ int main()
             != checkpoint_result_t::media_mismatch)
     {
         return fail("canonical_media_hash");
+    }
+
+    core::console_t cx4_console{};
+    const std::vector<std::byte> cx4_rom{ make_lorom(0u, 0xf3u) };
+    if (!cx4_console.load_cartridge(cx4_rom))
+        return fail("cx4_load");
+    cx4_console.power_on();
+    cx4_console.write_u8(0x006123u, 0x42u);
+    std::vector<std::byte> cx4_checkpoint{};
+    if (frontend::capture_snes_checkpoint(cx4_console, cx4_checkpoint)
+            != checkpoint_result_t::success)
+    {
+        return fail("cx4_capture");
+    }
+    cx4_console.write_u8(0x006123u, 0x24u);
+    if (frontend::restore_snes_checkpoint(cx4_console, cx4_checkpoint)
+            != checkpoint_result_t::success
+        || cx4_console.read_u8(0x006123u) != 0x42u)
+    {
+        return fail("cx4_round_trip");
     }
 
     return 0;

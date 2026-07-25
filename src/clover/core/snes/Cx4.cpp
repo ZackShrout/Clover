@@ -4,6 +4,7 @@
 //
 
 #include "clover/core/snes/Cx4.h"
+#include "clover/core/snes/CausalStateArchive.h"
 
 #include <algorithm>
 #include <cmath>
@@ -11,6 +12,51 @@
 
 namespace clover::core
 {
+    bool cx4_t::capture_causal_state(std::vector<std::byte>& state) const noexcept
+    {
+        try
+        {
+            causal_state_writer_t archive{};
+            archive.field(uint32_t{ 1 });
+            archive.field(_ram);
+            archive.field(_registers);
+            archive.field(_x);
+            archive.field(_y);
+            archive.field(_z);
+            archive.field(_x2);
+            archive.field(_y2);
+            archive.field(_distance);
+            archive.field(_scale);
+            state = std::move(archive).finish();
+            return true;
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
+    bool cx4_t::restore_causal_state(std::span<const std::byte> state) noexcept
+    {
+        cx4_t candidate{ *this };
+        causal_state_reader_t archive{ state };
+        uint32_t version{};
+        archive.field(version);
+        archive.field(candidate._ram);
+        archive.field(candidate._registers);
+        archive.field(candidate._x);
+        archive.field(candidate._y);
+        archive.field(candidate._z);
+        archive.field(candidate._x2);
+        archive.field(candidate._y2);
+        archive.field(candidate._distance);
+        archive.field(candidate._scale);
+        if (version != 1u || !archive.complete())
+            return false;
+        *this = candidate;
+        return true;
+    }
+
     namespace
     {
         constexpr double k_pi{3.1415926535897932384626433832795};

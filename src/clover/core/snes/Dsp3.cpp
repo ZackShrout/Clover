@@ -4,6 +4,7 @@
 //
 
 #include "clover/core/snes/Dsp3.h"
+#include "clover/core/snes/CausalStateArchive.h"
 
 #include <algorithm>
 #include <string_view>
@@ -55,6 +56,98 @@ namespace
 
 namespace clover::core
 {
+    bool dsp3_t::capture_causal_state(std::vector<std::byte>& state) const noexcept
+    {
+        try
+        {
+            causal_state_writer_t archive{};
+            archive.field(uint32_t{ 1 });
+            archive.field(_data_register); archive.field(_status);
+            archive.field(_operation); archive.field(_index);
+            archive.field(_columns); archive.field(_rows);
+            archive.field(_add_column); archive.field(_add_row);
+            archive.field(_x); archive.field(_y);
+            archive.field(_bitmap); archive.field(_bitplanes);
+            archive.field(_bitmap_index); archive.field(_bitplane_index);
+            archive.field(_conversion_count);
+            archive.field(_codeword_count); archive.field(_output_word_count);
+            archive.field(_symbol); archive.field(_bit_count);
+            archive.field(_bits_left); archive.field(_requested_bits);
+            archive.field(_requested_data); archive.field(_bit_command);
+            archive.field(_base_length); archive.field(_base_codes);
+            archive.field(_base_code); archive.field(_codes);
+            archive.field(_code_lengths); archive.field(_code_offsets);
+            archive.field(_lz_stage); archive.field(_lz_length);
+            archive.field(_start_column); archive.field(_start_row);
+            archive.field(_maximum_search_radius); archive.field(_maximum_path_radius);
+            archive.field(_terrain); archive.field(_cost); archive.field(_weight);
+            archive.field(_path_coordinates); archive.field(_path_cells);
+            archive.field(static_cast<uint64_t>(_path_count));
+            archive.field(static_cast<uint64_t>(_path_index));
+            state = std::move(archive).finish();
+            return true;
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
+    bool dsp3_t::restore_causal_state(std::span<const std::byte> state) noexcept
+    {
+        try
+        {
+            dsp3_t candidate{ *this };
+            causal_state_reader_t archive{ state };
+            uint32_t version{};
+            archive.field(version);
+            archive.field(candidate._data_register); archive.field(candidate._status);
+            archive.field(candidate._operation); archive.field(candidate._index);
+            archive.field(candidate._columns); archive.field(candidate._rows);
+            archive.field(candidate._add_column); archive.field(candidate._add_row);
+            archive.field(candidate._x); archive.field(candidate._y);
+            archive.field(candidate._bitmap); archive.field(candidate._bitplanes);
+            archive.field(candidate._bitmap_index); archive.field(candidate._bitplane_index);
+            archive.field(candidate._conversion_count);
+            archive.field(candidate._codeword_count);
+            archive.field(candidate._output_word_count);
+            archive.field(candidate._symbol); archive.field(candidate._bit_count);
+            archive.field(candidate._bits_left); archive.field(candidate._requested_bits);
+            archive.field(candidate._requested_data); archive.field(candidate._bit_command);
+            archive.field(candidate._base_length); archive.field(candidate._base_codes);
+            archive.field(candidate._base_code); archive.field(candidate._codes);
+            archive.field(candidate._code_lengths); archive.field(candidate._code_offsets);
+            archive.field(candidate._lz_stage); archive.field(candidate._lz_length);
+            archive.field(candidate._start_column); archive.field(candidate._start_row);
+            archive.field(candidate._maximum_search_radius);
+            archive.field(candidate._maximum_path_radius);
+            archive.fixed_vector(candidate._terrain, 0x2000u);
+            archive.fixed_vector(candidate._cost, 0x2000u);
+            archive.fixed_vector(candidate._weight, 0x2000u);
+            archive.fixed_vector(candidate._path_coordinates, 0x2000u);
+            archive.fixed_vector(candidate._path_cells, 0x2000u);
+            uint64_t path_count{};
+            uint64_t path_index{};
+            archive.field(path_count); archive.field(path_index);
+            if (version != 1u
+                || candidate._operation > operation_t::unsupported
+                || path_count > candidate._path_cells.size()
+                || path_index > path_count
+                || !archive.complete())
+            {
+                return false;
+            }
+            candidate._path_count = static_cast<size_t>(path_count);
+            candidate._path_index = static_cast<size_t>(path_index);
+            *this = std::move(candidate);
+            return true;
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
     void dsp3_t::power_on() noexcept
     {
         _data_register = 0x0080u;

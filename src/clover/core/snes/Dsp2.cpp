@@ -4,9 +4,75 @@
 //
 
 #include "clover/core/snes/Dsp2.h"
+#include "clover/core/snes/CausalStateArchive.h"
 
 namespace clover::core
 {
+    bool dsp2_t::capture_causal_state(std::vector<std::byte>& state) const noexcept
+    {
+        try
+        {
+            causal_state_writer_t archive{};
+            archive.field(uint32_t{ 1 });
+            archive.field(_input);
+            archive.field(_output);
+            archive.field(_input_stage);
+            archive.field(_command);
+            archive.field(_transparent_color);
+            archive.field(_input_length);
+            archive.field(_output_length);
+            archive.field(static_cast<uint64_t>(_expected_input));
+            archive.field(static_cast<uint64_t>(_input_index));
+            archive.field(static_cast<uint64_t>(_output_count));
+            archive.field(static_cast<uint64_t>(_output_index));
+            state = std::move(archive).finish();
+            return true;
+        }
+        catch (...)
+        {
+            return false;
+        }
+    }
+
+    bool dsp2_t::restore_causal_state(std::span<const std::byte> state) noexcept
+    {
+        dsp2_t candidate{ *this };
+        causal_state_reader_t archive{ state };
+        uint32_t version{};
+        archive.field(version);
+        archive.field(candidate._input);
+        archive.field(candidate._output);
+        archive.field(candidate._input_stage);
+        archive.field(candidate._command);
+        archive.field(candidate._transparent_color);
+        archive.field(candidate._input_length);
+        archive.field(candidate._output_length);
+        uint64_t expected_input{};
+        uint64_t input_index{};
+        uint64_t output_count{};
+        uint64_t output_index{};
+        archive.field(expected_input);
+        archive.field(input_index);
+        archive.field(output_count);
+        archive.field(output_index);
+        if (version != 1u
+            || candidate._input_stage > input_stage_t::bitmap_data
+            || expected_input > candidate._input.size()
+            || input_index > candidate._input.size()
+            || output_count > candidate._output.size()
+            || output_index > output_count
+            || !archive.complete())
+        {
+            return false;
+        }
+        candidate._expected_input = static_cast<size_t>(expected_input);
+        candidate._input_index = static_cast<size_t>(input_index);
+        candidate._output_count = static_cast<size_t>(output_count);
+        candidate._output_index = static_cast<size_t>(output_index);
+        *this = candidate;
+        return true;
+    }
+
     void dsp2_t::power_on() noexcept
     {
         _input.fill(0);

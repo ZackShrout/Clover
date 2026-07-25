@@ -4,6 +4,7 @@
 //
 
 #include "clover/frontend/SnesEmulatorCore.h"
+#include "clover/frontend/SnesCheckpoint.h"
 
 #include <algorithm>
 #include <new>
@@ -570,5 +571,62 @@ namespace clover::frontend
             .status = debug_session_transition_status_t::complete,
             .state = debug_session_state_t::running
         };
+    }
+
+    checkpoint_control_t* snes_emulator_core_t::checkpoint_control() noexcept
+    {
+        return this;
+    }
+
+    checkpoint_operation_result_t snes_emulator_core_t::capture_checkpoint(
+        std::vector<std::byte>& checkpoint
+    ) noexcept
+    {
+        if (!_machine_running)
+            return { checkpoint_operation_status_t::not_running };
+        if (!_debug_paused)
+            return { checkpoint_operation_status_t::not_paused };
+
+        const checkpoint_result_t result{
+            capture_snes_checkpoint(_console, checkpoint)
+        };
+        if (result == checkpoint_result_t::success)
+            return { checkpoint_operation_status_t::success };
+        if (result == checkpoint_result_t::allocation_failed)
+            return { checkpoint_operation_status_t::allocation_failed };
+        return { checkpoint_operation_status_t::capture_failed };
+    }
+
+    checkpoint_operation_result_t snes_emulator_core_t::restore_checkpoint(
+        std::span<const std::byte> checkpoint
+    ) noexcept
+    {
+        if (!_machine_running)
+            return { checkpoint_operation_status_t::not_running };
+        if (!_debug_paused)
+            return { checkpoint_operation_status_t::not_paused };
+
+        const checkpoint_result_t result{
+            restore_snes_checkpoint(_console, checkpoint)
+        };
+        switch (result)
+        {
+        case checkpoint_result_t::success:
+            clear_observations();
+            return { checkpoint_operation_status_t::success };
+        case checkpoint_result_t::allocation_failed:
+            return { checkpoint_operation_status_t::allocation_failed };
+        case checkpoint_result_t::unsupported_format_version:
+        case checkpoint_result_t::unsupported_system:
+        case checkpoint_result_t::unsupported_core_state_version:
+        case checkpoint_result_t::unsupported_subsystem_version:
+        case checkpoint_result_t::media_mismatch:
+        case checkpoint_result_t::hardware_mismatch:
+            return { checkpoint_operation_status_t::incompatible_checkpoint };
+        case checkpoint_result_t::core_restore_failed:
+            return { checkpoint_operation_status_t::restore_failed };
+        default:
+            return { checkpoint_operation_status_t::invalid_checkpoint };
+        }
     }
 }

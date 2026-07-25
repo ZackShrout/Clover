@@ -438,9 +438,6 @@ namespace clover::core
         causal_state_t& state
     ) const noexcept
     {
-        if (_hardware != cartridge_hardware_t::base)
-            return cartridge_state_result_t::unsupported_hardware;
-
         try
         {
             causal_state_t captured{
@@ -454,6 +451,42 @@ namespace clover::core
                 .ram_persistent = _ram_persistent,
                 .ram_dirty = _ram_dirty,
             };
+
+            bool enhancement_captured{ true };
+            switch (_hardware)
+            {
+            case cartridge_hardware_t::base:
+                break;
+            case cartridge_hardware_t::cx4:
+                enhancement_captured = _cx4.capture_causal_state(
+                    captured.enhancement_state
+                );
+                break;
+            case cartridge_hardware_t::dsp1:
+                enhancement_captured = _dsp1 != nullptr
+                    && _dsp1->capture_causal_state(captured.enhancement_state);
+                break;
+            case cartridge_hardware_t::dsp2:
+                enhancement_captured = _dsp2.capture_causal_state(
+                    captured.enhancement_state
+                );
+                break;
+            case cartridge_hardware_t::dsp3:
+                enhancement_captured = _dsp3 != nullptr
+                    && _dsp3->capture_causal_state(captured.enhancement_state);
+                break;
+            case cartridge_hardware_t::dsp4:
+                enhancement_captured = _dsp4 != nullptr
+                    && _dsp4->capture_causal_state(captured.enhancement_state);
+                break;
+            case cartridge_hardware_t::super_fx:
+                enhancement_captured = _super_fx.capture_causal_state(
+                    captured.enhancement_state
+                );
+                break;
+            }
+            if (!enhancement_captured)
+                return cartridge_state_result_t::allocation_failed;
             state = std::move(captured);
         }
         catch (...)
@@ -467,15 +500,10 @@ namespace clover::core
         const causal_state_t& state
     ) noexcept
     {
-        if (_hardware != cartridge_hardware_t::base
-            || state.hardware != cartridge_hardware_t::base)
-        {
-            return cartridge_state_result_t::unsupported_hardware;
-        }
-
         if (state.canonical_media_size != _rom_data.size()
             || state.header != _header
             || state.mapping_mode != _mapping_mode
+            || state.hardware != _hardware
             || state.loaded != _loaded
             || state.ram_persistent != _ram_persistent
             || state.ram_data.size() != _ram_data.size())
@@ -484,6 +512,39 @@ namespace clover::core
         }
 
         if (state.ram_dirty && !state.ram_persistent)
+            return cartridge_state_result_t::invalid_state;
+
+        bool enhancement_restored{ false };
+        switch (_hardware)
+        {
+        case cartridge_hardware_t::base:
+            enhancement_restored = state.enhancement_state.empty();
+            break;
+        case cartridge_hardware_t::cx4:
+            enhancement_restored = _cx4.restore_causal_state(state.enhancement_state);
+            break;
+        case cartridge_hardware_t::dsp1:
+            enhancement_restored = _dsp1 != nullptr
+                && _dsp1->restore_causal_state(state.enhancement_state);
+            break;
+        case cartridge_hardware_t::dsp2:
+            enhancement_restored = _dsp2.restore_causal_state(state.enhancement_state);
+            break;
+        case cartridge_hardware_t::dsp3:
+            enhancement_restored = _dsp3 != nullptr
+                && _dsp3->restore_causal_state(state.enhancement_state);
+            break;
+        case cartridge_hardware_t::dsp4:
+            enhancement_restored = _dsp4 != nullptr
+                && _dsp4->restore_causal_state(state.enhancement_state);
+            break;
+        case cartridge_hardware_t::super_fx:
+            enhancement_restored = _super_fx.restore_causal_state(
+                state.enhancement_state
+            );
+            break;
+        }
+        if (!enhancement_restored)
             return cartridge_state_result_t::invalid_state;
 
         _bootstrap_program_rom = state.bootstrap_program_rom;

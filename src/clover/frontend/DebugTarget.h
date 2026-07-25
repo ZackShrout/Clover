@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <span>
 #include <string_view>
+#include <vector>
 
 namespace clover::frontend
 {
@@ -147,6 +148,37 @@ namespace clover::frontend
         [[nodiscard]] virtual debug_session_transition_result_t resume_debug_session() noexcept = 0;
     };
 
+    enum class checkpoint_operation_status_t : uint8_t
+    {
+        success,
+        not_running,
+        not_paused,
+        capture_failed,
+        allocation_failed,
+        invalid_checkpoint,
+        incompatible_checkpoint,
+        restore_failed
+    };
+
+    struct checkpoint_operation_result_t
+    {
+        checkpoint_operation_status_t status{
+            checkpoint_operation_status_t::capture_failed
+        };
+    };
+
+    struct checkpoint_control_t
+    {
+    public:
+        virtual ~checkpoint_control_t() = default;
+        [[nodiscard]] virtual checkpoint_operation_result_t capture_checkpoint(
+            std::vector<std::byte>& checkpoint
+        ) noexcept = 0;
+        [[nodiscard]] virtual checkpoint_operation_result_t restore_checkpoint(
+            std::span<const std::byte> checkpoint
+        ) noexcept = 0;
+    };
+
     using observation_mask_t = uint64_t;
 
     inline constexpr observation_mask_t k_observe_execution_boundary{ 1u << 0u };
@@ -217,6 +249,10 @@ namespace clover::frontend
             return nullptr;
         }
         [[nodiscard]] virtual debug_session_control_t* debug_session_control() noexcept
+        {
+            return nullptr;
+        }
+        [[nodiscard]] virtual checkpoint_control_t* checkpoint_control() noexcept
         {
             return nullptr;
         }

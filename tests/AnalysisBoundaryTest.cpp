@@ -274,7 +274,11 @@ int main()
     frontend::debug_session_control_t* const session_control{
         target->debug_session_control()
     };
+    frontend::checkpoint_control_t* const checkpoint_control{
+        target->checkpoint_control()
+    };
     if (session_control == nullptr
+        || checkpoint_control == nullptr
         || session_control->debug_session_state()
             != frontend::debug_session_state_t::not_running)
     {
@@ -294,6 +298,12 @@ int main()
     };
     if (pre_power_step.status != frontend::execution_step_status_t::not_running)
         return fail("pre_power_execution_step");
+    std::vector<std::byte> debug_checkpoint{};
+    if (checkpoint_control->capture_checkpoint(debug_checkpoint).status
+            != frontend::checkpoint_operation_status_t::not_running)
+    {
+        return fail("pre_power_checkpoint");
+    }
     if (!observation_control->set_observation_mask(
         frontend::k_observe_execution_boundary
     ))
@@ -309,6 +319,11 @@ int main()
     };
     if (running_step.status != frontend::execution_step_status_t::not_paused)
         return fail("step_requires_pause");
+    if (checkpoint_control->capture_checkpoint(debug_checkpoint).status
+            != frontend::checkpoint_operation_status_t::not_paused)
+    {
+        return fail("checkpoint_requires_pause");
+    }
     const frontend::debug_session_transition_result_t pause_result{
         session_control->pause_debug_session()
     };
@@ -348,6 +363,28 @@ int main()
         || observed_events[0].machine_clock >= observed_events[1].machine_clock)
     {
         return fail("initial_boundary_observations");
+    }
+
+    if (checkpoint_control->capture_checkpoint(debug_checkpoint).status
+            != frontend::checkpoint_operation_status_t::success
+        || debug_checkpoint.empty())
+    {
+        return fail("debug_checkpoint_capture");
+    }
+    static_cast<void>(
+        execution_control->step_execution_domain(frontend::snes_debug::k_main_cpu_domain)
+    );
+    if (checkpoint_control->restore_checkpoint(debug_checkpoint).status
+            != frontend::checkpoint_operation_status_t::success)
+    {
+        return fail("debug_checkpoint_restore");
+    }
+    std::vector<std::byte> recaptured_debug_checkpoint{};
+    if (checkpoint_control->capture_checkpoint(recaptured_debug_checkpoint).status
+            != frontend::checkpoint_operation_status_t::success
+        || recaptured_debug_checkpoint != debug_checkpoint)
+    {
+        return fail("debug_checkpoint_round_trip");
     }
 
     observation_control->clear_observations();

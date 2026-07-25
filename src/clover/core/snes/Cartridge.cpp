@@ -259,6 +259,11 @@ namespace clover::core
             : video_standard_t::ntsc;
     }
 
+    std::span<const uint8_t> cartridge_t::expansion_memory() const noexcept
+    {
+        return _ram_data;
+    }
+
     std::span<const std::byte> cartridge_t::persistent_memory() const noexcept
     {
         if (!_ram_persistent)

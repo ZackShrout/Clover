@@ -108,6 +108,8 @@ namespace clover::core
         void begin_general_dma() noexcept;
         void begin_hdma_setup() noexcept;
         void begin_hdma_transfer() noexcept;
+        void suspend_general_dma_for_hdma() noexcept;
+        void resume_suspended_general_dma() noexcept;
         void finish_active_channel() noexcept;
 
         std::array<dma_channel_t, 8> _channels{};
@@ -125,5 +127,12 @@ namespace clover::core
         uint8_t _general_dma_transfer_index{ 0 };
         uint8_t _hdma_transfer_index{ 0 };
         bool _hdma_reload_pending{ false };
+        bool _general_dma_suspended{ false };
+        uint8_t _suspended_general_dma_channel_index{ 0 };
+        dma_substep_t _suspended_general_dma_substep{ dma_substep_t::idle };
+        bool _suspended_general_dma_alignment_pending{ false };
+        bool _suspended_general_dma_batch_started{ false };
+        uint32_t _suspended_general_dma_units_remaining{ 0 };
+        uint8_t _suspended_general_dma_transfer_index{ 0 };
     };
 }

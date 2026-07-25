@@ -205,6 +205,11 @@ namespace clover::core
         return _apu.audio_output_overflowed();
     }
 
+    std::span<const uint8_t> console_t::cartridge_expansion_memory() const noexcept
+    {
+        return _cartridge.expansion_memory();
+    }
+
     std::span<const std::byte> console_t::persistent_memory() const noexcept
     {
         return _cartridge.persistent_memory();

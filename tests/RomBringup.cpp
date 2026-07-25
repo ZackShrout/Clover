@@ -2280,6 +2280,9 @@ int main(int argc, char** argv)
     const bool capture_helper_trace{ parse_bool_env("CLOVER_CAPTURE_HELPER_TRACE") };
     const bool capture_ff3_call_trace{ parse_bool_env("CLOVER_CAPTURE_FF3_CALL_TRACE") };
     const bool dump_frames_only{ parse_bool_env("CLOVER_DUMP_FRAMES_ONLY") };
+    const char* const cartridge_ram_dump_path{
+        std::getenv("CLOVER_DUMP_CARTRIDGE_RAM_FILE")
+    };
     std::FILE* generic_trace_file{ nullptr };
     if (generic_trace_filter.enabled)
     {
@@ -2328,6 +2331,14 @@ int main(int argc, char** argv)
     uint64_t dumped_frames{ 0 };
     uint64_t completed_frame_capture_index{ 0 };
     uint64_t last_reset_frame{ 0 };
+    const char* const stop_scanline_raw{ std::getenv("CLOVER_STOP_RASTER_SCANLINE") };
+    const bool stop_at_raster{ stop_scanline_raw != nullptr && *stop_scanline_raw != '\0' };
+    const uint16_t stop_scanline{ static_cast<uint16_t>(
+        parse_u64_env("CLOVER_STOP_RASTER_SCANLINE", 0u)
+    ) };
+    const uint16_t stop_dot{ static_cast<uint16_t>(
+        parse_u64_env("CLOVER_STOP_RASTER_DOT", 0u)
+    ) };
     while (summary.steps < step_limit && summary.frame_completions < target_frames)
     {
         const uint64_t active_frame{ summary.frame_completions + 1u };
@@ -2341,6 +2352,13 @@ int main(int argc, char** argv)
         console.set_controller_state(0u, input_script_1.state_for_frame(active_frame));
         console.set_controller_state(1u, input_script_2.state_for_frame(active_frame));
         const clover::core::hardware_timing_snapshot_t timing_snapshot{ console.capture_timing_snapshot() };
+        if (stop_at_raster && active_frame == target_frames
+            && (timing_snapshot.ppu_timing.raster.scanline > stop_scanline
+                || (timing_snapshot.ppu_timing.raster.scanline == stop_scanline
+                    && timing_snapshot.ppu_timing.raster.dot >= stop_dot)))
+        {
+            break;
+        }
         if (should_emit_generic_trace(generic_trace_filter, current_cpu, timing_snapshot, active_frame))
         {
             const uint8_t dp_00{ console.read_u8(0x000000u) };
@@ -3078,6 +3096,44 @@ int main(int argc, char** argv)
     {
         std::fprintf(stderr, "Failed to write APU port trace\n");
         return 1;
+    }
+
+    if (cartridge_ram_dump_path != nullptr && *cartridge_ram_dump_path != '\0')
+    {
+        const std::span<const uint8_t> memory{ console.cartridge_expansion_memory() };
+        if (memory.empty() || !write_binary_blob(cartridge_ram_dump_path, memory))
+        {
+            std::fprintf(stderr, "Failed to write cartridge expansion RAM: %s\n",
+                         cartridge_ram_dump_path);
+            return 1;
+        }
+        std::printf("Cartridge expansion RAM dump: path=%s bytes=%zu\n",
+                    cartridge_ram_dump_path,
+                    memory.size());
+    }
+    if (std::getenv("CLOVER_DUMP_SUPER_FX_REGISTERS") != nullptr)
+    {
+        std::printf("Super FX registers:");
+        for (uint32_t index{ 0 }; index < 16u; ++index)
+        {
+            const uint32_t address{ 0x003000u + index * 2u };
+            const uint16_t value{ static_cast<uint16_t>(
+                console.read_u8(address)
+                | (static_cast<uint16_t>(console.read_u8(address + 1u)) << 8u)
+            ) };
+            std::printf(" r%u=%04x", index, value);
+        }
+        const uint16_t sfr{ static_cast<uint16_t>(
+            console.read_u8(0x003030u)
+            | (static_cast<uint16_t>(console.read_u8(0x003031u)) << 8u)
+        ) };
+        std::printf(" sfr=%04x pbr=%02x rombr=%02x rambr=%02x cbr=%02x%02x\n",
+                    sfr,
+                    console.read_u8(0x003034u),
+                    console.read_u8(0x003036u),
+                    console.read_u8(0x00303cu),
+                    console.read_u8(0x00303fu),
+                    console.read_u8(0x00303eu));
     }
 
     if (!verbose_output && !terminal_pc_detected)

@@ -50,6 +50,13 @@ namespace clover::core
         _general_dma_transfer_index = 0;
         _hdma_transfer_index = 0;
         _hdma_reload_pending = false;
+        _general_dma_suspended = false;
+        _suspended_general_dma_channel_index = 0;
+        _suspended_general_dma_substep = dma_substep_t::idle;
+        _suspended_general_dma_alignment_pending = false;
+        _suspended_general_dma_batch_started = false;
+        _suspended_general_dma_units_remaining = 0;
+        _suspended_general_dma_transfer_index = 0;
     }
 
     void dma_t::request_general_dma() noexcept
@@ -66,11 +73,17 @@ namespace clover::core
         for (uint8_t channel_index{ 0 }; channel_index < _channels.size(); ++channel_index)
         {
             dma_channel_t& channel{ _channels[channel_index] };
+            // The per-frame HDMA reset clears completion state even for a
+            // channel that is disabled at the setup point. Software may
+            // initialize the live HDMA registers and enable that channel
+            // later in the same frame.
+            channel.hdma_active = false;
+            channel.hdma_completed = false;
+            channel.hdma_do_transfer = false;
             if (!channel.hdma_enabled)
                 continue;
 
             channel.hdma_active = true;
-            channel.hdma_completed = false;
             channel.hdma_do_transfer = true;
             _pending_hdma_setup_mask |= static_cast<uint8_t>(1u << channel_index);
         }
@@ -265,6 +278,12 @@ namespace clover::core
                                   master_clock_delta_t cpu_bus_cycle_clocks) noexcept
     {
         _cpu_bus_cycle_clocks = cpu_bus_cycle_clocks;
+
+        if (_activity == dma_activity_t::general_dma
+            && (_pending_hdma_setup_mask != 0 || _pending_hdma_transfer_mask != 0))
+        {
+            suspend_general_dma_for_hdma();
+        }
 
         if (_activity == dma_activity_t::idle)
         {
@@ -692,6 +711,14 @@ namespace clover::core
             break;
         }
 
+        if (_general_dma_suspended
+            && (_activity == dma_activity_t::hdma_setup
+                || _activity == dma_activity_t::hdma_transfer))
+        {
+            resume_suspended_general_dma();
+            return;
+        }
+
         _substep = dma_substep_t::finish_sync;
     }
 
@@ -762,6 +789,48 @@ namespace clover::core
         _pending_hdma_transfer_mask &= static_cast<uint8_t>(~(1u << _active_channel_index));
         _substep = dma_substep_t::alignment;
         _alignment_pending = true;
+    }
+
+    void dma_t::suspend_general_dma_for_hdma() noexcept
+    {
+        _general_dma_suspended = true;
+        _suspended_general_dma_channel_index = _active_channel_index;
+        _suspended_general_dma_substep = _substep;
+        _suspended_general_dma_alignment_pending = _alignment_pending;
+        _suspended_general_dma_batch_started = _general_dma_batch_started;
+        _suspended_general_dma_units_remaining = _general_dma_units_remaining;
+        _suspended_general_dma_transfer_index = _general_dma_transfer_index;
+
+        if (_pending_hdma_setup_mask != 0)
+        {
+            _activity = dma_activity_t::hdma_setup;
+            _active_channel_index = first_channel_index(_pending_hdma_setup_mask);
+            _pending_hdma_setup_mask &= static_cast<uint8_t>(~(1u << _active_channel_index));
+        }
+        else
+        {
+            _activity = dma_activity_t::hdma_transfer;
+            _active_channel_index = first_channel_index(_pending_hdma_transfer_mask);
+            _pending_hdma_transfer_mask &= static_cast<uint8_t>(~(1u << _active_channel_index));
+        }
+
+        // MDMA is already synchronized to the DMA clock. HDMA keeps that
+        // phase, pays its ordinary eight-clock batch setup, then resumes MDMA
+        // at the following byte boundary.
+        _substep = dma_substep_t::hdma_batch_setup;
+        _alignment_pending = false;
+    }
+
+    void dma_t::resume_suspended_general_dma() noexcept
+    {
+        _activity = dma_activity_t::general_dma;
+        _active_channel_index = _suspended_general_dma_channel_index;
+        _substep = _suspended_general_dma_substep;
+        _alignment_pending = _suspended_general_dma_alignment_pending;
+        _general_dma_batch_started = _suspended_general_dma_batch_started;
+        _general_dma_units_remaining = _suspended_general_dma_units_remaining;
+        _general_dma_transfer_index = _suspended_general_dma_transfer_index;
+        _general_dma_suspended = false;
     }
 
     void dma_t::finish_active_channel() noexcept

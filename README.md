@@ -66,16 +66,19 @@ Super FX support now implements the GSU instruction set, register interface,
 instruction cache, ROM/RAM buffering and contention, IRQ signaling, PLOT/RPIX
 pixel caches, MARIO/GSU-1/GSU-2 cartridge maps, and volatile versus
 battery-backed expansion RAM. Deterministic tests cover execution, flags,
-bitplane output, bus arbitration, mapper variants, and IRQ acknowledgement.
+bitplane output, delayed buffer completion, bus arbitration, mapper variants,
+and IRQ acknowledgement.
 Star Fox, Stunt Race FX, Doom, and Yoshi's Island all complete 600-frame
 bringup runs without a terminal PC or placeholder CPU opcode; Star Fox, Stunt
 Race FX, and Yoshi's Island also match bsnes exactly at frame 120. Star Fox's
-full 32 KiB GSU RAM matched bsnes at the first graphics upload, and Yoshi's
-Island produced byte-exact 64 KiB VRAM at frame 600. Later rendered frames still
-diverge. Matching VRAM rules out a missing tile upload at that Yoshi checkpoint,
-but does not distinguish PPU state or rendering from earlier CPU/GSU timing
-differences; that unresolved boundary is recorded in the known-simplifications
-document.
+full 32 KiB GSU RAM matched bsnes at the first graphics upload. Stunt Race FX
+and Yoshi's Island now match bsnes exactly at frame 600 as well. The fixes
+needed for those late lanes also hardened base-console HDMA: per-frame
+completion reset now includes disabled channels, and HDMA setup/transfers
+preempt and resume an in-progress general DMA at byte boundaries. Star Fox's
+late attract-mode scene is now free of the former active-display palette
+corruption, but its simulation state is not pixel-exact at frame 600. Doom's
+frame-600 title composition is visually intact but also remains non-exact.
 
 ## Repository Layout
 

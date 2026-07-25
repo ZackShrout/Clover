@@ -61,6 +61,65 @@ namespace
 
         if (const char* checkpoint = []() -> const char*
             {
+                clover::core::bus_t bus{};
+                clover::core::dma_t dma{};
+                bus.power_on();
+                dma.reset();
+                bus.write_u8(0x7e2000u, 0x00u);
+                bus.write_u8(0x7e3000u, 0x5au);
+
+                // Channel 0 is an HDMA lane whose table terminates during
+                // setup. Channel 1 is a longer MDMA transfer already between
+                // bytes when that setup becomes pending.
+                dma.write_register(0x4300u, 0x00u);
+                dma.write_register(0x4301u, 0x18u);
+                dma.write_register(0x4302u, 0x00u);
+                dma.write_register(0x4303u, 0x20u);
+                dma.write_register(0x4304u, 0x7eu);
+                dma.write_register(0x420cu, 0x01u);
+                dma.write_register(0x4310u, 0x08u);
+                dma.write_register(0x4311u, 0x00u);
+                dma.write_register(0x4312u, 0x00u);
+                dma.write_register(0x4313u, 0x30u);
+                dma.write_register(0x4314u, 0x7eu);
+                dma.write_register(0x4315u, 0x64u);
+                dma.write_register(0x4316u, 0x00u);
+                dma.write_register(0x420bu, 0x02u);
+
+                for (uint8_t step_index{ 0 };
+                     step_index < 8u && dma.read_register(0x4315u) == 0x64u;
+                     ++step_index)
+                {
+                    static_cast<void>(dma.step(bus, 0u, 6u));
+                }
+                if (dma.activity() != clover::core::dma_activity_t::general_dma
+                    || dma.read_register(0x4315u) != 0x63u)
+                {
+                    return "mdma_preemption_fixture";
+                }
+
+                dma.request_hdma_setup();
+                static_cast<void>(dma.step(bus, 0u, 6u));
+                if (dma.activity() != clover::core::dma_activity_t::hdma_setup)
+                    return "mdma_hdma_setup_preemption";
+                static_cast<void>(dma.step(bus, 0u, 6u));
+                if (dma.activity() != clover::core::dma_activity_t::general_dma
+                    || dma.read_register(0x4308u) != 0x01u
+                    || dma.read_register(0x4309u) != 0x20u
+                    || dma.read_register(0x4315u) != 0x63u)
+                {
+                    return "mdma_resume_after_hdma_setup";
+                }
+
+                return nullptr;
+            }();
+            checkpoint != nullptr)
+        {
+            return fail(checkpoint);
+        }
+
+        if (const char* checkpoint = []() -> const char*
+            {
                 static clover::core::console_t math_console{};
                 math_console.power_on();
 
@@ -1453,6 +1512,68 @@ int main()
                         return fail("super_fx_irq_acknowledge");
                     }
 
+                    // R14 schedules a ROM-buffer fetch. The fetched byte must
+                    // become visible only when its six-clock timer expires,
+                    // rather than being sampled when the request is issued.
+                    gsu.power_on(rom, ram);
+                    rom[0x10u] = 0x12u;
+                    gsu.cpu_write_register(0x303au, 0x18u);
+                    constexpr std::array<uint8_t, 16> rom_buffer_program{
+                        0xefu, 0x00u,
+                        0x01u, 0x01u, 0x01u, 0x01u, 0x01u, 0x01u,
+                        0x01u, 0x01u, 0x01u, 0x01u, 0x01u, 0x01u,
+                        0x01u, 0x01u
+                    };
+                    for (uint16_t index{}; index < rom_buffer_program.size(); ++index)
+                        gsu.cpu_write_register(static_cast<uint16_t>(0x3100u + index),
+                                               rom_buffer_program[index]);
+                    gsu.cpu_write_register(0x301cu, 0x10u);
+                    gsu.cpu_write_register(0x301du, 0x00u);
+                    gsu.cpu_write_register(0x301eu, 0x00u);
+                    gsu.cpu_write_register(0x301fu, 0x00u);
+                    gsu.step_master_clocks(2u);
+                    if ((gsu.cpu_read_register(0x3030u, 0u) & 0x40u) == 0u)
+                        return fail("super_fx_rom_buffer_pending");
+                    rom[0x10u] = 0x34u;
+                    gsu.step_master_clocks(6u);
+                    if (gsu.cpu_read_register(0x3000u, 0u) != 0x34u
+                        || (gsu.cpu_read_register(0x3030u, 0u) & 0x40u) != 0u)
+                    {
+                        return fail("super_fx_rom_buffer_completion");
+                    }
+
+                    // RAM stores use the same delayed buffer. STW commits its
+                    // low byte while synchronizing the following high byte;
+                    // the high byte remains pending across STOP until the
+                    // final four clocks have elapsed.
+                    gsu.power_on(rom, ram);
+                    ram.fill(0u);
+                    gsu.cpu_write_register(0x303au, 0x18u);
+                    constexpr std::array<uint8_t, 16> ram_buffer_program{
+                        0xf0u, 0xaau, 0x55u,
+                        0xf1u, 0x00u, 0x00u,
+                        0x31u, 0x00u,
+                        0x01u, 0x01u, 0x01u, 0x01u,
+                        0x01u, 0x01u, 0x01u, 0x01u
+                    };
+                    for (uint16_t index{}; index < ram_buffer_program.size(); ++index)
+                        gsu.cpu_write_register(static_cast<uint16_t>(0x3100u + index),
+                                               ram_buffer_program[index]);
+                    gsu.cpu_write_register(0x301eu, 0x00u);
+                    gsu.cpu_write_register(0x301fu, 0x00u);
+                    gsu.step_master_clocks(22u);
+                    if (ram[0] != 0xaau || ram[1] != 0x00u
+                        || !gsu.take_ram_written())
+                    {
+                        return fail("super_fx_ram_buffer_pending");
+                    }
+                    gsu.step_master_clocks(5u);
+                    if (ram[1] != 0x00u || gsu.take_ram_written())
+                        return fail("super_fx_ram_buffer_early_commit");
+                    gsu.step_master_clocks(1u);
+                    if (ram[1] != 0x55u || !gsu.take_ram_written())
+                        return fail("super_fx_ram_buffer_completion");
+
                     // LOB uses bit 7, rather than bit 15, for its sign flag.
                     gsu.power_on(rom, ram);
                     gsu.cpu_write_register(0x303au, 0x18u);
@@ -2140,6 +2261,37 @@ int main()
 
             if (console.read_u8(0x00430au) != 0x00u)
                 return fail("hdma_line_counter");
+
+            // HDMA completion is reset for every channel at the start of a
+            // frame, including channels that are disabled at the setup point.
+            // A game may then seed the live table address/line counter and
+            // enable the channel later in that same frame.
+            console.write_u8(0x00420cu, 0x00u);
+            const uint64_t completed_hdma_frame{ console.frame_index() };
+            while (console.frame_index() == completed_hdma_frame)
+                static_cast<void>(console.step_hardware());
+            while (console.timing().raster.scanline == 0u
+                   && console.timing().raster.dot < 100u)
+            {
+                static_cast<void>(console.step_hardware());
+            }
+            console.write_u8(0x004300u, 0x01u);
+            console.write_u8(0x004301u, 0x22u);
+            console.write_u8(0x004304u, 0x7eu);
+            console.write_u8(0x004308u, 0x34u);
+            console.write_u8(0x004309u, 0x12u);
+            console.write_u8(0x00430au, 0x01u);
+            console.write_u8(0x00420cu, 0x01u);
+            while (console.timing().raster.scanline == 0u)
+                static_cast<void>(console.step_hardware());
+            while (console.hdma_pending())
+                static_cast<void>(console.step_hardware());
+            if (console.read_u8(0x004308u) != 0x35u
+                || console.read_u8(0x004309u) != 0x12u
+                || console.read_u8(0x00430au) != 0x4au)
+            {
+                return fail("hdma_late_enable_after_frame_reset");
+            }
 
             console.run_scanline();
             const clover::core::timing_snapshot_t after_scanline{ console.timing() };

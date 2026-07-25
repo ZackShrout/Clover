@@ -65,6 +65,7 @@ namespace clover::core
         [[nodiscard]] const cartridge_header_t& header() const noexcept;
         [[nodiscard]] cartridge_hardware_t hardware() const noexcept;
         [[nodiscard]] video_standard_t declared_video_standard() const noexcept;
+        [[nodiscard]] std::span<const uint8_t> expansion_memory() const noexcept;
         [[nodiscard]] std::span<const std::byte> persistent_memory() const noexcept;
         [[nodiscard]] bool load_persistent_memory(std::span<const std::byte> data) noexcept;
         [[nodiscard]] bool persistent_memory_dirty() const noexcept;

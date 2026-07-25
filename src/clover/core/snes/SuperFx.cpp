@@ -44,6 +44,8 @@ namespace clover::core
         _rom_data = 0;
         _rom_buffer_clocks = 0;
         _ram_buffer_clocks = 0;
+        _ram_buffer_address = 0;
+        _ram_buffer_data = 0;
         _source_register = 0;
         _destination_register = 0;
         _r14_modified = false;
@@ -88,6 +90,11 @@ namespace clover::core
                 _clock_credit = 0;
                 break;
             }
+        }
+        if (!running() && _clock_credit > 0)
+        {
+            advance_buffer_clocks(static_cast<uint32_t>(_clock_credit));
+            _clock_credit = 0;
         }
     }
 
@@ -788,12 +795,28 @@ namespace clover::core
 
     void super_fx_t::advance_buffer_clocks(uint32_t clocks) noexcept
     {
+        const bool rom_pending{ _rom_buffer_clocks != 0u };
         _rom_buffer_clocks = static_cast<uint8_t>(
             clocks >= _rom_buffer_clocks ? 0u : _rom_buffer_clocks - clocks
         );
+        if (rom_pending && _rom_buffer_clocks == 0u)
+        {
+            _rom_data = read_memory(
+                (static_cast<uint32_t>(_rombr) << 16u) | _r[14]
+            );
+        }
+
+        const bool ram_pending{ _ram_buffer_clocks != 0u };
         _ram_buffer_clocks = static_cast<uint8_t>(
             clocks >= _ram_buffer_clocks ? 0u : _ram_buffer_clocks - clocks
         );
+        if (ram_pending && _ram_buffer_clocks == 0u)
+        {
+            write_memory(0x700000u
+                | (static_cast<uint32_t>(_rambr) << 16u)
+                | _ram_buffer_address,
+                _ram_buffer_data);
+        }
         set_flag(k_flag_rom_pending, _rom_buffer_clocks != 0u);
     }
 
@@ -971,8 +994,8 @@ namespace clover::core
     void super_fx_t::write_ram(uint16_t address, uint8_t value) noexcept
     {
         synchronize_ram_buffer();
-        write_memory(0x700000u
-            | (static_cast<uint32_t>(_rambr) << 16u) | address, value);
+        _ram_buffer_address = address;
+        _ram_buffer_data = value;
         _ram_buffer_clocks = static_cast<uint8_t>(_clsr != 0 ? 5u : 6u);
     }
 
@@ -985,7 +1008,6 @@ namespace clover::core
     void super_fx_t::update_rom_buffer() noexcept
     {
         set_flag(k_flag_rom_pending, true);
-        _rom_data = read_memory((static_cast<uint32_t>(_rombr) << 16u) | _r[14]);
         _rom_buffer_clocks = static_cast<uint8_t>(_clsr != 0 ? 5u : 6u);
     }
 

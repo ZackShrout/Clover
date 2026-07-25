@@ -225,11 +225,14 @@ hardware currently includes CX4, DSP-1B through DSP-4, and Super FX:
   and `$b0-$bf`; projection commands retain per-cartridge state across host
   transfers, and multiple DSP-4 instances do not share command state.
 - Super FX cartridges own a cycle-stepped GSU processor with 16 registers,
-  instruction and pixel caches, buffered ROM/RAM access, bus arbitration, and
-  IRQ output. Cartridge detection selects MARIO/GSU-1/GSU-2 ROM and expansion
-  RAM layouts from the header, including volatile and battery-backed variants.
-  The scheduler advances the GSU alongside CPU bus phases so register polling
-  and DMA observe coprocessor progress at the subsystem boundary.
+  instruction and pixel caches, delayed buffered ROM/RAM access, bus
+  arbitration, and IRQ output. Cartridge detection selects MARIO/GSU-1/GSU-2
+  ROM and expansion RAM layouts from the header, including volatile and
+  battery-backed variants. The scheduler advances the GSU alongside CPU bus
+  phases so register polling and DMA observe coprocessor progress at the
+  subsystem boundary. The shared DMA controller resets every HDMA completion
+  latch at frame setup and can suspend/resume MDMA at byte boundaries when an
+  HDMA setup or transfer becomes pending.
 
 SA-1 remains unsupported. Current unresolved accuracy areas are tracked in
 [`KNOWN_SIMPLIFICATIONS.md`](KNOWN_SIMPLIFICATIONS.md).

@@ -56,6 +56,7 @@ namespace clover::core
         [[nodiscard]] const framebuffer_t& framebuffer() const noexcept;
         [[nodiscard]] std::span<const int16_t> audio_samples() const noexcept;
         [[nodiscard]] bool audio_output_overflowed() const noexcept;
+        [[nodiscard]] std::span<const uint8_t> cartridge_expansion_memory() const noexcept;
         [[nodiscard]] std::span<const std::byte> persistent_memory() const noexcept;
         [[nodiscard]] bool load_persistent_memory(std::span<const std::byte> data) noexcept;
         [[nodiscard]] bool persistent_memory_dirty() const noexcept;

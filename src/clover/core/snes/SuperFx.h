@@ -114,6 +114,8 @@ namespace clover::core
         uint8_t _rom_data{ 0 };
         uint8_t _rom_buffer_clocks{ 0 };
         uint8_t _ram_buffer_clocks{ 0 };
+        uint16_t _ram_buffer_address{ 0 };
+        uint8_t _ram_buffer_data{ 0 };
         uint8_t _source_register{ 0 };
         uint8_t _destination_register{ 0 };
         bool _r14_modified{ false };

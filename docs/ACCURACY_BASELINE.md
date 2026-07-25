@@ -104,7 +104,7 @@ following support and evidence were added afterward:
 - DSP-4's complete command state machine, including resumable track, polygon,
   sprite, OAM, lookup, and arithmetic paths plus its mirrored mapper windows.
 - Super FX instruction-level execution, registers, cache, pixel cache,
-  cycle-accounted ROM/RAM access, contention, IRQ behavior, and the
+  delayed cycle-accounted ROM/RAM access, contention, IRQ behavior, and the
   MARIO/GSU-1/GSU-2 cartridge layouts.
 
 Dungeon Master additionally completed a 9,000-frame scripted run without a
@@ -135,13 +135,16 @@ cross-emulator exact comparison.
 Star Fox, Stunt Race FX, Doom, and Yoshi's Island each complete 600-frame
 Super FX bringup runs without a terminal PC or placeholder CPU opcode.
 Deterministic instruction tests are supplemented by a complete 32 KiB Star Fox
-GSU-RAM match at frame 154 and a complete 64 KiB Yoshi's Island VRAM match at
-frame 600 against bsnes. The Yoshi frame is not pixel-exact despite identical
-VRAM. This rules out a missing tile upload at that checkpoint, but does not
-distinguish CGRAM, OAM, PPU register/latch state, observation timing, or earlier
-CPU/GSU timing as the cause of the missing storybook border. Super FX therefore
-has processor and cartridge support, but the later display divergence is not
-yet isolated and it does not have a late pixel-exact commercial-game lane.
+GSU-RAM match at frame 154. Star Fox, Stunt Race FX, and Yoshi's Island match
+bsnes exactly at frame 120; Stunt Race FX and Yoshi's Island also match exactly
+at frame 600. Reaching those late comparisons required correcting the
+base-console HDMA frame reset for disabled channels and allowing HDMA to
+preempt and resume MDMA between bytes. Star Fox's former active-display palette
+corruption is gone, but its attract-mode simulation is in a different state at
+frame 600. Doom's frame-600 title composition is visually intact but remains
+pixel-different. Super FX therefore has processor and cartridge support plus
+two late exact commercial lanes, without claiming universal late pixel
+exactness.
 
 ## Interactive Validation Record
 

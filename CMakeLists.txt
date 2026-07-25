@@ -149,6 +149,11 @@ add_executable(clover_frame_range_compare
 )
 target_include_directories(clover_frame_range_compare PRIVATE src)
 
+add_executable(clover_sdl_audio_pacing_test
+    tests/SdlAudioPacingTest.cpp
+)
+target_include_directories(clover_sdl_audio_pacing_test PRIVATE src)
+
 enable_testing()
 add_test(NAME clover_smoke_test COMMAND clover_smoke_test)
 add_test(NAME clover_hardware_loop_test COMMAND clover_hardware_loop_test)
@@ -156,6 +161,7 @@ add_test(NAME clover_hardware_profile_test COMMAND clover_hardware_profile_test)
 add_test(NAME clover_save_ram_test COMMAND clover_save_ram_test)
 add_test(NAME clover_frontend_capability_test COMMAND clover_frontend_capability_test)
 add_test(NAME clover_local_rom_regression_test COMMAND clover_local_rom_regression_test)
+add_test(NAME clover_sdl_audio_pacing_test COMMAND clover_sdl_audio_pacing_test)
 if(CLOVER_BUILD_SDL_FRONTEND)
     add_test(NAME clover_rom_library_test COMMAND clover_rom_library_test)
 endif()

@@ -6,6 +6,7 @@
 #include "clover/platform/sdl/SdlAppShell.h"
 #include "clover/frontend/SnesEmulatorCore.h"
 #include "clover/platform/RomLibrary.h"
+#include "clover/platform/sdl/SdlAudioPacing.h"
 
 #include <SDL3/SDL.h>
 
@@ -513,6 +514,7 @@ namespace clover::platform
         _audio_queued_bytes_before_put = -1;
         _audio_queued_bytes_after_put = -1;
         _audio_empty_queue_observations = 0;
+        _audio_starvation_requests.store(0u, std::memory_order_relaxed);
         _window = window;
         _display = display;
         _renderer = SDL_CreateRenderer(window, nullptr);
@@ -579,8 +581,8 @@ namespace clover::platform
             };
             _audio_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
                                                       &spec,
-                                                      nullptr,
-                                                      nullptr);
+                                                      &audio_stream_get_callback,
+                                                      this);
             if (_audio_stream == nullptr)
                 std::fprintf(stderr, "Audio disabled: %s\n", SDL_GetError());
         }
@@ -1073,11 +1075,22 @@ namespace clover::platform
         // frame scheduler dependency to the emulator core.
         if (!_audio_started
             && SDL_GetAudioStreamQueued(_audio_stream)
-                >= static_cast<int>(audio.sample_rate_hz * audio.channels * sizeof(int16_t) / 20u))
+                >= sdl_audio_pacing::initial_queue_bytes(audio.sample_rate_hz, audio.channels))
         {
             if (SDL_ResumeAudioDevice(SDL_GetAudioStreamDevice(_audio_stream)))
                 _audio_started = true;
         }
+    }
+
+    void SDLCALL sdl_presentation_t::audio_stream_get_callback(void* userdata,
+                                                               SDL_AudioStream*,
+                                                               int additional_amount,
+                                                               int) noexcept
+    {
+        if (additional_amount <= 0 || userdata == nullptr)
+            return;
+        auto& presentation{ *static_cast<sdl_presentation_t*>(userdata) };
+        presentation._audio_starvation_requests.fetch_add(1u, std::memory_order_relaxed);
     }
 
     void sdl_presentation_t::reset_audio() noexcept
@@ -1236,6 +1249,11 @@ namespace clover::platform
     uint64_t sdl_presentation_t::audio_empty_queue_observations() const noexcept
     {
         return _audio_empty_queue_observations;
+    }
+
+    uint64_t sdl_presentation_t::audio_starvation_requests() const noexcept
+    {
+        return _audio_starvation_requests.load(std::memory_order_relaxed);
     }
 
     bool sdl_presentation_t::key_pressed(SDL_Scancode scancode) const noexcept
@@ -2029,10 +2047,22 @@ namespace clover::platform
                 next_frame_deadline_ns = SDL_GetTicksNS();
                 continue;
             }
-            const uint64_t paced_batch_duration_ns{ static_cast<uint64_t>(std::llround(
+            const uint64_t nominal_paced_batch_duration_ns{ static_cast<uint64_t>(std::llround(
                 static_cast<double>(target_frame_duration_ns)
                     * static_cast<double>(batch_size)
                     / speed_multipliers[speed_selection]
+            )) };
+            const int64_t audio_adjustment_ns{
+                speed_selection == 1u && presentation.audio_started()
+                    ? sdl_audio_pacing::adjustment_ns(
+                        presentation.audio_queued_bytes_after_put(),
+                        core->audio_frame().sample_rate_hz,
+                        core->audio_frame().channels)
+                    : 0
+            };
+            const uint64_t paced_batch_duration_ns{ static_cast<uint64_t>(std::max<int64_t>(
+                1,
+                static_cast<int64_t>(nominal_paced_batch_duration_ns) + audio_adjustment_ns
             )) };
             next_frame_deadline_ns += paced_batch_duration_ns;
             const uint64_t current_ticks_ns{ SDL_GetTicksNS() };
@@ -2059,10 +2089,11 @@ namespace clover::platform
                         audio_sample_values / std::max<uint8_t>(core->audio_frame().channels, 1u)),
                     audio_peak);
         std::printf("Clover SDL audio: max_values_per_frame=%zu discontinuities=%llu "
-                    "empty_queue_observations=%llu\n",
+                    "empty_queue_observations=%llu starvation_requests=%llu\n",
                     max_audio_sample_values_per_frame,
                     static_cast<unsigned long long>(audio_discontinuities),
-                    static_cast<unsigned long long>(presentation.audio_empty_queue_observations()));
+                    static_cast<unsigned long long>(presentation.audio_empty_queue_observations()),
+                    static_cast<unsigned long long>(presentation.audio_starvation_requests()));
         const bool save_flushed{ !media_loaded || flush_persistent_memory(*core, save_path) };
         capture.finalize();
         presentation.shutdown();

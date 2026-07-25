@@ -10,6 +10,7 @@
 #include <SDL3/SDL.h>
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -55,8 +56,13 @@ namespace clover::platform
         [[nodiscard]] int audio_queued_bytes_after_put() const noexcept;
         [[nodiscard]] bool audio_started() const noexcept;
         [[nodiscard]] uint64_t audio_empty_queue_observations() const noexcept;
+        [[nodiscard]] uint64_t audio_starvation_requests() const noexcept;
 
     private:
+        static void SDLCALL audio_stream_get_callback(void* userdata,
+                                                      SDL_AudioStream* stream,
+                                                      int additional_amount,
+                                                      int total_amount) noexcept;
         [[nodiscard]] bool key_pressed(SDL_Scancode scancode) const noexcept;
         [[nodiscard]] bool physical_control_pressed(frontend::gamepad_button_t button, size_t port) const noexcept;
         [[nodiscard]] bool gamepad_button_pressed(SDL_GamepadButton button, size_t port) const noexcept;
@@ -104,6 +110,7 @@ namespace clover::platform
         int _audio_queued_bytes_before_put{ -1 };
         int _audio_queued_bytes_after_put{ -1 };
         uint64_t _audio_empty_queue_observations{ 0 };
+        std::atomic<uint64_t> _audio_starvation_requests{ 0 };
     };
 
     struct sdl_app_shell_t

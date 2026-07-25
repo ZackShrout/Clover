@@ -31,6 +31,7 @@ namespace clover::core
         _parameters.fill(0);
         _results.fill(0);
         _matrices = {};
+        _projection = {};
         _phase = phase_t::command;
         _command = 0;
         _word_index = 0;
@@ -40,15 +41,6 @@ namespace clover::core
         _frozen = false;
         _raster_output_written = false;
 
-        dsp1_reference::CentreX = dsp1_reference::CentreY = dsp1_reference::CentreZ = 0;
-        dsp1_reference::Gx = dsp1_reference::Gy = dsp1_reference::Gz = 0;
-        dsp1_reference::VOffset = dsp1_reference::VPlane_C = dsp1_reference::VPlane_E = 0;
-        dsp1_reference::Les_C = dsp1_reference::Les_E = dsp1_reference::Les_G = 0;
-        dsp1_reference::SinAas = dsp1_reference::CosAas = 0;
-        dsp1_reference::SinAzs = dsp1_reference::CosAzs = 0;
-        dsp1_reference::SinAzsB = dsp1_reference::CosAzsB = 0;
-        dsp1_reference::SecAzs_C1 = dsp1_reference::SecAzs_E1 = 0;
-        dsp1_reference::SecAzs_C2 = dsp1_reference::SecAzs_E2 = 0;
     }
 
     uint8_t dsp1_t::read_status() noexcept
@@ -252,9 +244,12 @@ namespace clover::core
 
         std::array<int16_t, 3> point{};
         std::array<int16_t, 3> exponent{};
-        DSP1_NormalizeDouble(static_cast<int32_t>(_parameters[0]) - Gx, point[0], exponent[0]);
-        DSP1_NormalizeDouble(static_cast<int32_t>(_parameters[1]) - Gy, point[1], exponent[1]);
-        DSP1_NormalizeDouble(static_cast<int32_t>(_parameters[2]) - Gz, point[2], exponent[2]);
+        DSP1_NormalizeDouble(static_cast<int32_t>(_parameters[0]) - _projection.Gx,
+                             point[0], exponent[0]);
+        DSP1_NormalizeDouble(static_cast<int32_t>(_parameters[1]) - _projection.Gy,
+                             point[1], exponent[1]);
+        DSP1_NormalizeDouble(static_cast<int32_t>(_parameters[2]) - _projection.Gz,
+                             point[2], exponent[2]);
         for (size_t axis{}; axis < point.size(); ++axis)
         {
             point[axis] = static_cast<int16_t>(point[axis] >> 1);
@@ -273,7 +268,9 @@ namespace clover::core
         }
 
         const int16_t view_depth_coefficient{ static_cast<int16_t>(
-            -matrix_term(point[0], Nx) - matrix_term(point[1], Ny) - matrix_term(point[2], Nz)
+            -matrix_term(point[0], _projection.Nx)
+            - matrix_term(point[1], _projection.Ny)
+            - matrix_term(point[2], _projection.Nz)
         ) };
         int64_t view_depth_offset{ view_depth_coefficient };
         const int depth_shift{ 16 - common_exponent };
@@ -286,7 +283,7 @@ namespace clover::core
         view_depth_offset >>= 1;
 
         const int32_t view_depth{
-            static_cast<int32_t>(static_cast<uint16_t>(Les_G))
+            static_cast<int32_t>(static_cast<uint16_t>(_projection.Les_G))
             + static_cast<int32_t>(view_depth_offset)
         };
         int16_t depth_coefficient{};
@@ -297,7 +294,9 @@ namespace clover::core
         int16_t inverse_coefficient{};
         int16_t inverse_exponent{};
         DSP1_Inverse(depth_coefficient, 0, inverse_coefficient, inverse_exponent);
-        const int16_t scale_coefficient{ matrix_term(inverse_coefficient, Les_C) };
+        const int16_t scale_coefficient{
+            matrix_term(inverse_coefficient, _projection.Les_C)
+        };
 
         const auto project_axis = [&](int16_t x_basis, int16_t y_basis, int16_t z_basis) noexcept
         {
@@ -309,25 +308,28 @@ namespace clover::core
             int16_t operation_exponent{};
             DSP1_Normalize(matrix_term(dot, scale_coefficient), coefficient, operation_exponent);
             return DSP1_Truncate(coefficient, static_cast<int16_t>(
-                Les_E - depth_exponent + depth_shift + operation_exponent
+                _projection.Les_E - depth_exponent + depth_shift + operation_exponent
             ));
         };
 
         // The horizontal screen basis is normalized through a Q15 multiply by
         // 0x7fff before the point is projected. Keeping the multiply explicit
         // preserves the DSP-1's one-bit truncation at cardinal directions.
-        _results[0] = project_axis(matrix_term(CosAas, 0x7fff),
-                                   matrix_term(SinAas, 0x7fff),
+        _results[0] = project_axis(matrix_term(_projection.CosAas, 0x7fff),
+                                   matrix_term(_projection.SinAas, 0x7fff),
                                    0);
-        _results[1] = project_axis(matrix_term(CosAzs, static_cast<int16_t>(-SinAas)),
-                                   matrix_term(CosAzs, CosAas),
-                                   matrix_term(static_cast<int16_t>(-SinAzs), 0x7fff));
+        _results[1] = project_axis(
+            matrix_term(_projection.CosAzs,
+                        static_cast<int16_t>(-_projection.SinAas)),
+            matrix_term(_projection.CosAzs, _projection.CosAas),
+            matrix_term(static_cast<int16_t>(-_projection.SinAzs), 0x7fff)
+        );
 
         int16_t magnification_coefficient{};
         int16_t magnification_exponent{ inverse_exponent };
         DSP1_Normalize(scale_coefficient, magnification_coefficient, magnification_exponent);
         _results[2] = DSP1_Truncate(magnification_coefficient, static_cast<int16_t>(
-            magnification_exponent + Les_E - depth_exponent - 7
+            magnification_exponent + _projection.Les_E - depth_exponent - 7
         ));
     }
 
@@ -354,7 +356,8 @@ namespace clover::core
             set_matrix(matrix, _parameters[0], _parameters[1], _parameters[2], _parameters[3]);
             break;
         case 0x02:
-            DSP1_Parameter(_parameters[0], _parameters[1], _parameters[2], _parameters[3],
+            DSP1_Parameter(_projection,
+                           _parameters[0], _parameters[1], _parameters[2], _parameters[3],
                            _parameters[4], _parameters[5], _parameters[6], _results[0],
                            _results[1], _results[2], _results[3]);
             break;
@@ -394,7 +397,8 @@ namespace clover::core
         case 0x09:
         case 0x0d: objective(matrix); break;
         case 0x0a:
-            DSP1_Raster(_parameters[0], _results[0], _results[1], _results[2], _results[3]);
+            DSP1_Raster(_projection, _parameters[0],
+                        _results[0], _results[1], _results[2], _results[3]);
             break;
         case 0x0b: scalar(matrix); break;
         case 0x0c:
@@ -405,7 +409,8 @@ namespace clover::core
                 DSP1_Rotate(_parameters[0], _parameters[1], _parameters[2], _results[0], _results[1]);
             break;
         case 0x0e:
-            DSP1_Target(_parameters[0], _parameters[1], _results[0], _results[1]);
+            DSP1_Target(_projection, _parameters[0], _parameters[1],
+                        _results[0], _results[1]);
             break;
         case 0x0f:
             if ((_command & 0x10u) != 0u)

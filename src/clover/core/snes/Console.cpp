@@ -5,6 +5,74 @@
 
 #include "clover/core/snes/Console.h"
 
+#include <memory>
+#include <utility>
+
+namespace
+{
+    [[nodiscard]] clover::core::video_standard_t resolved_video_standard(
+        const clover::core::console_causal_state_t& state
+    ) noexcept
+    {
+        using namespace clover::core;
+        switch (state.hardware_configuration.region)
+        {
+        case snes_region_selection_t::ntsc:
+            return video_standard_t::ntsc;
+        case snes_region_selection_t::pal:
+            return video_standard_t::pal;
+        case snes_region_selection_t::automatic:
+        {
+            if (!state.cartridge.loaded)
+                return video_standard_t::ntsc;
+            const uint8_t destination{ state.cartridge.header.destination_code };
+            return (destination >= 0x02u && destination <= 0x0cu)
+                    || destination == 0x11u
+                ? video_standard_t::pal
+                : video_standard_t::ntsc;
+        }
+        }
+        return static_cast<video_standard_t>(0xffu);
+    }
+
+    [[nodiscard]] bool valid_cross_subsystem_state(
+        const clover::core::console_causal_state_t& state,
+        const clover::core::snes_hardware_profile_t& profile
+    ) noexcept
+    {
+        using namespace clover::core;
+        const video_standard_t standard{ resolved_video_standard(state) };
+        const video_timing_t& timing{ video_timing_for(standard) };
+        const master_clock_count_t clock{ state.scheduler.master_clock };
+
+        return state.powered_on
+            && state.resolved_video_standard == standard
+            && state.cpu.video_timing == timing
+            && state.ppu.video_timing == timing
+            && state.cpu.cpu_version == profile.cpu_version
+            && state.ppu.ppu1_version == profile.ppu1_version
+            && state.ppu.ppu2_version == profile.ppu2_version
+            && state.apu.master_clock_frequency_hz
+                == static_cast<int64_t>(master_clock_frequency_hz(standard))
+            && state.cpu.master_clock == clock
+            && state.cpu.counter.master_clock == clock
+            && state.ppu.counter.master_clock == clock
+            && state.apu.master_clock == clock
+            && state.cpu.counter == state.ppu.counter
+            && state.scheduler.frame_index == state.ppu.frame_counter
+            && state.cpu.visible_scanlines
+                == timing.active_visible_scanlines(state.ppu.display_overscan)
+            && state.cpu.interlace == state.ppu.timing_interlace
+            && state.bus.entropy_mode == state.ppu.entropy_mode
+            && state.bus.entropy_seed_override_enabled
+                == state.ppu.entropy_seed_override_enabled
+            && state.bus.entropy_seed == state.ppu.entropy_seed
+            && state.bus.entropy_sequence == state.ppu.entropy_sequence
+            && state.interrupts.nmi_transition_clock <= clock
+            && state.interrupts.irq_transition_clock <= clock;
+    }
+}
+
 namespace clover::core
 {
     void console_t::apply_hardware_configuration() noexcept
@@ -136,6 +204,33 @@ namespace clover::core
         return true;
     }
 
+    std::span<const std::byte> console_t::canonical_media() const noexcept
+    {
+        return _cartridge.canonical_media();
+    }
+
+    cartridge_address_mapping_t console_t::translate_cartridge_address(
+        uint32_t address
+    ) const noexcept
+    {
+        return _cartridge.translate_address(address);
+    }
+
+    bool console_t::inspect_u8(uint32_t address, uint8_t& value) const noexcept
+    {
+        if (_bus.inspect_u8(address, value))
+            return true;
+
+        // Static analysis is valid after media load and before power-on, when
+        // the runtime bus has not yet been connected to the cartridge.
+        return !_powered_on && _cartridge.inspect_u8(address, value);
+    }
+
+    void console_t::set_observation_sink(snes_observation_sink_t* sink) noexcept
+    {
+        _scheduler.set_observation_sink(sink);
+    }
+
     hardware_step_result_t console_t::step_hardware() noexcept
     {
         if (!_powered_on)
@@ -148,6 +243,26 @@ namespace clover::core
             _ppu.present(_framebuffer);
 
         return step;
+    }
+
+    cpu_boundary_step_result_t console_t::step_cpu_boundary() noexcept
+    {
+        if (!_powered_on)
+            return {};
+
+        const master_clock_count_t starting_clock{ _scheduler.master_clock() };
+        while (true)
+        {
+            const hardware_step_result_t step{ step_hardware() };
+            if (step.cpu_boundary == cpu_step_boundary_t::none)
+                continue;
+
+            return {
+                .status = cpu_boundary_step_status_t::complete,
+                .boundary = step.cpu_boundary,
+                .elapsed_master_clocks = _scheduler.master_clock() - starting_clock
+            };
+        }
     }
 
     void console_t::run_scanline() noexcept
@@ -514,6 +629,12 @@ namespace clover::core
         _bus.set_apu_port_trace_enabled(enabled);
     }
 
+    void console_t::set_legacy_trace_enabled(bool enabled) noexcept
+    {
+        _bus.set_legacy_trace_enabled(enabled);
+        _apu.set_legacy_trace_enabled(enabled);
+    }
+
     uint16_t console_t::apu_port_trace_count() const noexcept
     {
         return _bus.apu_port_trace_count();
@@ -522,5 +643,190 @@ namespace clover::core
     const std::array<bus_t::apu_port_trace_t, bus_t::k_apu_port_trace_capacity>& console_t::apu_port_trace() const noexcept
     {
         return _bus.apu_port_trace();
+    }
+
+    console_checkpoint_result_t console_t::capture_causal_state(
+        console_causal_state_t& state
+    ) noexcept
+    {
+        if (!_powered_on)
+            return console_checkpoint_result_t::not_powered_on;
+        if (_apu.cpu_io_window_active())
+            return console_checkpoint_result_t::active_cpu_io_window;
+        if (_cartridge.hardware() != cartridge_hardware_t::base)
+            return console_checkpoint_result_t::unsupported_hardware;
+
+        const snes_hardware_profile_t* profile{
+            snes_hardware_profile(_hardware_configuration.model)
+        };
+        if (profile == nullptr || !profile->implemented)
+            return console_checkpoint_result_t::invalid_hardware_configuration;
+
+        try
+        {
+            auto captured{ std::make_unique<console_causal_state_t>() };
+            captured->powered_on = true;
+            captured->hardware_configuration = _hardware_configuration;
+            captured->resolved_video_standard = _hardware_identity.video_standard;
+            captured->scheduler = _scheduler.capture_causal_state();
+            captured->bus = _bus.capture_causal_state();
+            captured->cpu = _cpu.capture_causal_state();
+            captured->dma = _dma.capture_causal_state();
+            captured->interrupts = _interrupts.capture_causal_state();
+            _ppu.capture_causal_state(captured->ppu);
+
+            const cartridge_state_result_t cartridge_result{
+                _cartridge.capture_causal_state(captured->cartridge)
+            };
+            if (cartridge_result == cartridge_state_result_t::unsupported_hardware)
+                return console_checkpoint_result_t::unsupported_hardware;
+            if (cartridge_result == cartridge_state_result_t::allocation_failed)
+                return console_checkpoint_result_t::allocation_failed;
+            if (cartridge_result != cartridge_state_result_t::success)
+                return console_checkpoint_result_t::invalid_subsystem_state;
+
+            const apu_causal_state_result_t apu_result{
+                _apu.capture_causal_state(captured->apu)
+            };
+            if (apu_result == apu_causal_state_result_t::active_cpu_io_window)
+                return console_checkpoint_result_t::active_cpu_io_window;
+            if (apu_result != apu_causal_state_result_t::success)
+                return console_checkpoint_result_t::invalid_subsystem_state;
+
+            if (!valid_cross_subsystem_state(*captured, *profile))
+                return console_checkpoint_result_t::cross_subsystem_mismatch;
+
+            state = std::move(*captured);
+            return console_checkpoint_result_t::success;
+        }
+        catch (...)
+        {
+            return console_checkpoint_result_t::allocation_failed;
+        }
+    }
+
+    console_checkpoint_result_t console_t::restore_causal_state(
+        const console_causal_state_t& state
+    ) noexcept
+    {
+        if (!_powered_on || !state.powered_on)
+            return console_checkpoint_result_t::not_powered_on;
+        if (_apu.cpu_io_window_active())
+            return console_checkpoint_result_t::active_cpu_io_window;
+        if (_cartridge.hardware() != cartridge_hardware_t::base
+            || state.cartridge.hardware != cartridge_hardware_t::base)
+        {
+            return console_checkpoint_result_t::unsupported_hardware;
+        }
+        if (_cartridge.loaded() != state.cartridge.loaded)
+            return console_checkpoint_result_t::media_mismatch;
+
+        const snes_hardware_profile_t* profile{
+            snes_hardware_profile(state.hardware_configuration.model)
+        };
+        if (profile == nullptr || !profile->implemented
+            || state.hardware_configuration.region
+                > snes_region_selection_t::pal)
+        {
+            return console_checkpoint_result_t::invalid_hardware_configuration;
+        }
+        if (!valid_cross_subsystem_state(state, *profile))
+            return console_checkpoint_result_t::cross_subsystem_mismatch;
+
+        try
+        {
+            auto candidate{ std::make_unique<console_t>() };
+            if (!candidate->set_hardware_configuration(
+                    state.hardware_configuration))
+            {
+                return console_checkpoint_result_t::invalid_hardware_configuration;
+            }
+            if (state.cartridge.loaded
+                && !candidate->load_cartridge(_cartridge.canonical_media()))
+            {
+                // The source is the already-loaded canonical media of the live
+                // console, so structural parsing cannot newly fail here.
+                return console_checkpoint_result_t::allocation_failed;
+            }
+            candidate->power_on();
+
+            const cartridge_state_result_t cartridge_result{
+                candidate->_cartridge.restore_causal_state(state.cartridge)
+            };
+            if (cartridge_result == cartridge_state_result_t::unsupported_hardware)
+                return console_checkpoint_result_t::unsupported_hardware;
+            if (cartridge_result == cartridge_state_result_t::topology_mismatch)
+                return console_checkpoint_result_t::media_mismatch;
+            if (cartridge_result != cartridge_state_result_t::success)
+                return console_checkpoint_result_t::invalid_subsystem_state;
+
+            const bool ppu_restored{
+                candidate->_ppu.restore_causal_state(state.ppu)
+            };
+            const bool bus_restored{
+                candidate->_bus.restore_causal_state(state.bus)
+            };
+            const bool cpu_restored{
+                candidate->_cpu.restore_causal_state(state.cpu)
+            };
+            const bool dma_restored{
+                candidate->_dma.restore_causal_state(state.dma)
+            };
+            const bool interrupts_restored{
+                candidate->_interrupts.restore_causal_state(state.interrupts)
+            };
+            if (!ppu_restored
+                || !bus_restored
+                || !cpu_restored
+                || !dma_restored
+                || !interrupts_restored)
+            {
+                return console_checkpoint_result_t::invalid_subsystem_state;
+            }
+            const apu_causal_state_result_t apu_result{
+                candidate->_apu.restore_causal_state(state.apu)
+            };
+            if (apu_result != apu_causal_state_result_t::success)
+                return console_checkpoint_result_t::invalid_subsystem_state;
+            candidate->_scheduler.restore_causal_state(state.scheduler);
+
+            if (candidate->_scheduler.master_clock() != state.scheduler.master_clock
+                || candidate->_cpu.timing(candidate->_ppu.video_timing()).master_clock
+                    != state.scheduler.master_clock
+                || candidate->_ppu.timing().master_clock
+                    != state.scheduler.master_clock
+                || candidate->_apu.master_clock() != state.scheduler.master_clock
+                || candidate->_scheduler.frame_index() != state.scheduler.frame_index
+                || candidate->_ppu.frame_index() != state.scheduler.frame_index)
+            {
+                return console_checkpoint_result_t::cross_subsystem_mismatch;
+            }
+
+            // Every fallible restore has succeeded against an independently
+            // wired candidate. The same payload and current cartridge topology
+            // now make the live commit a no-fail operation.
+            const cartridge_state_result_t live_cartridge_result{
+                _cartridge.restore_causal_state(state.cartridge)
+            };
+            if (live_cartridge_result != cartridge_state_result_t::success)
+                return console_checkpoint_result_t::media_mismatch;
+
+            _hardware_configuration = state.hardware_configuration;
+            _hardware_identity = candidate->_hardware_identity;
+            _scheduler.restore_causal_state(state.scheduler);
+            static_cast<void>(_bus.restore_causal_state(state.bus));
+            static_cast<void>(_cpu.restore_causal_state(state.cpu));
+            static_cast<void>(_dma.restore_causal_state(state.dma));
+            static_cast<void>(_interrupts.restore_causal_state(state.interrupts));
+            static_cast<void>(_ppu.restore_causal_state(state.ppu));
+            static_cast<void>(_apu.restore_causal_state(state.apu));
+            _powered_on = true;
+            _ppu.present(_framebuffer);
+            return console_checkpoint_result_t::success;
+        }
+        catch (...)
+        {
+            return console_checkpoint_result_t::allocation_failed;
+        }
     }
 }

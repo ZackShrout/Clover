@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "clover/frontend/DebugTarget.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -117,6 +119,10 @@ namespace clover::frontend
         [[nodiscard]] virtual bool persistent_memory_dirty() const noexcept = 0;
         virtual void mark_persistent_memory_clean() noexcept = 0;
         [[nodiscard]] virtual video_plane_control_t* video_plane_control() noexcept
+        {
+            return nullptr;
+        }
+        [[nodiscard]] virtual debug_target_t* debug_target() noexcept
         {
             return nullptr;
         }

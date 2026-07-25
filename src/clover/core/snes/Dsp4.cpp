@@ -80,8 +80,7 @@ namespace clover::core
     uint8_t dsp4_t::read_data() noexcept
     {
         dsp4_legacy::BindDSP4State(&_state->protocol, &_state->variables);
-        dsp4_legacy::DSP4GetByte();
-        return dsp4_legacy::dsp4_byte;
+        return dsp4_legacy::DSP4GetByte();
     }
 
     uint8_t dsp4_t::read_status() noexcept
@@ -92,7 +91,6 @@ namespace clover::core
     void dsp4_t::write_data(uint8_t value) noexcept
     {
         dsp4_legacy::BindDSP4State(&_state->protocol, &_state->variables);
-        dsp4_legacy::dsp4_byte = value;
-        dsp4_legacy::DSP4SetByte();
+        dsp4_legacy::DSP4SetByte(value);
     }
 }

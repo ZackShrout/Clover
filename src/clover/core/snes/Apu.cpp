@@ -34,6 +34,12 @@ namespace
         *output += size;
     }
 
+    void load_dsp_state_bytes(unsigned char** input, void* output, size_t size)
+    {
+        std::copy_n(*input, size, static_cast<uint8_t*>(output));
+        *input += size;
+    }
+
 } // anonymous namespace
 
 namespace clover::core
@@ -193,6 +199,37 @@ namespace clover::core
         return _dsp.output_overflowed();
     }
 
+    bool apu_t::capture_audio_output_state(apu_audio_output_state_t& state) const noexcept
+    {
+        SPC_DSP::output_state_t dsp_output{};
+        if (!_dsp.capture_output_state(
+                dsp_output,
+                static_cast<int>(_audio_samples.size())))
+        {
+            return false;
+        }
+
+        state.samples = _audio_samples;
+        state.dsp_output = dsp_output;
+        return true;
+    }
+
+    bool apu_t::restore_audio_output_state(
+        const apu_audio_output_state_t& state
+    ) noexcept
+    {
+        if (!_dsp.restore_output_state(
+                state.dsp_output,
+                _audio_samples.data(),
+                static_cast<int>(_audio_samples.size())))
+        {
+            return false;
+        }
+
+        _audio_samples = state.samples;
+        return true;
+    }
+
     apu_state_t apu_t::state() const noexcept
     {
         return {
@@ -282,6 +319,189 @@ namespace clover::core
         return _io_trace;
     }
 
+    void apu_t::set_legacy_trace_enabled(bool enabled) noexcept
+    {
+        _legacy_trace_enabled = enabled;
+        if (!enabled)
+        {
+            _instruction_trace_count = 0;
+            _io_trace_count = 0;
+        }
+    }
+
+    bool apu_t::cpu_io_window_active() const noexcept
+    {
+        return _cpu_io_window_bus != nullptr;
+    }
+
+    apu_causal_state_result_t apu_t::capture_causal_state(
+        causal_state_t& state
+    ) noexcept
+    {
+        if (_cpu_io_window_bus != nullptr)
+            return apu_causal_state_result_t::active_cpu_io_window;
+        if (!_dsp_initialized)
+            return apu_causal_state_result_t::uninitialized_dsp;
+
+        std::array<uint8_t, SPC_DSP::state_size> captured_dsp{};
+        unsigned char* dsp_output{ captured_dsp.data() };
+        _dsp.copy_state(&dsp_output, copy_dsp_state_bytes);
+
+        apu_audio_output_state_t captured_audio{};
+        if (!capture_audio_output_state(captured_audio))
+            return apu_causal_state_result_t::invalid_audio_output;
+
+        state.master_clock = _master_clock;
+        state.smp_clock_credit = _smp_clock_credit;
+        state.master_clock_frequency_hz = _master_clock_frequency_hz;
+        state.registers = _registers;
+        state.ipl_rom_enabled = _ipl_rom_enabled;
+        state.halted = _halted;
+        state.waiting = _waiting;
+        state.stopped = _stopped;
+        state.current_opcode_pc = _current_opcode_pc;
+        state.last_opcode = _last_opcode;
+        state.io = _io;
+        state.dsp_state = captured_dsp;
+        state.dsp_clock_remainder = _dsp_clock_remainder;
+        state.dsp_initialized = _dsp_initialized;
+        state.audio_output = captured_audio;
+        state.timer0 = _timer0;
+        state.timer1 = _timer1;
+        state.timer2 = _timer2;
+        state.apu_to_cpu_ports = _apu_to_cpu_ports;
+        state.cpu_to_apu_ports = _cpu_to_apu_ports;
+        state.instruction_context = _instruction_context;
+        state.smp_suspended_for_cpu = _smp_suspended_for_cpu;
+        // Capture is forbidden while the call-scoped CPU I/O window is active,
+        // so its pointer and progress counters have one canonical idle form.
+        state.cpu_io_window_target_clocks = 0;
+        state.cpu_io_window_consumed_master_numerator = 0;
+        state.ram = _ram;
+        return apu_causal_state_result_t::success;
+    }
+
+    apu_causal_state_result_t apu_t::restore_causal_state(
+        const causal_state_t& state
+    ) noexcept
+    {
+        if (_cpu_io_window_bus != nullptr)
+            return apu_causal_state_result_t::active_cpu_io_window;
+
+        const bool valid_master_clock_frequency{
+            state.master_clock_frequency_hz
+                == static_cast<int64_t>(master_clock_frequency_hz(video_standard_t::ntsc))
+            || state.master_clock_frequency_hz
+                == static_cast<int64_t>(master_clock_frequency_hz(video_standard_t::pal))
+        };
+        if (!state.dsp_initialized
+            || !valid_master_clock_frequency
+            || state.dsp_clock_remainder > 1u
+            || state.io.external_wait_states > 3u
+            || state.io.internal_wait_states > 3u
+            || (state.halted && (state.waiting || state.stopped))
+            || (state.waiting && state.stopped)
+            || state.cpu_io_window_target_clocks != 0u
+            || state.cpu_io_window_consumed_master_numerator != 0
+            || state.instruction_context.access_count
+                > state.instruction_context.accesses.size()
+            || state.instruction_context.replay_cursor
+                > state.instruction_context.access_count
+            || (!state.instruction_context.active
+                && (state.instruction_context.abort_requested
+                    || state.instruction_context.access_count != 0u
+                    || state.instruction_context.replay_cursor != 0u))
+            || (state.instruction_context.active
+                && !state.smp_suspended_for_cpu))
+        {
+            return apu_causal_state_result_t::invalid_state;
+        }
+
+        const auto valid_timer = [&state]<uint8_t Frequency>(
+            const timer_t<Frequency>& timer
+        ) noexcept
+        {
+            const bool expected_line{
+                state.io.timers_enable
+                && !state.io.timers_disable
+                && timer.stage1 != 0u
+            };
+            return timer.stage0 < Frequency
+                && timer.stage1 <= 1u
+                && timer.stage3 <= 0x0fu
+                && timer.line == expected_line;
+        };
+        if (!valid_timer(state.timer0)
+            || !valid_timer(state.timer1)
+            || !valid_timer(state.timer2))
+        {
+            return apu_causal_state_result_t::invalid_state;
+        }
+
+        for (size_t index{ 0 };
+             index < state.instruction_context.access_count;
+             ++index)
+        {
+            const auto kind{ state.instruction_context.accesses[index].kind };
+            if (kind < access_kind_t::idle || kind > access_kind_t::write)
+                return apu_causal_state_result_t::invalid_state;
+        }
+
+        SPC_DSP candidate_dsp{};
+        candidate_dsp.init(_ram.data(), _ram.data());
+        unsigned char* dsp_input{
+            const_cast<unsigned char*>(state.dsp_state.data())
+        };
+        candidate_dsp.copy_state(&dsp_input, load_dsp_state_bytes);
+        if (!candidate_dsp.state_is_valid())
+            return apu_causal_state_result_t::invalid_dsp_state;
+
+        std::array<int16_t, k_audio_buffer_sample_capacity> candidate_audio{};
+        if (!candidate_dsp.restore_output_state(
+                state.audio_output.dsp_output,
+                candidate_audio.data(),
+                static_cast<int>(candidate_audio.size())))
+        {
+            return apu_causal_state_result_t::invalid_audio_output;
+        }
+
+        _master_clock = state.master_clock;
+        _smp_clock_credit = state.smp_clock_credit;
+        _master_clock_frequency_hz = state.master_clock_frequency_hz;
+        _registers = state.registers;
+        _ipl_rom_enabled = state.ipl_rom_enabled;
+        _halted = state.halted;
+        _waiting = state.waiting;
+        _stopped = state.stopped;
+        _current_opcode_pc = state.current_opcode_pc;
+        _last_opcode = state.last_opcode;
+        _io = state.io;
+        _dsp_clock_remainder = state.dsp_clock_remainder;
+        _dsp_initialized = true;
+        _timer0 = state.timer0;
+        _timer1 = state.timer1;
+        _timer2 = state.timer2;
+        _apu_to_cpu_ports = state.apu_to_cpu_ports;
+        _cpu_to_apu_ports = state.cpu_to_apu_ports;
+        _instruction_context = state.instruction_context;
+        _smp_suspended_for_cpu = state.smp_suspended_for_cpu;
+        _cpu_io_window_bus = nullptr;
+        _cpu_io_window_target_clocks = 0;
+        _cpu_io_window_consumed_master_numerator = 0;
+        _ram = state.ram;
+
+        _dsp.init(_ram.data(), _ram.data());
+        dsp_input = const_cast<unsigned char*>(state.dsp_state.data());
+        _dsp.copy_state(&dsp_input, load_dsp_state_bytes);
+        static_cast<void>(restore_audio_output_state(state.audio_output));
+
+        _instruction_trace = {};
+        _instruction_trace_count = 0;
+        _io_trace = {};
+        _io_trace_count = 0;
+        return apu_causal_state_result_t::success;
+    }
+
     bool apu_t::execute_instruction() noexcept
     {
         const bool replaying{ _instruction_context.active };
@@ -328,7 +548,7 @@ namespace clover::core
         _current_opcode_pc = pc;
         const uint8_t opcode{ spc_fetch_u8() };
         _last_opcode = opcode;
-        if (!replaying)
+        if (_legacy_trace_enabled && !replaying)
             trace_instruction(pc, opcode);
         if (execute_load_store_opcode(opcode)
             || execute_alu_opcode(opcode)
@@ -344,7 +564,8 @@ namespace clover::core
                 return false;
             }
 
-            complete_instruction_trace(pc);
+            if (_legacy_trace_enabled)
+                complete_instruction_trace(pc);
             _instruction_context = {};
             return true;
         }
@@ -1266,13 +1487,15 @@ namespace clover::core
             break;
         }
 
-        trace_io_access(address, value, false);
+        if (_legacy_trace_enabled)
+            trace_io_access(address, value, false);
         return value;
     }
 
     void apu_t::write_io(uint16_t address, uint8_t value) noexcept
     {
-        trace_io_access(address, value, true);
+        if (_legacy_trace_enabled)
+            trace_io_access(address, value, true);
         switch (address)
         {
         case 0x00f0u:
@@ -1423,7 +1646,8 @@ namespace clover::core
         const int64_t master_clocks{
             static_cast<int64_t>(cycle_clocks) * _master_clock_frequency_hz
         };
-        _cpu_io_window_consumed_master_numerator += master_clocks;
+        if (_cpu_io_window_bus != nullptr)
+            _cpu_io_window_consumed_master_numerator += master_clocks;
         _smp_clock_credit -= master_clocks;
     }
 
@@ -1470,7 +1694,8 @@ namespace clover::core
         const int64_t master_clocks{
             static_cast<int64_t>(spc_cycles) * _master_clock_frequency_hz
         };
-        _cpu_io_window_consumed_master_numerator += master_clocks;
+        if (_cpu_io_window_bus != nullptr)
+            _cpu_io_window_consumed_master_numerator += master_clocks;
         _smp_clock_credit -= master_clocks;
     }
 

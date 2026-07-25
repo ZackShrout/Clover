@@ -747,7 +747,7 @@ namespace clover::core
             const uint8_t vector_high{ executor.read_u8(0x00fffdu) };
             _state.pb = 0;
             _state.pc = static_cast<uint16_t>(vector_low | (vector_high << 8u));
-            executor.retire_instruction();
+            executor.retire_instruction(cpu_step_boundary_t::reset_completed);
 
             const cpu_step_result_t result{ executor.finish() };
             _master_clock += result.master_clocks;
@@ -757,6 +757,7 @@ namespace clover::core
         if (_stopped)
         {
             executor.idle();
+            executor.set_boundary(cpu_step_boundary_t::stopped);
             const cpu_step_result_t result{ executor.finish() };
             _master_clock += result.master_clocks;
             return result;
@@ -782,6 +783,7 @@ namespace clover::core
             if (!wake_requested)
             {
                 executor.idle();
+                executor.set_boundary(cpu_step_boundary_t::waiting);
                 const cpu_step_result_t result{ executor.finish() };
                 _master_clock += result.master_clocks;
                 return result;
@@ -809,7 +811,8 @@ namespace clover::core
                                         executor,
                                         hardware_nmi_vector(_state),
                                         false,
-                                        true);
+                                        true,
+                                        cpu_step_boundary_t::interrupt_entered);
 
                 const cpu_step_result_t result{ executor.finish() };
                 _master_clock += result.master_clocks;
@@ -824,7 +827,8 @@ namespace clover::core
                                         executor,
                                         hardware_irq_vector(_state),
                                         false,
-                                        true);
+                                        true,
+                                        cpu_step_boundary_t::interrupt_entered);
 
                 const cpu_step_result_t result{ executor.finish() };
                 _master_clock += result.master_clocks;
@@ -1210,6 +1214,109 @@ namespace clover::core
     master_clock_delta_t cpu_t::interrupt_poll_phase_for_testing() const noexcept
     {
         return _interrupt_poll_phase;
+    }
+
+    cpu_causal_state_t cpu_t::capture_causal_state() const noexcept
+    {
+        return {
+            .registers = _state,
+            .io = _io,
+            .master_clock = _master_clock,
+            .dma_counter = _dma_counter,
+            .counter = _counter,
+            .interrupt_poll_phase = _interrupt_poll_phase,
+            .last_timing = _last_timing,
+            .last_irq_timing = _last_irq_timing,
+            .last_irq_gate_timing = _last_irq_gate_timing,
+            .irq_condition_valid = _irq_condition_valid,
+            .nmi_poll_valid = _nmi_poll_valid,
+            .dma_active = _dma_active,
+            .reset_pending = _reset_pending,
+            .waiting = _waiting,
+            .wait_wake_idle_pending = _wait_wake_idle_pending,
+            .stopped = _stopped,
+            .visible_scanlines = _visible_scanlines,
+            .video_timing = _video_timing,
+            .cpu_version = _cpu_version,
+            .interlace = _interlace,
+            .dram_refresh_dot = _dram_refresh_dot,
+            .dram_refresh_pending = _dram_refresh_pending,
+            .hdma_setup_dot = _hdma_setup_dot,
+            .hdma_setup_pending = _hdma_setup_pending,
+            .multiply_counter = _multiply_counter,
+            .divide_counter = _divide_counter,
+            .math_shift = _math_shift,
+            .controller_state = _controller_state,
+        };
+    }
+
+    bool cpu_t::restore_causal_state(const cpu_causal_state_t& state) noexcept
+    {
+        const video_timing_t& timing{ state.video_timing };
+        const bool valid_standard{
+            timing.standard == video_standard_t::ntsc
+            || timing.standard == video_standard_t::pal
+        };
+        if (!valid_standard
+            || timing.master_clocks_per_scanline == 0
+            || timing.scanlines_per_frame == 0
+            || timing.visible_scanlines == 0
+            || timing.visible_scanlines > timing.scanlines_per_frame
+            || timing.overscan_visible_scanlines < timing.visible_scanlines
+            || timing.overscan_visible_scanlines > timing.scanlines_per_frame
+            || timing.hblank_start_dot >= timing.master_clocks_per_scanline
+            || timing.hdma_trigger_dot >= timing.master_clocks_per_scanline
+            || state.visible_scanlines == 0
+            || state.visible_scanlines > timing.scanlines_per_frame
+            || (state.cpu_version != 1 && state.cpu_version != 2)
+            || (state.waiting
+                && (state.wait_wake_idle_pending || state.stopped))
+            || (state.stopped && state.wait_wake_idle_pending))
+        {
+            return false;
+        }
+
+        const uint16_t field_scanlines{
+            timing.field_scanlines(state.counter.odd_field, state.interlace)
+        };
+        if (state.counter.scanline >= field_scanlines
+            || state.counter.dot >= timing.scanline_clocks(
+                state.counter.scanline,
+                state.counter.odd_field,
+                state.interlace))
+        {
+            return false;
+        }
+
+        _state = state.registers;
+        _io = state.io;
+        _master_clock = state.master_clock;
+        _dma_counter = state.dma_counter;
+        _counter = state.counter;
+        _interrupt_poll_phase = state.interrupt_poll_phase;
+        _last_timing = state.last_timing;
+        _last_irq_timing = state.last_irq_timing;
+        _last_irq_gate_timing = state.last_irq_gate_timing;
+        _irq_condition_valid = state.irq_condition_valid;
+        _nmi_poll_valid = state.nmi_poll_valid;
+        _dma_active = state.dma_active;
+        _reset_pending = state.reset_pending;
+        _waiting = state.waiting;
+        _wait_wake_idle_pending = state.wait_wake_idle_pending;
+        _stopped = state.stopped;
+        _visible_scanlines = state.visible_scanlines;
+        _video_timing = state.video_timing;
+        _cpu_version = state.cpu_version;
+        _interlace = state.interlace;
+        _dram_refresh_dot = state.dram_refresh_dot;
+        _dram_refresh_pending = state.dram_refresh_pending;
+        _hdma_setup_dot = state.hdma_setup_dot;
+        _hdma_setup_pending = state.hdma_setup_pending;
+        _multiply_counter = state.multiply_counter;
+        _divide_counter = state.divide_counter;
+        _math_shift = state.math_shift;
+        _controller_state = state.controller_state;
+        return true;
     }
 
     void cpu_t::set_waiting(bool waiting) noexcept

@@ -10,6 +10,7 @@
 #include "clover/core/snes/Cpu.h"
 #include "clover/core/snes/Dma.h"
 #include "clover/core/snes/Interrupts.h"
+#include "clover/core/snes/Observation.h"
 #include "clover/core/snes/Ppu.h"
 
 namespace
@@ -44,6 +45,11 @@ namespace clover::core
         _frame_index = 0;
     }
 
+    void scheduler_t::set_observation_sink(snes_observation_sink_t* sink) noexcept
+    {
+        _observation_sink = sink;
+    }
+
     hardware_step_result_t scheduler_t::step_hardware(cpu_t& cpu,
                                                       bus_t& bus,
                                                       ppu_t& ppu,
@@ -61,9 +67,34 @@ namespace clover::core
         }
         else
         {
+            const bool observe_cpu_boundary{
+                _observation_sink != nullptr
+                    && _observation_sink->enabled(k_snes_observe_cpu_boundary)
+            };
+            cpu_state_t state_before{};
+            if (observe_cpu_boundary)
+                state_before = cpu.state();
+
             const cpu_step_result_t cpu_step{ cpu.step(bus, dma, interrupts) };
             result.elapsed_master_clocks = cpu_step.master_clocks;
             result.ppu = cpu_step.ppu;
+            result.cpu_boundary = cpu_step.boundary;
+
+            if (observe_cpu_boundary
+                && cpu_step.boundary != cpu_step_boundary_t::none)
+            {
+                _observation_sink->push({
+                    .kind = snes_observation_kind_t::cpu_boundary,
+                    .master_clock = _master_clock + result.elapsed_master_clocks,
+                    .frame_index = _frame_index + result.ppu.frames_completed,
+                    .timing = ppu.timing(),
+                    .cpu_boundary = {
+                        .boundary = cpu_step.boundary,
+                        .state_before = state_before,
+                        .state_after = cpu.state()
+                    }
+                });
+            }
         }
 
         if (result.slot_owner == hardware_slot_owner_t::dma)
@@ -167,5 +198,21 @@ namespace clover::core
     uint64_t scheduler_t::frame_index() const noexcept
     {
         return _frame_index;
+    }
+
+    scheduler_causal_state_t scheduler_t::capture_causal_state() const noexcept
+    {
+        return {
+            .master_clock = _master_clock,
+            .frame_index = _frame_index,
+        };
+    }
+
+    void scheduler_t::restore_causal_state(
+        const scheduler_causal_state_t& state
+    ) noexcept
+    {
+        _master_clock = state.master_clock;
+        _frame_index = state.frame_index;
     }
 }

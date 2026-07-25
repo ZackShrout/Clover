@@ -133,6 +133,10 @@ namespace clover::core
     {
         snes_hardware_model_t model{ snes_hardware_model_t::late_3chip };
         snes_region_selection_t region{ snes_region_selection_t::automatic };
+
+        [[nodiscard]] constexpr bool operator==(
+            const snes_hardware_configuration_t&
+        ) const noexcept = default;
     };
 
     struct snes_hardware_identity_t

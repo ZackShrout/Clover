@@ -12,6 +12,7 @@
 #include "clover/core/snes/Dma.h"
 #include "clover/core/FrameBuffer.h"
 #include "clover/core/snes/Interrupts.h"
+#include "clover/core/snes/Observation.h"
 #include "clover/core/snes/HardwareProfile.h"
 #include "clover/core/snes/Ppu.h"
 #include "clover/core/snes/Scheduler.h"
@@ -33,6 +34,38 @@ namespace clover::core
         bool general_dma_pending{ false };
     };
 
+    enum class console_checkpoint_result_t : uint8_t
+    {
+        success,
+        not_powered_on,
+        active_cpu_io_window,
+        unsupported_hardware,
+        allocation_failed,
+        invalid_hardware_configuration,
+        media_mismatch,
+        invalid_subsystem_state,
+        cross_subsystem_mismatch
+    };
+
+    struct console_causal_state_t
+    {
+        static constexpr uint32_t schema_version{ 1 };
+
+        bool powered_on{ false };
+        snes_hardware_configuration_t hardware_configuration{};
+        video_standard_t resolved_video_standard{ video_standard_t::ntsc };
+        scheduler_causal_state_t scheduler{};
+        bus_causal_state_t bus{};
+        cartridge_causal_state_t cartridge{};
+        cpu_causal_state_t cpu{};
+        dma_causal_state_t dma{};
+        interrupt_controller_causal_state_t interrupts{};
+        ppu_causal_state_t ppu{};
+        apu_causal_state_t apu{};
+
+        [[nodiscard]] bool operator==(const console_causal_state_t&) const noexcept = default;
+    };
+
     struct console_t
     {
     public:
@@ -46,7 +79,14 @@ namespace clover::core
         void set_startup_entropy_seed(uint32_t seed, uint32_t sequence = 0u) noexcept;
         void clear_startup_entropy_seed() noexcept;
         [[nodiscard]] bool load_cartridge(std::span<const std::byte> rom_data) noexcept;
+        [[nodiscard]] std::span<const std::byte> canonical_media() const noexcept;
+        [[nodiscard]] cartridge_address_mapping_t translate_cartridge_address(
+            uint32_t address
+        ) const noexcept;
+        [[nodiscard]] bool inspect_u8(uint32_t address, uint8_t& value) const noexcept;
+        void set_observation_sink(snes_observation_sink_t* sink) noexcept;
         [[nodiscard]] hardware_step_result_t step_hardware() noexcept;
+        [[nodiscard]] cpu_boundary_step_result_t step_cpu_boundary() noexcept;
         void run_scanline() noexcept;
         void run_frame() noexcept;
         void begin_audio_frame() noexcept;
@@ -117,8 +157,15 @@ namespace clover::core
         [[nodiscard]] const std::array<bus_t::watched_write_trace_t, bus_t::k_watched_write_trace_capacity>& watched_write_trace() const noexcept;
         [[nodiscard]] std::span<const uint8_t> wram_span(uint32_t offset, uint32_t length) const noexcept;
         void set_apu_port_trace_enabled(bool enabled) noexcept;
+        void set_legacy_trace_enabled(bool enabled) noexcept;
         [[nodiscard]] uint16_t apu_port_trace_count() const noexcept;
         [[nodiscard]] const std::array<bus_t::apu_port_trace_t, bus_t::k_apu_port_trace_capacity>& apu_port_trace() const noexcept;
+        [[nodiscard]] console_checkpoint_result_t capture_causal_state(
+            console_causal_state_t& state
+        ) noexcept;
+        [[nodiscard]] console_checkpoint_result_t restore_causal_state(
+            const console_causal_state_t& state
+        ) noexcept;
 
     private:
         void apply_hardware_configuration() noexcept;

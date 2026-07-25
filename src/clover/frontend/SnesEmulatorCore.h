@@ -9,12 +9,29 @@
 #include "clover/frontend/EmulatorCore.h"
 
 #include <array>
+#include <memory>
 
 namespace clover::frontend
 {
+    namespace snes_debug
+    {
+        inline constexpr execution_domain_id_t k_main_cpu_domain{ 1u };
+        inline constexpr execution_domain_id_t k_audio_cpu_domain{ 2u };
+        inline constexpr address_space_id_t k_cpu_bus_space{ 1u };
+        inline constexpr address_space_id_t k_wram_space{ 2u };
+        inline constexpr address_space_id_t k_canonical_media_space{ 3u };
+        inline constexpr address_space_id_t k_apu_ram_space{ 4u };
+    }
+
     [[nodiscard]] uint16_t snes_joypad_state(const gamepad_state_t& state) noexcept;
 
-    struct snes_emulator_core_t final : emulator_core_t, video_plane_control_t
+    struct snes_emulator_core_t final
+        : emulator_core_t
+        , video_plane_control_t
+        , debug_target_t
+        , execution_control_t
+        , observation_control_t
+        , debug_session_control_t
     {
     public:
         [[nodiscard]] system_id_t system() const noexcept override;
@@ -31,9 +48,38 @@ namespace clover::frontend
         [[nodiscard]] bool persistent_memory_dirty() const noexcept override;
         void mark_persistent_memory_clean() noexcept override;
         [[nodiscard]] video_plane_control_t* video_plane_control() noexcept override;
+        [[nodiscard]] debug_target_t* debug_target() noexcept override;
         [[nodiscard]] std::span<const video_plane_descriptor_t> video_planes() const noexcept override;
         [[nodiscard]] bool set_video_plane_enabled(video_plane_id_t id,
                                                    bool enabled) noexcept override;
+        [[nodiscard]] std::span<const execution_domain_descriptor_t>
+            execution_domains() const noexcept override;
+        [[nodiscard]] std::span<const address_space_descriptor_t>
+            address_spaces() const noexcept override;
+        [[nodiscard]] memory_inspection_result_t inspect_memory(
+            debug_address_t address,
+            std::span<std::byte> destination
+        ) const noexcept override;
+        [[nodiscard]] address_translation_result_t translate_address(
+            debug_address_t source,
+            address_space_id_t destination_space
+        ) const noexcept override;
+        [[nodiscard]] execution_control_t* execution_control() noexcept override;
+        [[nodiscard]] execution_step_result_t step_execution_domain(
+            execution_domain_id_t domain
+        ) noexcept override;
+        [[nodiscard]] observation_control_t* observation_control() noexcept override;
+        [[nodiscard]] observation_mask_t available_observations() const noexcept override;
+        [[nodiscard]] observation_mask_t observation_mask() const noexcept override;
+        [[nodiscard]] bool set_observation_mask(observation_mask_t mask) noexcept override;
+        [[nodiscard]] observation_drain_result_t drain_observations(
+            std::span<observation_event_t> destination
+        ) noexcept override;
+        void clear_observations() noexcept override;
+        [[nodiscard]] debug_session_control_t* debug_session_control() noexcept override;
+        [[nodiscard]] debug_session_state_t debug_session_state() const noexcept override;
+        [[nodiscard]] debug_session_transition_result_t pause_debug_session() noexcept override;
+        [[nodiscard]] debug_session_transition_result_t resume_debug_session() noexcept override;
         [[nodiscard]] bool set_hardware_configuration(
             core::snes_hardware_configuration_t configuration
         ) noexcept;
@@ -49,5 +95,59 @@ namespace clover::frontend
             video_plane_descriptor_t{ 3u, "BG4", true },
             video_plane_descriptor_t{ 4u, "Objects", true }
         };
+        std::array<execution_domain_descriptor_t, 2> _execution_domains{
+            execution_domain_descriptor_t{
+                snes_debug::k_main_cpu_domain,
+                "snes.main-cpu",
+                "S-CPU",
+                processor_architecture_t::wdc_65c816
+            },
+            execution_domain_descriptor_t{
+                snes_debug::k_audio_cpu_domain,
+                "snes.audio-cpu",
+                "S-SMP",
+                processor_architecture_t::sony_spc700
+            }
+        };
+        std::array<address_space_descriptor_t, 4> _address_spaces{
+            address_space_descriptor_t{
+                snes_debug::k_cpu_bus_space,
+                "snes.cpu-bus",
+                "CPU Bus",
+                address_space_kind_t::bus,
+                24u,
+                0x01000000u
+            },
+            address_space_descriptor_t{
+                snes_debug::k_wram_space,
+                "snes.wram",
+                "WRAM",
+                address_space_kind_t::memory,
+                17u,
+                core::bus_t::k_wram_size
+            },
+            address_space_descriptor_t{
+                snes_debug::k_canonical_media_space,
+                "media.canonical",
+                "Canonical Media",
+                address_space_kind_t::canonical_media,
+                32u,
+                0u
+            },
+            address_space_descriptor_t{
+                snes_debug::k_apu_ram_space,
+                "snes.apu-ram",
+                "APU RAM",
+                address_space_kind_t::memory,
+                16u,
+                0x00010000u
+            }
+        };
+        static constexpr size_t k_observation_capacity{ 1024u };
+        std::unique_ptr<core::snes_observation_event_t[]> _observation_storage{};
+        core::snes_observation_sink_t _observation_sink{};
+        observation_mask_t _observation_mask{ 0 };
+        bool _machine_running{ false };
+        bool _debug_paused{ false };
     };
 }

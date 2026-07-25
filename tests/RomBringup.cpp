@@ -2126,6 +2126,10 @@ int main(int argc, char** argv)
                      "are mutually exclusive\n");
         return 1;
     }
+    console.set_legacy_trace_enabled(
+        (!run_frame_replay && !step_frame_replay)
+        || parse_bool_env("CLOVER_CAPTURE_LEGACY_TRACES")
+    );
     if (run_frame_replay || step_frame_replay)
     {
         if (!dump_directory.empty())

@@ -63,6 +63,8 @@ namespace clover::core
         uint8_t palette_group{ 0 };
         bool color_math_enabled{ false };
         ppu_pixel_source_t source{ ppu_pixel_source_t::none };
+
+        [[nodiscard]] bool operator==(const ppu_pixel_candidate_t&) const noexcept = default;
     };
 
     struct ppu_background_render_state_t
@@ -95,6 +97,8 @@ namespace clover::core
             uint16_t row_data[4]{ 0, 0, 0, 0 };
             bool hmirror{ false };
             bool vmirror{ false };
+
+            [[nodiscard]] bool operator==(const tile_candidate_t&) const noexcept = default;
         };
 
         mode_t mode{ mode_t::inactive };
@@ -132,6 +136,8 @@ namespace clover::core
             bool size_select{ false };
             uint8_t width{ 0 };
             uint8_t height{ 0 };
+
+            [[nodiscard]] bool operator==(const decoded_object_t&) const noexcept = default;
         };
 
         struct tile_candidate_t
@@ -149,6 +155,8 @@ namespace clover::core
             uint16_t row_data[2]{ 0, 0 };
             uint32_t data{ 0 };
             bool hflip{ false };
+
+            [[nodiscard]] bool operator==(const tile_candidate_t&) const noexcept = default;
         };
 
         uint16_t tiledata_address{ 0 };
@@ -256,6 +264,8 @@ namespace clover::core
             uint16_t scanline{ 0 };
             uint16_t dot{ 0 };
             uint8_t value{ 0 };
+
+            [[nodiscard]] bool operator==(const display_write_t&) const noexcept = default;
         };
 
         bool display_disabled{ false };
@@ -314,6 +324,8 @@ namespace clover::core
     struct ppu_t
     {
     public:
+        struct causal_state_t;
+
         void power_on() noexcept;
         void reset() noexcept;
         void configure_hardware(const video_timing_t& video_timing,
@@ -352,6 +364,8 @@ namespace clover::core
         void clear_entropy_seed() noexcept;
         void set_cgram_write_trace_start_frame(uint64_t frame_index) noexcept;
         void set_oam_write_trace_start_frame(uint64_t frame_index) noexcept;
+        void capture_causal_state(causal_state_t& state) const noexcept;
+        [[nodiscard]] bool restore_causal_state(const causal_state_t& state) noexcept;
 
     private:
         void initialize(bool warm_reset) noexcept;
@@ -438,12 +452,16 @@ namespace clover::core
         {
             bool disabled{ false };
             uint8_t brightness{ 0 };
+
+            [[nodiscard]] bool operator==(const ppu_display_state_t&) const noexcept = default;
         };
 
         struct ppu_display_write_history_t
         {
             uint8_t count{ 0 };
             ppu_render_state_snapshot_t::display_write_t entries[8]{};
+
+            [[nodiscard]] bool operator==(const ppu_display_write_history_t&) const noexcept = default;
         };
 
         bool _external_latch_enabled{ false };
@@ -455,6 +473,8 @@ namespace clover::core
             uint16_t latched_address{ 0 };
             bool priority{ false };
             uint8_t write_latch{ 0 };
+
+            [[nodiscard]] bool operator==(const ppu_oam_state_t&) const noexcept = default;
         };
 
         struct ppu_bg_state_t
@@ -482,6 +502,8 @@ namespace clover::core
             std::array<bool, 4> window_above_enabled{};
             std::array<bool, 4> window_below_enabled{};
             std::array<uint8_t, 4> window_mask{};
+
+            [[nodiscard]] bool operator==(const ppu_bg_state_t&) const noexcept = default;
         };
 
         struct ppu_scroll_latch_state_t
@@ -491,6 +513,8 @@ namespace clover::core
             uint8_t mode7{ 0 };
             uint16_t mode7_hoffset{ 0 };
             uint16_t mode7_voffset{ 0 };
+
+            [[nodiscard]] bool operator==(const ppu_scroll_latch_state_t&) const noexcept = default;
         };
 
         struct ppu_mosaic_state_t
@@ -498,6 +522,8 @@ namespace clover::core
             std::array<bool, 4> enabled{};
             uint8_t size{ 1 };
             uint8_t vcounter{ 0 };
+
+            [[nodiscard]] bool operator==(const ppu_mosaic_state_t&) const noexcept = default;
         };
 
         struct ppu_window_state_t
@@ -514,6 +540,8 @@ namespace clover::core
             uint8_t color_mask{ 0 };
             uint8_t color_mask_above{ 0 };
             uint8_t color_mask_below{ 0 };
+
+            [[nodiscard]] bool operator==(const ppu_window_state_t&) const noexcept = default;
         };
 
         struct ppu_object_layer_state_t
@@ -525,12 +553,16 @@ namespace clover::core
             {
                 bool valid{ false };
                 uint8_t index{ 0 };
+
+                [[nodiscard]] bool operator==(const evaluated_item_t&) const noexcept = default;
             };
 
             struct fetched_tile_t
             {
                 bool valid{ false };
                 tile_candidate_t candidate{};
+
+                [[nodiscard]] bool operator==(const fetched_tile_t&) const noexcept = default;
             };
 
             uint8_t base_size{ 0 };
@@ -563,6 +595,8 @@ namespace clover::core
             uint8_t fetched_tile_count{ 0 };
             std::array<tile_candidate_t, 34> fetched_tiles{};
             std::array<decoded_object_t, 128> objects{};
+
+            [[nodiscard]] bool operator==(const ppu_object_layer_state_t&) const noexcept = default;
         };
 
         struct ppu_background_layer_state_t
@@ -588,6 +622,8 @@ namespace clover::core
             uint16_t cycle_mosaic_hcounter{ 1 };
             ppu_pixel_candidate_t cycle_mosaic_pixel{};
             ppu_pixel_candidate_t cycle_below_pixel{};
+
+            [[nodiscard]] bool operator==(const ppu_background_layer_state_t&) const noexcept = default;
         };
 
         struct ppu_color_math_state_t
@@ -602,6 +638,8 @@ namespace clover::core
             uint8_t fixed_red{ 0 };
             uint8_t fixed_green{ 0 };
             uint8_t fixed_blue{ 0 };
+
+            [[nodiscard]] bool operator==(const ppu_color_math_state_t&) const noexcept = default;
         };
 
         struct ppu_screen_state_t
@@ -620,6 +658,8 @@ namespace clover::core
             uint8_t mode7_repeat{ 0 };
             bool mode7_hflip{ false };
             bool mode7_vflip{ false };
+
+            [[nodiscard]] bool operator==(const ppu_screen_state_t&) const noexcept = default;
         };
 
         struct ppu_internal_layer_compositor_state_t
@@ -628,6 +668,8 @@ namespace clover::core
             ppu_pixel_candidate_t below{};
             std::array<ppu_pixel_candidate_t, framebuffer_t::k_max_width> above_samples{};
             std::array<ppu_pixel_candidate_t, framebuffer_t::k_max_width> below_samples{};
+
+            [[nodiscard]] bool operator==(const ppu_internal_layer_compositor_state_t&) const noexcept = default;
         };
 
         struct ppu_compositor_state_t
@@ -650,6 +692,8 @@ namespace clover::core
             std::array<uint16_t, framebuffer_t::k_max_width> output_color{};
             std::array<ppu_internal_layer_compositor_state_t, 4> backgrounds{};
             ppu_internal_layer_compositor_state_t objects{};
+
+            [[nodiscard]] bool operator==(const ppu_compositor_state_t&) const noexcept = default;
         };
 
         struct ppu_pipeline_state_t
@@ -668,6 +712,8 @@ namespace clover::core
             bool background_begin_completed{ false };
             bool object_fetch_started{ false };
             bool object_fetch_completed{ false };
+
+            [[nodiscard]] bool operator==(const ppu_pipeline_state_t&) const noexcept = default;
         };
 
         struct ppu_vram_state_t
@@ -677,6 +723,8 @@ namespace clover::core
             bool increment_on_high{ false };
             uint16_t address{ 0 };
             uint16_t read_latch{ 0 };
+
+            [[nodiscard]] bool operator==(const ppu_vram_state_t&) const noexcept = default;
         };
 
         struct ppu_cgram_state_t
@@ -686,6 +734,8 @@ namespace clover::core
             bool write_high_pending{ false };
             bool read_high_pending{ false };
             uint8_t write_latch{ 0 };
+
+            [[nodiscard]] bool operator==(const ppu_cgram_state_t&) const noexcept = default;
         };
 
         struct ppu_counter_latch_state_t
@@ -695,6 +745,8 @@ namespace clover::core
             uint16_t vcounter{ 0 };
             bool hcounter_high_read{ false };
             bool vcounter_high_read{ false };
+
+            [[nodiscard]] bool operator==(const ppu_counter_latch_state_t&) const noexcept = default;
         };
 
         framebuffer_t _composed_frame{};
@@ -737,9 +789,11 @@ namespace clover::core
         std::array<ppu_cgram_write_trace_t, ppu_cgram_write_trace_capacity> _cgram_write_trace{};
         std::size_t _cgram_write_trace_count{ 0 };
         uint64_t _cgram_write_trace_start_frame{ 0 };
+        bool _cgram_write_trace_enabled{ false };
         std::array<ppu_oam_write_trace_t, ppu_oam_write_trace_capacity> _oam_write_trace{};
         std::size_t _oam_write_trace_count{ 0 };
         uint64_t _oam_write_trace_start_frame{ 0 };
+        bool _oam_write_trace_enabled{ false };
         ppu_counter_latch_state_t _counter_latch{};
         uint8_t _ppu1_mdr{ 0 };
         uint8_t _ppu2_mdr{ 0 };
@@ -747,4 +801,54 @@ namespace clover::core
         bool _completed_frame_queue_enabled{ false };
         std::deque<framebuffer_t> _completed_frames{};
     };
+
+    struct ppu_t::causal_state_t
+    {
+        static constexpr uint32_t schema_version{ 1 };
+
+        framebuffer_t composed_frame{};
+        framebuffer_t presented_frame{};
+        framebuffer_t presentation_composed_frame{};
+        framebuffer_t presentation_presented_frame{};
+        bool frame_high_geometry{ false };
+        std::array<uint8_t, 0x40> registers{};
+        std::array<uint16_t, 32 * 1024> vram{};
+        std::array<uint8_t, 544> oam{};
+        std::array<uint16_t, 256> cgram{};
+        video_timing_t video_timing{ k_ntsc_video_timing };
+        uint8_t ppu1_version{ 1 };
+        uint8_t ppu2_version{ 3 };
+        raster_counter_t counter{};
+        bool timing_interlace{ false };
+        bool display_interlace{ false };
+        bool display_overscan{ false };
+        uint64_t frame_counter{ 0 };
+        ppu_entropy_mode_t entropy_mode{ ppu_entropy_mode_t::none };
+        bool entropy_seed_override_enabled{ false };
+        uint32_t entropy_seed{ 0 };
+        uint32_t entropy_sequence{ 0 };
+        ppu_display_state_t display{};
+        ppu_display_write_history_t display_write_history{};
+        ppu_oam_state_t oam_state{};
+        ppu_bg_state_t bg_state{};
+        ppu_scroll_latch_state_t scroll_latches{};
+        ppu_mosaic_state_t mosaic_state{};
+        ppu_window_state_t window_state{};
+        std::array<ppu_background_layer_state_t, 4> background_layer_state{};
+        ppu_object_layer_state_t object_layer_state{};
+        ppu_color_math_state_t color_math_state{};
+        ppu_screen_state_t screen_state{};
+        ppu_compositor_state_t compositor_state{};
+        ppu_pipeline_state_t pipeline_state{};
+        ppu_vram_state_t vram_state{};
+        ppu_cgram_state_t cgram_state{};
+        ppu_counter_latch_state_t counter_latch{};
+        bool external_latch_enabled{ false };
+        uint8_t ppu1_mdr{ 0 };
+        uint8_t ppu2_mdr{ 0 };
+
+        [[nodiscard]] bool operator==(const causal_state_t&) const noexcept = default;
+    };
+
+    using ppu_causal_state_t = ppu_t::causal_state_t;
 }

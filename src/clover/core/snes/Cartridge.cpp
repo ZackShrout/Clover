@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <span>
 #include <string_view>
+#include <utility>
 
 namespace clover::core
 {
@@ -42,9 +43,17 @@ namespace clover::core
         if (rom_data.empty())
             return false;
 
-        _rom_data.resize(rom_data.size());
-        for (size_t index{ 0 }; index < rom_data.size(); ++index)
-            _rom_data[index] = static_cast<uint8_t>(rom_data[index]);
+        try
+        {
+            _rom_data.resize(rom_data.size());
+            for (size_t index{ 0 }; index < rom_data.size(); ++index)
+                _rom_data[index] = static_cast<uint8_t>(rom_data[index]);
+        }
+        catch (...)
+        {
+            unload();
+            return false;
+        }
 
         if (!detect_header())
         {
@@ -234,6 +243,121 @@ namespace clover::core
         return _loaded;
     }
 
+    std::span<const std::byte> cartridge_t::canonical_media() const noexcept
+    {
+        return std::as_bytes(std::span<const uint8_t>{ _rom_data });
+    }
+
+    cartridge_address_mapping_t cartridge_t::translate_address(uint32_t address) const noexcept
+    {
+        address &= 0x00ffffffu;
+        if (!_loaded)
+        {
+            if (is_bootstrap_program_rom_address(address))
+            {
+                return {
+                    .kind = cartridge_address_kind_t::bootstrap_program,
+                    .storage_offset = address & 0xffffu
+                };
+            }
+            return {};
+        }
+
+        if ((_hardware == cartridge_hardware_t::cx4 && is_cx4_address(address))
+            || (_hardware == cartridge_hardware_t::dsp1
+                && (is_dsp1_data_address(address) || is_dsp1_status_address(address)))
+            || (_hardware == cartridge_hardware_t::dsp2 && is_dsp2_address(address))
+            || (_hardware == cartridge_hardware_t::dsp3
+                && (is_dsp3_data_address(address) || is_dsp3_status_address(address)))
+            || (_hardware == cartridge_hardware_t::dsp4
+                && (is_dsp4_data_address(address) || is_dsp4_status_address(address)))
+            || (_hardware == cartridge_hardware_t::super_fx
+                && is_super_fx_register_address(address)))
+        {
+            return {
+                .kind = cartridge_address_kind_t::device
+            };
+        }
+
+        if (_hardware == cartridge_hardware_t::super_fx)
+        {
+            if (is_super_fx_ram_address(address) && !_ram_data.empty())
+            {
+                return {
+                    .kind = cartridge_address_kind_t::cartridge_ram,
+                    .storage_offset = super_fx_ram_offset(address)
+                };
+            }
+            if (is_super_fx_rom_address(address))
+            {
+                return {
+                    .kind = cartridge_address_kind_t::program_rom,
+                    .storage_offset = super_fx_rom_offset(address)
+                };
+            }
+            return {};
+        }
+
+        if (!_ram_data.empty())
+        {
+            if (_mapping_mode == cartridge_mapping_mode_t::lorom
+                && is_lorom_ram_address(address))
+            {
+                return {
+                    .kind = cartridge_address_kind_t::cartridge_ram,
+                    .storage_offset = lorom_ram_offset(address, _ram_data.size())
+                };
+            }
+            if (_mapping_mode == cartridge_mapping_mode_t::hirom
+                && is_hirom_ram_address(address))
+            {
+                return {
+                    .kind = cartridge_address_kind_t::cartridge_ram,
+                    .storage_offset = hirom_ram_offset(address, _ram_data.size())
+                };
+            }
+        }
+
+        if (_mapping_mode == cartridge_mapping_mode_t::lorom
+            && is_lorom_address(address))
+        {
+            return {
+                .kind = cartridge_address_kind_t::program_rom,
+                .storage_offset = lorom_rom_offset(address, _rom_data.size())
+            };
+        }
+        if (_mapping_mode == cartridge_mapping_mode_t::hirom
+            && is_hirom_address(address))
+        {
+            return {
+                .kind = cartridge_address_kind_t::program_rom,
+                .storage_offset = hirom_rom_offset(address, _rom_data.size())
+            };
+        }
+        return {};
+    }
+
+    bool cartridge_t::inspect_u8(uint32_t address, uint8_t& value) const noexcept
+    {
+        const cartridge_address_mapping_t mapping{ translate_address(address) };
+        switch (mapping.kind)
+        {
+        case cartridge_address_kind_t::program_rom:
+            value = _rom_data[mapping.storage_offset];
+            return true;
+        case cartridge_address_kind_t::cartridge_ram:
+            value = _ram_data[mapping.storage_offset];
+            return true;
+        case cartridge_address_kind_t::bootstrap_program:
+            value = _bootstrap_program_rom[mapping.storage_offset];
+            return true;
+        case cartridge_address_kind_t::unmapped:
+        case cartridge_address_kind_t::device:
+            return false;
+        }
+        return false;
+    }
+
     cartridge_mapping_mode_t cartridge_t::mapping_mode() const noexcept
     {
         return _mapping_mode;
@@ -308,6 +432,64 @@ namespace clover::core
     {
         return _hardware == cartridge_hardware_t::super_fx
             && _super_fx.irq_pending();
+    }
+
+    cartridge_state_result_t cartridge_t::capture_causal_state(
+        causal_state_t& state
+    ) const noexcept
+    {
+        if (_hardware != cartridge_hardware_t::base)
+            return cartridge_state_result_t::unsupported_hardware;
+
+        try
+        {
+            causal_state_t captured{
+                .bootstrap_program_rom = _bootstrap_program_rom,
+                .ram_data = _ram_data,
+                .canonical_media_size = _rom_data.size(),
+                .header = _header,
+                .mapping_mode = _mapping_mode,
+                .hardware = _hardware,
+                .loaded = _loaded,
+                .ram_persistent = _ram_persistent,
+                .ram_dirty = _ram_dirty,
+            };
+            state = std::move(captured);
+        }
+        catch (...)
+        {
+            return cartridge_state_result_t::allocation_failed;
+        }
+        return cartridge_state_result_t::success;
+    }
+
+    cartridge_state_result_t cartridge_t::restore_causal_state(
+        const causal_state_t& state
+    ) noexcept
+    {
+        if (_hardware != cartridge_hardware_t::base
+            || state.hardware != cartridge_hardware_t::base)
+        {
+            return cartridge_state_result_t::unsupported_hardware;
+        }
+
+        if (state.canonical_media_size != _rom_data.size()
+            || state.header != _header
+            || state.mapping_mode != _mapping_mode
+            || state.loaded != _loaded
+            || state.ram_persistent != _ram_persistent
+            || state.ram_data.size() != _ram_data.size())
+        {
+            return cartridge_state_result_t::topology_mismatch;
+        }
+
+        if (state.ram_dirty && !state.ram_persistent)
+            return cartridge_state_result_t::invalid_state;
+
+        _bootstrap_program_rom = state.bootstrap_program_rom;
+        std::copy(state.ram_data.begin(), state.ram_data.end(), _ram_data.begin());
+        _ram_dirty = state.ram_dirty;
+        return cartridge_state_result_t::success;
     }
 
     bool cartridge_t::is_bootstrap_program_rom_address(uint32_t address) noexcept

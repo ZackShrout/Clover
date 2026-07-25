@@ -1940,16 +1940,13 @@ void DSP4_OP11(int16 A, int16 B, int16 C, int16 D, int16 *M)
 /////////////////////////////////////////////////////////////
 //Processing Code
 /////////////////////////////////////////////////////////////
-uint8 dsp4_byte;
-uint16 dsp4_address;
-
 void InitDSP4()
 {
   memset(&DSP4, 0, sizeof(DSP4));
   DSP4.waiting4command = TRUE;
 }
 
-void DSP4SetByte()
+void DSP4SetByte(uint8 dsp4_byte)
 {
   // clear pending read
   if (DSP4.out_index < DSP4.out_count)
@@ -2148,19 +2145,17 @@ void DSP4SetByte()
   }
 }
 
-void DSP4GetByte()
+uint8 DSP4GetByte()
 {
   if (DSP4.out_count)
   {
-    dsp4_byte = (uint8) DSP4.output[DSP4.out_index&0x1FF];
+    const uint8 dsp4_byte = (uint8) DSP4.output[DSP4.out_index&0x1FF];
     DSP4.out_index++;
     if (DSP4.out_count == DSP4.out_index)
       DSP4.out_count = 0;
+    return dsp4_byte;
   }
-  else
-  {
-    dsp4_byte = 0xff;
-  }
+  return 0xff;
 }
 
 #undef DSP4_vars

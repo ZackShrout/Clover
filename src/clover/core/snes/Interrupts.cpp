@@ -191,4 +191,34 @@ namespace clover::core
     {
         _state.irq_lock = false;
     }
+
+    interrupt_controller_causal_state_t
+        interrupt_controller_t::capture_causal_state() const noexcept
+    {
+        return {
+            .state = _state,
+            .cpu_irq_line = _cpu_irq_line,
+            .cartridge_irq_line = _cartridge_irq_line,
+            .nmi_transition_clock = _nmi_transition_clock,
+            .irq_transition_clock = _irq_transition_clock,
+        };
+    }
+
+    bool interrupt_controller_t::restore_causal_state(
+        const interrupt_controller_causal_state_t& state
+    ) noexcept
+    {
+        if (state.state.irq_line
+            != (state.cpu_irq_line || state.cartridge_irq_line))
+        {
+            return false;
+        }
+
+        _state = state.state;
+        _cpu_irq_line = state.cpu_irq_line;
+        _cartridge_irq_line = state.cartridge_irq_line;
+        _nmi_transition_clock = state.nmi_transition_clock;
+        _irq_transition_clock = state.irq_transition_clock;
+        return true;
+    }
 }

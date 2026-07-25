@@ -20,7 +20,24 @@ public:
 	// Sets destination for output samples. If out is NULL or out_size is 0,
 	// doesn't generate any.
 	typedef short sample_t;
+	enum { extra_size = 16 };
+	struct output_state_t
+	{
+		int primary_sample_count;
+		int emergency_sample_count;
+		bool primary_output_enabled;
+		bool overflowed;
+		sample_t emergency_samples [extra_size];
+
+		bool operator==( output_state_t const& ) const = default;
+	};
 	void set_output( sample_t* out, int out_size );
+	// Captures/restores output continuity without preserving caller pointers.
+	// The caller owns the primary samples and supplies the same-capacity
+	// destination when restoring.
+	bool capture_output_state( output_state_t& out, int primary_capacity ) const;
+	bool restore_output_state( output_state_t const& state,
+	                          sample_t* out, int out_size );
 
 	// Number of samples written to output since it was last set, always
 	// a multiple of 2. Undefined if more samples were generated than
@@ -65,6 +82,7 @@ public:
 	enum { state_size = 640 }; // maximum space needed when saving
 	typedef dsp_copy_func_t copy_func_t;
 	void copy_state( unsigned char** io, copy_func_t );
+	bool state_is_valid() const;
 
 	// Returns non-zero if new key-on events occurred since last call
 	bool check_kon();
@@ -94,7 +112,6 @@ public:
 	};
 
 public:
-	enum { extra_size = 16 };
 	sample_t* extra()               { return m.extra; }
 	sample_t const* out_pos() const { return m.out; }
 	void disable_surround( bool ) { } // not supported

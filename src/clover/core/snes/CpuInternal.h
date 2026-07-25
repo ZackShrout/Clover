@@ -979,7 +979,9 @@ namespace clover::core
             _interrupts.set_irq_lock();
         }
 
-        void retire_instruction() noexcept
+        void retire_instruction(
+            cpu_step_boundary_t boundary = cpu_step_boundary_t::instruction_retired
+        ) noexcept
         {
             _interrupts.observe_opcode_edge(
                 _last_cycle_start_clock,
@@ -987,6 +989,12 @@ namespace clover::core
             );
             _observed_opcode_edge = true;
             _retired_instruction = true;
+            _boundary = boundary;
+        }
+
+        void set_boundary(cpu_step_boundary_t boundary) noexcept
+        {
+            _boundary = boundary;
         }
 
         void retire_internal_operation() noexcept
@@ -1000,6 +1008,7 @@ namespace clover::core
             observe_opcode_edge(state);
             idle_irq(state);
             _retired_instruction = true;
+            _boundary = cpu_step_boundary_t::instruction_retired;
         }
 
         [[nodiscard]] bool observed_opcode_edge() const noexcept
@@ -1017,6 +1026,7 @@ namespace clover::core
             return {
                 .master_clocks = _master_clocks,
                 .ppu = _ppu_step_result,
+                .boundary = _boundary,
                 .stepped_hardware = true
             };
         }
@@ -1035,6 +1045,7 @@ namespace clover::core
         master_clock_delta_t _master_clocks{ 0 };
         bool _observed_opcode_edge{ false };
         bool _retired_instruction{ false };
+        cpu_step_boundary_t _boundary{ cpu_step_boundary_t::none };
         master_clock_count_t _last_cycle_start_clock{ 0 };
         ppu_step_result_t _ppu_step_result{};
     };
@@ -1043,7 +1054,9 @@ namespace clover::core
                                         cpu_step_executor_t& executor,
                                         uint16_t vector,
                                         bool fetch_signature_byte,
-                                        bool clear_emulation_break_flag) noexcept
+                                        bool clear_emulation_break_flag,
+                                        cpu_step_boundary_t boundary =
+                                            cpu_step_boundary_t::instruction_retired) noexcept
     {
         if (fetch_signature_byte)
             static_cast<void>(executor.fetch_operand_u8(state));
@@ -1066,7 +1079,7 @@ namespace clover::core
         const uint8_t vector_high{ executor.read_u8(static_cast<uint16_t>(vector + 1u)) };
         state.pb = 0;
         state.pc = static_cast<uint16_t>(vector_low | (vector_high << 8u));
-        executor.retire_instruction();
+        executor.retire_instruction(boundary);
     }
 
     inline void return_from_interrupt(cpu_state_t& state,

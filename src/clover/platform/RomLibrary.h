@@ -68,10 +68,6 @@ namespace clover::platform
         [[nodiscard]] const std::filesystem::path& data_root() const noexcept;
 
     private:
-        [[nodiscard]] static std::span<const std::byte> canonical_media(
-            frontend::system_id_t system,
-            std::span<const std::byte> media
-        ) noexcept;
         [[nodiscard]] static const char* system_name(frontend::system_id_t system) noexcept;
         [[nodiscard]] bool write_atomic(const std::filesystem::path& path,
                                         std::span<const std::byte> data,

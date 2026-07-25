@@ -94,6 +94,93 @@ void SPC_DSP::set_output( sample_t* out, int size )
 	m.out_end   = out + size;
 }
 
+bool SPC_DSP::capture_output_state( output_state_t& state, int primary_capacity ) const
+{
+	if ( primary_capacity < 0 || (primary_capacity & 1) )
+		return false;
+
+	output_state_t captured = {};
+	captured.primary_output_enabled = m.out_begin != m.extra;
+	captured.overflowed = captured.primary_output_enabled && output_overflowed();
+	if ( !captured.primary_output_enabled )
+	{
+		if ( m.out < m.extra || m.out >= &m.extra [extra_size] )
+			return false;
+		captured.emergency_sample_count = (int) (m.out - m.extra);
+	}
+	else if ( captured.overflowed )
+	{
+		if ( m.out < m.extra || m.out >= &m.extra [extra_size] )
+			return false;
+		captured.primary_sample_count = primary_capacity;
+		captured.emergency_sample_count = (int) (m.out - m.extra);
+	}
+	else
+	{
+		int const count = sample_count();
+		if ( primary_capacity == 0 || count < 0 ||
+		     count >= primary_capacity || (count & 1) )
+			return false;
+		captured.primary_sample_count = count;
+	}
+
+	memcpy( captured.emergency_samples, m.extra, sizeof captured.emergency_samples );
+	state = captured;
+	return true;
+}
+
+bool SPC_DSP::restore_output_state( output_state_t const& state,
+                                    sample_t* out, int size )
+{
+	if ( !out || size < 0 || (size & 1) ||
+	     state.primary_sample_count < 0 ||
+	     state.primary_sample_count > size ||
+	     (state.primary_sample_count & 1) ||
+	     state.emergency_sample_count < 0 ||
+	     state.emergency_sample_count >= extra_size ||
+	     (state.emergency_sample_count & 1) )
+	{
+		return false;
+	}
+
+	if ( !state.primary_output_enabled )
+	{
+		if ( state.overflowed || state.primary_sample_count != 0 )
+			return false;
+	}
+	else if ( state.overflowed )
+	{
+		if ( size == 0 || state.primary_sample_count != size )
+			return false;
+	}
+	else if ( size == 0 || state.primary_sample_count >= size ||
+	          state.emergency_sample_count != 0 )
+	{
+		return false;
+	}
+
+	memcpy( m.extra, state.emergency_samples, sizeof m.extra );
+	if ( !state.primary_output_enabled )
+	{
+		m.out_begin = m.extra;
+		m.out = m.extra + state.emergency_sample_count;
+		m.out_end = &m.extra [extra_size];
+	}
+	else if ( state.overflowed )
+	{
+		m.out_begin = out;
+		m.out = m.extra + state.emergency_sample_count;
+		m.out_end = &m.extra [extra_size];
+	}
+	else
+	{
+		m.out_begin = out;
+		m.out = out + state.primary_sample_count;
+		m.out_end = out + size;
+	}
+	return true;
+}
+
 // Volume registers and efb are signed! Easy to forget int8_t cast.
 // Prefixes are to avoid accidental use of locals with same names.
 
@@ -1027,5 +1114,31 @@ void SPC_DSP::copy_state( unsigned char** io, copy_func_t copy )
 	SPC_COPY(  uint8_t, m.t_looped );
 	
 	copier.extra();
+}
+
+bool SPC_DSP::state_is_valid() const
+{
+	if ( m.phase < 0 || m.phase > 31 ||
+	     m.echo_length < 0 || m.echo_length > 0x7800 ||
+	     (m.echo_length & 0x07FF) != 0 ||
+	     m.echo_offset < 0 || (m.echo_offset & 3) != 0 ||
+	     (m.echo_length == 0 ? m.echo_offset != 0 : m.echo_offset >= m.echo_length) ||
+	     m.t_pitch < 0 || m.t_pitch > 0x3FFF )
+	{
+		return false;
+	}
+
+	for ( int index = 0; index < voice_count; ++index )
+	{
+		voice_t const& voice = m.voices [index];
+		if ( voice.buf_pos < 0 || voice.buf_pos > 8 || (voice.buf_pos & 3) != 0 ||
+		     voice.brr_offset < 1 || voice.brr_offset > 7 ||
+		     (voice.brr_offset & 1) == 0 ||
+		     voice.env_mode < env_release || voice.env_mode > env_sustain )
+		{
+			return false;
+		}
+	}
+	return true;
 }
 #endif

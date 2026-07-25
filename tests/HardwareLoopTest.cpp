@@ -1048,15 +1048,144 @@ namespace
             return fail("apu_frame_audio_output");
         }
 
+        clover::core::apu_t audio_continuity_apu{};
+        audio_continuity_apu.power_on();
+        audio_continuity_apu.begin_audio_frame();
+        audio_continuity_apu.step(50'000u);
+        clover::core::apu_audio_output_state_t audio_output_state{};
+        if (!audio_continuity_apu.capture_audio_output_state(audio_output_state))
+            return fail("apu_audio_output_capture");
+        const size_t captured_audio_size{
+            static_cast<size_t>(audio_output_state.dsp_output.primary_sample_count)
+        };
+        if (captured_audio_size == 0u
+            || audio_output_state.dsp_output.overflowed)
+        {
+            return fail("apu_audio_output_capture_count");
+        }
+
+        audio_continuity_apu.begin_audio_frame();
+        if (!audio_continuity_apu.audio_samples().empty()
+            || !audio_continuity_apu.restore_audio_output_state(audio_output_state))
+        {
+            return fail("apu_audio_output_restore");
+        }
+        const std::span<const int16_t> restored_audio{
+            audio_continuity_apu.audio_samples()
+        };
+        if (restored_audio.size() != captured_audio_size
+            || !std::equal(
+                restored_audio.begin(),
+                restored_audio.end(),
+                audio_output_state.samples.begin()))
+        {
+            return fail("apu_audio_output_restore_samples");
+        }
+        auto invalid_audio_output_state{ audio_output_state };
+        invalid_audio_output_state.dsp_output.primary_sample_count =
+            static_cast<int>(invalid_audio_output_state.samples.size() + 2u);
+        if (audio_continuity_apu.restore_audio_output_state(
+                invalid_audio_output_state)
+            || audio_continuity_apu.audio_samples().size() != captured_audio_size)
+        {
+            return fail("apu_audio_output_reject_invalid");
+        }
+
         static std::array<uint8_t, 64 * 1024> dsp_test_ram{};
-        std::array<int16_t, 2> deliberately_short_output{};
+        std::array<int16_t, 16> continuity_output{};
         SPC_DSP dsp_output_contract{};
         dsp_output_contract.init(dsp_test_ram.data(), dsp_test_ram.data());
+        dsp_output_contract.run(32);
+        SPC_DSP::output_state_t dsp_disabled_output_state{};
+        if (!dsp_output_contract.capture_output_state(
+                dsp_disabled_output_state,
+                static_cast<int>(continuity_output.size()))
+            || dsp_disabled_output_state.primary_output_enabled)
+        {
+            return fail("dsp_disabled_output_capture");
+        }
+        dsp_output_contract.set_output(
+            continuity_output.data(),
+            static_cast<int>(continuity_output.size()));
+        if (!dsp_output_contract.restore_output_state(
+                dsp_disabled_output_state,
+                continuity_output.data(),
+                static_cast<int>(continuity_output.size())))
+        {
+            return fail("dsp_disabled_output_restore");
+        }
+        SPC_DSP::output_state_t dsp_disabled_output_restored{};
+        if (!dsp_output_contract.capture_output_state(
+                dsp_disabled_output_restored,
+                static_cast<int>(continuity_output.size()))
+            || dsp_disabled_output_restored.primary_output_enabled
+            || dsp_disabled_output_restored.emergency_sample_count
+                != dsp_disabled_output_state.emergency_sample_count)
+        {
+            return fail("dsp_disabled_output_restore_state");
+        }
+        dsp_output_contract.set_output(
+            continuity_output.data(),
+            static_cast<int>(continuity_output.size()));
+        dsp_output_contract.run(64);
+
+        SPC_DSP::output_state_t dsp_continuity_state{};
+        if (!dsp_output_contract.capture_output_state(
+                dsp_continuity_state,
+                static_cast<int>(continuity_output.size()))
+            || !dsp_continuity_state.primary_output_enabled
+            || dsp_continuity_state.overflowed
+            || dsp_continuity_state.primary_sample_count != 4)
+        {
+            return fail("dsp_output_continuity_capture");
+        }
+        const auto continuity_prefix{ continuity_output };
+        dsp_output_contract.set_output(
+            continuity_output.data(),
+            static_cast<int>(continuity_output.size()));
+        continuity_output = continuity_prefix;
+        if (!dsp_output_contract.restore_output_state(
+                dsp_continuity_state,
+                continuity_output.data(),
+                static_cast<int>(continuity_output.size())))
+        {
+            return fail("dsp_output_continuity_restore");
+        }
+        dsp_output_contract.run(32);
+        if (dsp_output_contract.sample_count()
+            != dsp_continuity_state.primary_sample_count + 2)
+        {
+            return fail("dsp_output_continuity_resume");
+        }
+
+        std::array<int16_t, 2> deliberately_short_output{};
         dsp_output_contract.set_output(deliberately_short_output.data(),
                                        static_cast<int>(deliberately_short_output.size()));
         dsp_output_contract.run(64);
         if (!dsp_output_contract.output_overflowed())
             return fail("dsp_output_overflow_detection");
+        SPC_DSP::output_state_t dsp_overflow_state{};
+        if (!dsp_output_contract.capture_output_state(
+                dsp_overflow_state,
+                static_cast<int>(deliberately_short_output.size()))
+            || !dsp_overflow_state.primary_output_enabled
+            || !dsp_overflow_state.overflowed
+            || dsp_overflow_state.primary_sample_count
+                != static_cast<int>(deliberately_short_output.size()))
+        {
+            return fail("dsp_output_overflow_capture");
+        }
+        dsp_output_contract.set_output(
+            deliberately_short_output.data(),
+            static_cast<int>(deliberately_short_output.size()));
+        if (!dsp_output_contract.restore_output_state(
+                dsp_overflow_state,
+                deliberately_short_output.data(),
+                static_cast<int>(deliberately_short_output.size()))
+            || !dsp_output_contract.output_overflowed())
+        {
+            return fail("dsp_output_overflow_restore");
+        }
 
         return 0;
     }
@@ -1819,6 +1948,59 @@ int main()
 
             if (const int result = []() -> int
                 {
+                    const auto write_device_word = [](clover::core::dsp1_t& dsp,
+                                                      int16_t value)
+                    {
+                        const auto raw{ static_cast<uint16_t>(value) };
+                        dsp.write_data(static_cast<uint8_t>(raw));
+                        dsp.write_data(static_cast<uint8_t>(raw >> 8u));
+                    };
+                    const auto read_device_word = [](clover::core::dsp1_t& dsp)
+                    {
+                        const uint16_t low{ dsp.read_data() };
+                        return static_cast<int16_t>(
+                            low | static_cast<uint16_t>(dsp.read_data()) << 8u
+                        );
+                    };
+                    const auto configure_projection = [&](clover::core::dsp1_t& dsp,
+                                                          const std::array<int16_t, 7>& parameters)
+                    {
+                        dsp.write_data(0x02u);
+                        for (const int16_t parameter : parameters)
+                            write_device_word(dsp, parameter);
+                        for (uint8_t result{}; result < 4u; ++result)
+                            static_cast<void>(read_device_word(dsp));
+                    };
+                    const auto project_point = [&](clover::core::dsp1_t& dsp)
+                    {
+                        dsp.write_data(0x06u);
+                        write_device_word(dsp, 202);
+                        write_device_word(dsp, 67);
+                        write_device_word(dsp, 744);
+                        return std::array<int16_t, 3>{
+                            read_device_word(dsp),
+                            read_device_word(dsp),
+                            read_device_word(dsp),
+                        };
+                    };
+
+                    clover::core::dsp1_t isolated_dsp1{};
+                    clover::core::dsp1_t interfering_dsp1{};
+                    isolated_dsp1.power_on();
+                    configure_projection(isolated_dsp1, {
+                        0, 0, 0, 1000, 256, 514, 0
+                    });
+                    const auto isolated_projection{ project_point(isolated_dsp1) };
+
+                    // Power-on and projection commands on a second device must
+                    // not replace the first device's camera state.
+                    interfering_dsp1.power_on();
+                    configure_projection(interfering_dsp1, {
+                        200, -100, 300, 700, 128, -1200, 900
+                    });
+                    if (project_point(isolated_dsp1) != isolated_projection)
+                        return fail("dsp1_instance_projection_isolation");
+
                     std::array<std::byte, 0x10000> dsp1_image{};
                     dsp1_image[0xffd5u] = std::byte{ 0x21 }; // HiROM DSP port layout
                     dsp1_image[0xffd6u] = std::byte{ 0x03 }; // DSP-family cartridge

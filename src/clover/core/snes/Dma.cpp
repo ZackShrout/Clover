@@ -124,6 +124,114 @@ namespace clover::core
         return _activity;
     }
 
+    dma_causal_state_t dma_t::capture_causal_state() const noexcept
+    {
+        return {
+            .channels = _channels,
+            .pending_general_dma_mask = _pending_general_dma_mask,
+            .pending_hdma_setup_mask = _pending_hdma_setup_mask,
+            .pending_hdma_transfer_mask = _pending_hdma_transfer_mask,
+            .activity = _activity,
+            .active_channel_index = _active_channel_index,
+            .substep = _substep,
+            .alignment_pending = _alignment_pending,
+            .general_dma_batch_started = _general_dma_batch_started,
+            .cpu_bus_cycle_clocks = _cpu_bus_cycle_clocks,
+            .dma_counter = _dma_counter,
+            .general_dma_units_remaining = _general_dma_units_remaining,
+            .general_dma_transfer_index = _general_dma_transfer_index,
+            .hdma_transfer_index = _hdma_transfer_index,
+            .hdma_reload_pending = _hdma_reload_pending,
+            .general_dma_suspended = _general_dma_suspended,
+            .suspended_general_dma_channel_index =
+                _suspended_general_dma_channel_index,
+            .suspended_general_dma_substep = _suspended_general_dma_substep,
+            .suspended_general_dma_alignment_pending =
+                _suspended_general_dma_alignment_pending,
+            .suspended_general_dma_batch_started =
+                _suspended_general_dma_batch_started,
+            .suspended_general_dma_units_remaining =
+                _suspended_general_dma_units_remaining,
+            .suspended_general_dma_transfer_index =
+                _suspended_general_dma_transfer_index,
+        };
+    }
+
+    bool dma_t::restore_causal_state(const dma_causal_state_t& state) noexcept
+    {
+        const auto valid_activity = [](dma_activity_t activity) noexcept
+        {
+            switch (activity)
+            {
+            case dma_activity_t::idle:
+            case dma_activity_t::general_dma:
+            case dma_activity_t::hdma_setup:
+            case dma_activity_t::hdma_transfer:
+                return true;
+            }
+            return false;
+        };
+        const auto valid_substep = [](dma_substep_t substep) noexcept
+        {
+            switch (substep)
+            {
+            case dma_substep_t::idle:
+            case dma_substep_t::alignment:
+            case dma_substep_t::general_batch_setup:
+            case dma_substep_t::hdma_batch_setup:
+            case dma_substep_t::general_setup:
+            case dma_substep_t::general_transfer:
+            case dma_substep_t::finish_sync:
+            case dma_substep_t::hdma_reload_line_counter:
+            case dma_substep_t::hdma_reload_indirect_low:
+            case dma_substep_t::hdma_reload_indirect_high:
+            case dma_substep_t::hdma_transfer:
+            case dma_substep_t::hdma_advance:
+                return true;
+            }
+            return false;
+        };
+
+        if (!valid_activity(state.activity)
+            || !valid_substep(state.substep)
+            || !valid_substep(state.suspended_general_dma_substep)
+            || state.active_channel_index >= state.channels.size()
+            || state.suspended_general_dma_channel_index >= state.channels.size()
+            || state.cpu_bus_cycle_clocks == 0)
+        {
+            return false;
+        }
+
+        _channels = state.channels;
+        _pending_general_dma_mask = state.pending_general_dma_mask;
+        _pending_hdma_setup_mask = state.pending_hdma_setup_mask;
+        _pending_hdma_transfer_mask = state.pending_hdma_transfer_mask;
+        _activity = state.activity;
+        _active_channel_index = state.active_channel_index;
+        _substep = state.substep;
+        _alignment_pending = state.alignment_pending;
+        _general_dma_batch_started = state.general_dma_batch_started;
+        _cpu_bus_cycle_clocks = state.cpu_bus_cycle_clocks;
+        _dma_counter = state.dma_counter;
+        _general_dma_units_remaining = state.general_dma_units_remaining;
+        _general_dma_transfer_index = state.general_dma_transfer_index;
+        _hdma_transfer_index = state.hdma_transfer_index;
+        _hdma_reload_pending = state.hdma_reload_pending;
+        _general_dma_suspended = state.general_dma_suspended;
+        _suspended_general_dma_channel_index =
+            state.suspended_general_dma_channel_index;
+        _suspended_general_dma_substep = state.suspended_general_dma_substep;
+        _suspended_general_dma_alignment_pending =
+            state.suspended_general_dma_alignment_pending;
+        _suspended_general_dma_batch_started =
+            state.suspended_general_dma_batch_started;
+        _suspended_general_dma_units_remaining =
+            state.suspended_general_dma_units_remaining;
+        _suspended_general_dma_transfer_index =
+            state.suspended_general_dma_transfer_index;
+        return true;
+    }
+
     bool dma_t::hdma_channel_active(const dma_channel_t& channel) noexcept
     {
         return channel.hdma_enabled && !channel.hdma_completed;

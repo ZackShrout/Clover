@@ -31,6 +31,8 @@ namespace clover::core
         uint8_t db{ 0 };
         uint8_t pb{ 0 };
         bool emulation_mode{ true };
+
+        [[nodiscard]] bool operator==(const cpu_state_t&) const noexcept = default;
     };
 
     struct cpu_io_t
@@ -67,6 +69,44 @@ namespace clover::core
         uint16_t htime{ 0x01ffu };
         uint16_t vtime{ 0x01ffu };
         uint32_t wram_address{ 0 };
+
+        [[nodiscard]] bool operator==(const cpu_io_t&) const noexcept = default;
+    };
+
+    struct cpu_causal_state_t
+    {
+        static constexpr uint32_t schema_version{ 1 };
+
+        cpu_state_t registers{};
+        cpu_io_t io{};
+        master_clock_count_t master_clock{ 0 };
+        master_clock_count_t dma_counter{ 0 };
+        raster_counter_t counter{};
+        master_clock_delta_t interrupt_poll_phase{ 2 };
+        timing_snapshot_t last_timing{};
+        timing_snapshot_t last_irq_timing{};
+        timing_snapshot_t last_irq_gate_timing{};
+        bool irq_condition_valid{ false };
+        bool nmi_poll_valid{ false };
+        bool dma_active{ false };
+        bool reset_pending{ false };
+        bool waiting{ false };
+        bool wait_wake_idle_pending{ false };
+        bool stopped{ false };
+        uint16_t visible_scanlines{ k_ntsc_video_timing.visible_scanlines };
+        video_timing_t video_timing{ k_ntsc_video_timing };
+        uint8_t cpu_version{ 2 };
+        bool interlace{ false };
+        uint16_t dram_refresh_dot{ dram_refresh_dot_v2(0) };
+        bool dram_refresh_pending{ true };
+        uint16_t hdma_setup_dot{ hdma_setup_dot_v2(0) };
+        bool hdma_setup_pending{ true };
+        uint8_t multiply_counter{ 0 };
+        uint8_t divide_counter{ 0 };
+        uint32_t math_shift{ 0 };
+        std::array<uint16_t, 2> controller_state{};
+
+        [[nodiscard]] bool operator==(const cpu_causal_state_t&) const noexcept = default;
     };
 
     struct cpu_t
@@ -104,6 +144,8 @@ namespace clover::core
         void set_controller_state(uint8_t port, uint16_t state) noexcept;
         void set_interrupt_poll_phase_for_testing(master_clock_delta_t phase) noexcept;
         [[nodiscard]] master_clock_delta_t interrupt_poll_phase_for_testing() const noexcept;
+        [[nodiscard]] cpu_causal_state_t capture_causal_state() const noexcept;
+        [[nodiscard]] bool restore_causal_state(const cpu_causal_state_t& state) noexcept;
 
     private:
         [[nodiscard]] bool irq_condition(const timing_snapshot_t& irq_timing,

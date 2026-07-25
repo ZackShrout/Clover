@@ -857,6 +857,7 @@ namespace clover::core
 
     void ppu_t::set_cgram_write_trace_start_frame(uint64_t frame_index) noexcept
     {
+        _cgram_write_trace_enabled = true;
         _cgram_write_trace_start_frame = frame_index;
         _cgram_write_trace = {};
         _cgram_write_trace_count = 0;
@@ -864,6 +865,7 @@ namespace clover::core
 
     void ppu_t::set_oam_write_trace_start_frame(uint64_t frame_index) noexcept
     {
+        _oam_write_trace_enabled = true;
         _oam_write_trace_start_frame = frame_index;
         _oam_write_trace = {};
         _oam_write_trace_count = 0;
@@ -937,7 +939,8 @@ namespace clover::core
         const uint16_t decoded_address{ static_cast<uint16_t>(address % _oam.size()) };
         _oam[decoded_address] = value;
 
-        if (_frame_counter >= _oam_write_trace_start_frame)
+        if (_oam_write_trace_enabled
+            && _frame_counter >= _oam_write_trace_start_frame)
         {
             const ppu_oam_write_trace_t entry{
                 .frame_index = _frame_counter,
@@ -3409,6 +3412,12 @@ namespace clover::core
 
         _cgram[address] = static_cast<uint16_t>(value & 0x7fffu);
 
+        if (!_cgram_write_trace_enabled
+            || _frame_counter < _cgram_write_trace_start_frame)
+        {
+            return;
+        }
+
         const ppu_cgram_write_trace_t entry{
             .frame_index = _frame_counter,
             .timing = timing(),
@@ -3418,9 +3427,6 @@ namespace clover::core
             .value = static_cast<uint16_t>(value & 0x7fffu),
             .redirected = redirected
         };
-        if (_frame_counter < _cgram_write_trace_start_frame)
-            return;
-
         if (_cgram_write_trace_count < _cgram_write_trace.size())
         {
             _cgram_write_trace[_cgram_write_trace_count++] = entry;
@@ -4467,6 +4473,354 @@ namespace clover::core
             snapshot.objects.below_samples[sample_index] = _compositor_state.objects.below_samples[sample_index];
         }
         return snapshot;
+    }
+
+    void ppu_t::capture_causal_state(causal_state_t& state) const noexcept
+    {
+        state.composed_frame = _composed_frame;
+        state.presented_frame = _presented_frame;
+        state.presentation_composed_frame = _presentation_composed_frame;
+        state.presentation_presented_frame = _presentation_presented_frame;
+        state.frame_high_geometry = _frame_high_geometry;
+        state.registers = _registers;
+        state.vram = _vram;
+        state.oam = _oam;
+        state.cgram = _cgram;
+        state.video_timing = _video_timing;
+        state.ppu1_version = _ppu1_version;
+        state.ppu2_version = _ppu2_version;
+        state.counter = _counter;
+        state.timing_interlace = _timing_interlace;
+        state.display_interlace = _display_interlace;
+        state.display_overscan = _display_overscan;
+        state.frame_counter = _frame_counter;
+        state.entropy_mode = _entropy_mode;
+        state.entropy_seed_override_enabled = _entropy_seed_override_enabled;
+        state.entropy_seed = _entropy_seed;
+        state.entropy_sequence = _entropy_sequence;
+        state.display = _display;
+        state.display_write_history = _display_write_history;
+        state.oam_state = _oam_state;
+        state.bg_state = _bg_state;
+        state.scroll_latches = _scroll_latches;
+        state.mosaic_state = _mosaic_state;
+        state.window_state = _window_state;
+        state.background_layer_state = _background_layer_state;
+        state.object_layer_state = _object_layer_state;
+        state.color_math_state = _color_math_state;
+        state.screen_state = _screen_state;
+        state.compositor_state = _compositor_state;
+        state.pipeline_state = _pipeline_state;
+        state.vram_state = _vram_state;
+        state.cgram_state = _cgram_state;
+        state.counter_latch = _counter_latch;
+        state.external_latch_enabled = _external_latch_enabled;
+        state.ppu1_mdr = _ppu1_mdr;
+        state.ppu2_mdr = _ppu2_mdr;
+    }
+
+    bool ppu_t::restore_causal_state(const causal_state_t& state) noexcept
+    {
+        const bool valid_entropy_mode{
+            state.entropy_mode == ppu_entropy_mode_t::none
+            || state.entropy_mode == ppu_entropy_mode_t::low
+            || state.entropy_mode == ppu_entropy_mode_t::high
+        };
+        const bool valid_video_timing{
+            state.video_timing == k_ntsc_video_timing
+            || state.video_timing == k_pal_video_timing
+        };
+        if (!valid_entropy_mode
+            || !valid_video_timing
+            || state.ppu1_version > 0x0fu
+            || state.ppu2_version > 0x0fu
+            || state.display.brightness > 0x0fu
+            || state.display_write_history.count
+                > std::size(state.display_write_history.entries)
+            || state.oam_state.base_address > 0x03ffu
+            || state.oam_state.address > 0x03ffu
+            || state.oam_state.latched_address > 0x03ffu
+            || state.bg_state.mode > 7u
+            || state.mosaic_state.size == 0u
+            || state.mosaic_state.size > 16u
+            || state.mosaic_state.vcounter > 17u
+            || state.object_layer_state.base_size > 7u
+            || state.object_layer_state.nameselect > 3u
+            || state.object_layer_state.evaluation_count
+                > std::size(state.object_layer_state.evaluation_indices)
+            || state.object_layer_state.evaluation_progress > 128u
+            || state.object_layer_state.tile_count
+                > std::size(state.object_layer_state.tiles)
+            || state.object_layer_state.render_tile_count
+                > std::size(state.object_layer_state.render_tiles)
+            || state.object_layer_state.fetched_tile_count
+                > std::size(state.object_layer_state.fetched_tiles)
+            || state.object_layer_state.pipeline_x > framebuffer_t::k_max_width
+            || state.screen_state.mode7_repeat > 3u
+            || state.color_math_state.fixed_red > 31u
+            || state.color_math_state.fixed_green > 31u
+            || state.color_math_state.fixed_blue > 31u
+            || state.pipeline_state.next_pixel_x > framebuffer_t::k_max_width
+            || state.pipeline_state.next_object_fetch_index > 34u
+            || state.vram_state.mapping > 3u
+            || (state.vram_state.increment_size != 1u
+                && state.vram_state.increment_size != 32u
+                && state.vram_state.increment_size != 128u))
+        {
+            return false;
+        }
+
+        const uint16_t field_scanlines{
+            state.video_timing.field_scanlines(
+                state.counter.odd_field,
+                state.timing_interlace)
+        };
+        if (state.counter.scanline >= field_scanlines
+            || state.counter.dot >= state.video_timing.scanline_clocks(
+                state.counter.scanline,
+                state.counter.odd_field,
+                state.timing_interlace))
+        {
+            return false;
+        }
+
+        if (state.pipeline_state.initialized_scanline
+                != ppu_pipeline_state_t::k_uninitialized_scanline
+            && state.pipeline_state.initialized_scanline >= field_scanlines)
+        {
+            return false;
+        }
+        if (state.pipeline_state.next_object_evaluate_dot
+                > state.video_timing.master_clocks_per_scanline
+            || state.pipeline_state.next_pixel_dot
+                > state.video_timing.master_clocks_per_scanline
+            || state.pipeline_state.next_object_fetch_dot
+                > state.video_timing.master_clocks_per_scanline
+            || state.pipeline_state.next_background_fetch_dot
+                > state.video_timing.master_clocks_per_scanline
+            || state.counter_latch.hcounter > 340u
+            || state.counter_latch.vcounter >= field_scanlines)
+        {
+            return false;
+        }
+        for (size_t index{ 0 }; index < state.display_write_history.count; ++index)
+        {
+            const auto& entry{ state.display_write_history.entries[index] };
+            if (entry.scanline >= field_scanlines
+                || entry.dot >= state.video_timing.master_clocks_per_scanline)
+            {
+                return false;
+            }
+        }
+
+        const auto valid_framebuffer = [](const framebuffer_t& frame) noexcept
+        {
+            return frame.width() > 0u
+                && frame.width() <= framebuffer_t::k_max_width
+                && frame.height() > 0u
+                && frame.height() <= framebuffer_t::k_max_height
+                && frame.pitch_pixels() >= frame.width()
+                && frame.pitch_pixels() <= framebuffer_t::k_max_width
+                && frame.pixel_count() <= framebuffer_t::k_max_pixel_count;
+        };
+        if (!valid_framebuffer(state.composed_frame)
+            || !valid_framebuffer(state.presented_frame)
+            || !valid_framebuffer(state.presentation_composed_frame)
+            || !valid_framebuffer(state.presentation_presented_frame))
+        {
+            return false;
+        }
+
+        const auto valid_pixel_candidate = [](const ppu_pixel_candidate_t& candidate) noexcept
+        {
+            return candidate.source >= ppu_pixel_source_t::none
+                && candidate.source <= ppu_pixel_source_t::backdrop;
+        };
+        const auto valid_background_tile = [](const auto& tile) noexcept
+        {
+            return tile.row_pair_count <= std::size(tile.row_data);
+        };
+        const auto valid_object_tile = [](const auto& tile) noexcept
+        {
+            return tile.object_index < 128u
+                && tile.row_pair_count <= std::size(tile.row_data);
+        };
+        const auto valid_compositor_layer =
+            [&valid_pixel_candidate](const ppu_internal_layer_compositor_state_t& layer) noexcept
+        {
+            if (!valid_pixel_candidate(layer.above)
+                || !valid_pixel_candidate(layer.below))
+            {
+                return false;
+            }
+            for (size_t index{ 0 }; index < layer.above_samples.size(); ++index)
+            {
+                if (!valid_pixel_candidate(layer.above_samples[index])
+                    || !valid_pixel_candidate(layer.below_samples[index]))
+                {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        for (const auto mode : state.bg_state.render_mode)
+        {
+            if (mode > ppu_background_render_state_t::mode_t::inactive)
+                return false;
+        }
+        for (size_t index{ 0 }; index < state.bg_state.screen_size.size(); ++index)
+        {
+            if (state.bg_state.screen_size[index] > 3u
+                || state.bg_state.window_mask[index] > 3u)
+            {
+                return false;
+            }
+        }
+        if (state.window_state.object_mask > 3u
+            || state.window_state.color_mask > 3u
+            || state.window_state.color_mask_above > 3u
+            || state.window_state.color_mask_below > 3u)
+        {
+            return false;
+        }
+        for (const auto& background : state.background_layer_state)
+        {
+            if (background.tile_count > background.tiles.size()
+                || background.rendering_index > background.render_tiles.size()
+                || background.cycle_rendering_index > background.cycle_tiles.size()
+                || background.pixel_counter > 8u
+                || background.cycle_pixel_counter > 8u
+                || !valid_pixel_candidate(background.mosaic_pixel)
+                || !valid_pixel_candidate(background.cycle_mosaic_pixel)
+                || !valid_pixel_candidate(background.cycle_below_pixel))
+            {
+                return false;
+            }
+            for (const auto& sample : background.samples)
+            {
+                if (!valid_pixel_candidate(sample))
+                    return false;
+            }
+            for (size_t index{ 0 }; index < background.tiles.size(); ++index)
+            {
+                if (!valid_background_tile(background.tiles[index])
+                    || !valid_background_tile(background.render_tiles[index])
+                    || !valid_background_tile(background.cycle_tiles[index]))
+                {
+                    return false;
+                }
+            }
+        }
+
+        if (state.object_layer_state.first_sprite >= 128u
+            || state.object_layer_state.evaluation_first_sprite >= 128u)
+        {
+            return false;
+        }
+        for (size_t index{ 0 }; index < state.object_layer_state.evaluation_count; ++index)
+        {
+            if (state.object_layer_state.evaluation_indices[index] >= 128u)
+                return false;
+        }
+        for (const auto& item_buffer : state.object_layer_state.items)
+        {
+            for (const auto& item : item_buffer)
+            {
+                if (item.valid && item.index >= 128u)
+                    return false;
+            }
+        }
+        for (const auto& tile_buffer : state.object_layer_state.tile_buffers)
+        {
+            for (const auto& tile : tile_buffer)
+            {
+                if (tile.valid && !valid_object_tile(tile.candidate))
+                    return false;
+            }
+        }
+        for (size_t index{ 0 }; index < state.object_layer_state.tiles.size(); ++index)
+        {
+            if (!valid_object_tile(state.object_layer_state.tiles[index])
+                || !valid_object_tile(state.object_layer_state.render_tiles[index])
+                || !valid_object_tile(state.object_layer_state.fetched_tiles[index]))
+            {
+                return false;
+            }
+        }
+
+        if (!valid_pixel_candidate(state.compositor_state.above)
+            || !valid_pixel_candidate(state.compositor_state.below)
+            || !valid_compositor_layer(state.compositor_state.objects))
+        {
+            return false;
+        }
+        for (size_t index{ 0 }; index < state.compositor_state.above_samples.size(); ++index)
+        {
+            if (!valid_pixel_candidate(state.compositor_state.above_samples[index])
+                || !valid_pixel_candidate(state.compositor_state.below_samples[index]))
+            {
+                return false;
+            }
+        }
+        for (const auto& background : state.compositor_state.backgrounds)
+        {
+            if (!valid_compositor_layer(background))
+                return false;
+        }
+        for (const uint16_t color : state.cgram)
+        {
+            if (color > 0x7fffu)
+                return false;
+        }
+
+        _composed_frame = state.composed_frame;
+        _presented_frame = state.presented_frame;
+        _presentation_composed_frame = state.presentation_composed_frame;
+        _presentation_presented_frame = state.presentation_presented_frame;
+        _frame_high_geometry = state.frame_high_geometry;
+        _registers = state.registers;
+        _vram = state.vram;
+        _oam = state.oam;
+        _cgram = state.cgram;
+        _video_timing = state.video_timing;
+        _ppu1_version = state.ppu1_version;
+        _ppu2_version = state.ppu2_version;
+        _counter = state.counter;
+        _timing_interlace = state.timing_interlace;
+        _display_interlace = state.display_interlace;
+        _display_overscan = state.display_overscan;
+        _frame_counter = state.frame_counter;
+        _entropy_mode = state.entropy_mode;
+        _entropy_seed_override_enabled = state.entropy_seed_override_enabled;
+        _entropy_seed = state.entropy_seed;
+        _entropy_sequence = state.entropy_sequence;
+        _display = state.display;
+        _display_write_history = state.display_write_history;
+        _oam_state = state.oam_state;
+        _bg_state = state.bg_state;
+        _scroll_latches = state.scroll_latches;
+        _mosaic_state = state.mosaic_state;
+        _window_state = state.window_state;
+        _background_layer_state = state.background_layer_state;
+        _object_layer_state = state.object_layer_state;
+        _color_math_state = state.color_math_state;
+        _screen_state = state.screen_state;
+        _compositor_state = state.compositor_state;
+        _pipeline_state = state.pipeline_state;
+        _vram_state = state.vram_state;
+        _cgram_state = state.cgram_state;
+        _counter_latch = state.counter_latch;
+        _external_latch_enabled = state.external_latch_enabled;
+        _ppu1_mdr = state.ppu1_mdr;
+        _ppu2_mdr = state.ppu2_mdr;
+
+        _cgram_write_trace = {};
+        _cgram_write_trace_count = 0;
+        _oam_write_trace = {};
+        _oam_write_trace_count = 0;
+        _completed_frames.clear();
+        return true;
     }
 
     std::size_t ppu_t::cgram_write_trace_count() const noexcept

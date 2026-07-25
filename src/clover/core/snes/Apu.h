@@ -17,6 +17,7 @@ namespace clover::core
 {
     struct bus_t;
     inline constexpr std::size_t k_apu_trace_capacity{ 1024 };
+    inline constexpr std::size_t k_apu_audio_buffer_sample_capacity{ 4096u };
 
     struct apu_state_t
     {
@@ -88,11 +89,33 @@ namespace clover::core
         uint16_t io_trace_count{ 0 };
     };
 
+    struct apu_audio_output_state_t
+    {
+        std::array<int16_t, k_apu_audio_buffer_sample_capacity> samples{};
+        SPC_DSP::output_state_t dsp_output{};
+
+        [[nodiscard]] bool operator==(const apu_audio_output_state_t&) const noexcept = default;
+    };
+
+    enum class apu_causal_state_result_t : uint8_t
+    {
+        success,
+        active_cpu_io_window,
+        uninitialized_dsp,
+        invalid_state,
+        invalid_dsp_state,
+        invalid_audio_output
+    };
+
     struct apu_t
     {
     public:
+        struct causal_state_t;
+
         static constexpr uint32_t k_audio_sample_rate_hz{ 32'040u };
-        static constexpr size_t k_audio_buffer_sample_capacity{ 4096u };
+        static constexpr size_t k_audio_buffer_sample_capacity{
+            k_apu_audio_buffer_sample_capacity
+        };
 
         void power_on() noexcept;
         void reset() noexcept;
@@ -109,6 +132,12 @@ namespace clover::core
         void begin_audio_frame() noexcept;
         [[nodiscard]] std::span<const int16_t> audio_samples() const noexcept;
         [[nodiscard]] bool audio_output_overflowed() const noexcept;
+        [[nodiscard]] bool capture_audio_output_state(
+            apu_audio_output_state_t& state
+        ) const noexcept;
+        [[nodiscard]] bool restore_audio_output_state(
+            const apu_audio_output_state_t& state
+        ) noexcept;
         [[nodiscard]] apu_state_t state() const noexcept;
         [[nodiscard]] uint8_t peek_ram(uint16_t address) const noexcept;
         [[nodiscard]] uint8_t peek_dsp_register(uint8_t address) const noexcept;
@@ -117,6 +146,14 @@ namespace clover::core
         [[nodiscard]] const std::array<apu_state_t::trace_entry_t, k_apu_trace_capacity>& instruction_trace() const noexcept;
         [[nodiscard]] uint16_t io_trace_count() const noexcept;
         [[nodiscard]] const std::array<apu_state_t::io_trace_entry_t, k_apu_trace_capacity>& io_trace() const noexcept;
+        void set_legacy_trace_enabled(bool enabled) noexcept;
+        [[nodiscard]] bool cpu_io_window_active() const noexcept;
+        [[nodiscard]] apu_causal_state_result_t capture_causal_state(
+            causal_state_t& state
+        ) noexcept;
+        [[nodiscard]] apu_causal_state_result_t restore_causal_state(
+            const causal_state_t& state
+        ) noexcept;
 
     private:
         void initialize(bool warm_reset) noexcept;
@@ -131,6 +168,8 @@ namespace clover::core
             bool line{ false };
             bool enable{ false };
             uint8_t target{ 0 };
+
+            [[nodiscard]] bool operator==(const timer_t&) const noexcept = default;
         };
 
         struct io_state_t
@@ -144,6 +183,8 @@ namespace clover::core
             uint8_t dsp_address{ 0 };
             uint8_t aux4{ 0 };
             uint8_t aux5{ 0 };
+
+            [[nodiscard]] bool operator==(const io_state_t&) const noexcept = default;
         };
 
         struct spc700_registers_t
@@ -154,6 +195,8 @@ namespace clover::core
             uint8_t y{ 0 };
             uint8_t sp{ 0 };
             uint8_t psw{ 0 };
+
+            [[nodiscard]] bool operator==(const spc700_registers_t&) const noexcept = default;
         };
 
         static constexpr uint8_t k_psw_carry{ 0x01u };
@@ -300,6 +343,8 @@ namespace clover::core
             uint16_t address{ 0 };
             uint8_t value{ 0 };
             bool awaiting_cpu_sync{ false };
+
+            [[nodiscard]] bool operator==(const access_journal_entry_t&) const noexcept = default;
         };
         struct instruction_context_t
         {
@@ -312,6 +357,8 @@ namespace clover::core
             std::array<access_journal_entry_t, k_access_capacity> accesses{};
             uint8_t access_count{ 0 };
             uint8_t replay_cursor{ 0 };
+
+            [[nodiscard]] bool operator==(const instruction_context_t&) const noexcept = default;
         };
         [[nodiscard]] access_journal_entry_t* replay_access(access_kind_t kind,
                                                             uint16_t address) noexcept;
@@ -356,6 +403,42 @@ namespace clover::core
         uint16_t _instruction_trace_count{ 0 };
         std::array<apu_state_t::io_trace_entry_t, k_apu_trace_capacity> _io_trace{};
         uint16_t _io_trace_count{ 0 };
+        bool _legacy_trace_enabled{ false };
         std::array<uint8_t, 64 * 1024> _ram{};
     };
+
+    struct apu_t::causal_state_t
+    {
+        static constexpr uint32_t schema_version{ 1 };
+
+        master_clock_count_t master_clock{ 0 };
+        int64_t smp_clock_credit{ 0 };
+        int64_t master_clock_frequency_hz{ 21'477'272 };
+        spc700_registers_t registers{};
+        bool ipl_rom_enabled{ true };
+        bool halted{ false };
+        bool waiting{ false };
+        bool stopped{ false };
+        uint16_t current_opcode_pc{ 0 };
+        uint8_t last_opcode{ 0 };
+        io_state_t io{};
+        std::array<uint8_t, SPC_DSP::state_size> dsp_state{};
+        master_clock_delta_t dsp_clock_remainder{ 0 };
+        bool dsp_initialized{ false };
+        apu_audio_output_state_t audio_output{};
+        timer_t<128> timer0{};
+        timer_t<128> timer1{};
+        timer_t<16> timer2{};
+        std::array<uint8_t, 4> apu_to_cpu_ports{};
+        std::array<uint8_t, 4> cpu_to_apu_ports{};
+        instruction_context_t instruction_context{};
+        bool smp_suspended_for_cpu{ false };
+        master_clock_delta_t cpu_io_window_target_clocks{ 0 };
+        int64_t cpu_io_window_consumed_master_numerator{ 0 };
+        std::array<uint8_t, 64 * 1024> ram{};
+
+        [[nodiscard]] bool operator==(const causal_state_t&) const noexcept = default;
+    };
+
+    using apu_causal_state_t = apu_t::causal_state_t;
 }

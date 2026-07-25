@@ -57,6 +57,38 @@ namespace clover::core
         uint8_t unused{ 0xff };
         uint8_t transfer_units{ 0 };
         uint16_t transfer_size{ 0xffffu };
+
+        [[nodiscard]] bool operator==(const dma_channel_t&) const noexcept = default;
+    };
+
+    struct dma_causal_state_t
+    {
+        static constexpr uint32_t schema_version{ 1 };
+
+        std::array<dma_channel_t, 8> channels{};
+        uint8_t pending_general_dma_mask{ 0 };
+        uint8_t pending_hdma_setup_mask{ 0 };
+        uint8_t pending_hdma_transfer_mask{ 0 };
+        dma_activity_t activity{ dma_activity_t::idle };
+        uint8_t active_channel_index{ 0 };
+        dma_substep_t substep{ dma_substep_t::idle };
+        bool alignment_pending{ false };
+        bool general_dma_batch_started{ false };
+        master_clock_delta_t cpu_bus_cycle_clocks{ 6 };
+        master_clock_delta_t dma_counter{ 0 };
+        uint32_t general_dma_units_remaining{ 0 };
+        uint8_t general_dma_transfer_index{ 0 };
+        uint8_t hdma_transfer_index{ 0 };
+        bool hdma_reload_pending{ false };
+        bool general_dma_suspended{ false };
+        uint8_t suspended_general_dma_channel_index{ 0 };
+        dma_substep_t suspended_general_dma_substep{ dma_substep_t::idle };
+        bool suspended_general_dma_alignment_pending{ false };
+        bool suspended_general_dma_batch_started{ false };
+        uint32_t suspended_general_dma_units_remaining{ 0 };
+        uint8_t suspended_general_dma_transfer_index{ 0 };
+
+        [[nodiscard]] bool operator==(const dma_causal_state_t&) const noexcept = default;
     };
 
     struct dma_t
@@ -75,6 +107,8 @@ namespace clover::core
         [[nodiscard]] bool general_dma_pending() const noexcept;
         [[nodiscard]] bool hdma_pending() const noexcept;
         [[nodiscard]] dma_activity_t activity() const noexcept;
+        [[nodiscard]] dma_causal_state_t capture_causal_state() const noexcept;
+        [[nodiscard]] bool restore_causal_state(const dma_causal_state_t& state) noexcept;
 
     private:
         [[nodiscard]] static uint8_t first_channel_index(uint8_t channel_mask) noexcept;

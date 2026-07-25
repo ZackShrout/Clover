@@ -386,6 +386,26 @@ namespace clover::core
         return _open_bus;
     }
 
+    bool bus_t::inspect_u8(uint32_t address, uint8_t& value) const noexcept
+    {
+        address &= 0x00ffffffu;
+        if (is_wram_address(address))
+        {
+            value = _wram[wram_offset(address)];
+            return true;
+        }
+
+        if (is_ppu_register_address(address)
+            || is_apu_register_address(address)
+            || is_dma_register_address(address)
+            || is_cpu_register_address(address))
+        {
+            return false;
+        }
+
+        return _cartridge != nullptr && _cartridge->inspect_u8(address, value);
+    }
+
     uint8_t bus_t::read_cpu_u8(uint32_t address, master_clock_delta_t apply_after_clocks) noexcept
     {
         if (_apu != nullptr && is_apu_register_address(address))
@@ -648,6 +668,17 @@ namespace clover::core
         _apu_port_trace_count = 0;
     }
 
+    void bus_t::set_legacy_trace_enabled(bool enabled) noexcept
+    {
+        _legacy_trace_enabled = enabled;
+        if (!enabled)
+        {
+            _ppu_register_write_trace_count = 0;
+            _system_register_write_trace_count = 0;
+            _watched_write_trace_count = 0;
+        }
+    }
+
     void bus_t::trace_cpu_apu_port_access(uint32_t address,
                                           uint8_t value,
                                           bool is_write,
@@ -697,10 +728,90 @@ namespace clover::core
         return _apu_port_trace;
     }
 
+    bus_t::causal_state_t bus_t::capture_causal_state() const noexcept
+    {
+        causal_state_t state{
+            .wram = _wram,
+            .entropy_mode = _entropy_mode,
+            .entropy_seed_override_enabled = _entropy_seed_override_enabled,
+            .entropy_seed = _entropy_seed,
+            .entropy_sequence = _entropy_sequence,
+            .open_bus = _open_bus,
+            .pending_cpu_write_count = _pending_cpu_write_count,
+            .pending_ppu_write_count = _pending_ppu_write_count,
+            .pending_apu_write_count = _pending_apu_write_count,
+            .apu_progressed_cpu_clocks = _apu_progressed_cpu_clocks,
+        };
+        std::copy_n(
+            _pending_cpu_writes.begin(),
+            _pending_cpu_write_count,
+            state.pending_cpu_writes.begin());
+        std::copy_n(
+            _pending_ppu_writes.begin(),
+            _pending_ppu_write_count,
+            state.pending_ppu_writes.begin());
+        std::copy_n(
+            _pending_apu_writes.begin(),
+            _pending_apu_write_count,
+            state.pending_apu_writes.begin());
+        return state;
+    }
+
+    bool bus_t::restore_causal_state(const causal_state_t& state) noexcept
+    {
+        const bool valid_entropy_mode{
+            state.entropy_mode == startup_entropy_mode_t::none
+            || state.entropy_mode == startup_entropy_mode_t::low
+            || state.entropy_mode == startup_entropy_mode_t::high
+        };
+        if (!valid_entropy_mode
+            || state.pending_cpu_write_count > state.pending_cpu_writes.size()
+            || state.pending_ppu_write_count > state.pending_ppu_writes.size()
+            || state.pending_apu_write_count > state.pending_apu_writes.size())
+        {
+            return false;
+        }
+
+        _wram = state.wram;
+        _entropy_mode = state.entropy_mode;
+        _entropy_seed_override_enabled = state.entropy_seed_override_enabled;
+        _entropy_seed = state.entropy_seed;
+        _entropy_sequence = state.entropy_sequence;
+        _open_bus = state.open_bus;
+        _pending_cpu_writes = {};
+        std::copy_n(
+            state.pending_cpu_writes.begin(),
+            state.pending_cpu_write_count,
+            _pending_cpu_writes.begin());
+        _pending_cpu_write_count = state.pending_cpu_write_count;
+        _pending_ppu_writes = {};
+        std::copy_n(
+            state.pending_ppu_writes.begin(),
+            state.pending_ppu_write_count,
+            _pending_ppu_writes.begin());
+        _pending_ppu_write_count = state.pending_ppu_write_count;
+        _pending_apu_writes = {};
+        std::copy_n(
+            state.pending_apu_writes.begin(),
+            state.pending_apu_write_count,
+            _pending_apu_writes.begin());
+        _pending_apu_write_count = state.pending_apu_write_count;
+        _apu_progressed_cpu_clocks = state.apu_progressed_cpu_clocks;
+
+        // Trace contents belong to the abandoned observation timeline. Keep
+        // trace policy, but expose no entries from before the restore.
+        _ppu_register_write_trace_count = 0;
+        _system_register_write_trace_count = 0;
+        _watched_write_trace_count = 0;
+        _apu_port_trace_count = 0;
+        return true;
+    }
+
     void bus_t::dispatch_write_u8(uint32_t address, uint8_t value) noexcept
     {
         static const wram_write_live_trace_filter_t live_wram_trace_filter{ load_wram_write_live_trace_filter() };
-        if (_cpu != nullptr
+        if (_legacy_trace_enabled
+            && _cpu != nullptr
             && is_wram_address(address)
             && should_trace_wram_write(wram_offset(address)))
         {
@@ -765,7 +876,9 @@ namespace clover::core
         {
             const uint16_t register_address{ static_cast<uint16_t>(address & 0xffffu) };
             const uint64_t frame_index{ _ppu != nullptr ? _ppu->frame_index() : 0u };
-            if (_cpu != nullptr && should_trace_ppu_register_write(register_address))
+            if (_legacy_trace_enabled
+                && _cpu != nullptr
+                && should_trace_ppu_register_write(register_address))
             {
                 const ppu_register_write_trace_t entry{
                     .frame_index = frame_index,
@@ -823,7 +936,8 @@ namespace clover::core
             return;
         }
 
-        if (_cpu != nullptr
+        if (_legacy_trace_enabled
+            && _cpu != nullptr
             && (is_cpu_register_address(address) || is_dma_register_address(address))
             && should_trace_system_register_write(address))
         {

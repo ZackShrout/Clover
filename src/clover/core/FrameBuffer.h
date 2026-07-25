@@ -28,6 +28,7 @@ namespace clover::core
         [[nodiscard]] size_t pixel_count() const noexcept;
         void set_geometry(uint32_t width, uint32_t height, uint32_t pitch_pixels = 0u) noexcept;
         void clear(uint32_t rgba8 = 0xff000000u) noexcept;
+        [[nodiscard]] bool operator==(const framebuffer_t&) const noexcept = default;
 
     private:
         std::array<uint32_t, k_max_pixel_count> _pixels{};

@@ -41,6 +41,30 @@ namespace clover::core
         super_fx
     };
 
+    enum class cartridge_address_kind_t : uint8_t
+    {
+        unmapped,
+        program_rom,
+        cartridge_ram,
+        device,
+        bootstrap_program
+    };
+
+    enum class cartridge_state_result_t : uint8_t
+    {
+        success,
+        unsupported_hardware,
+        topology_mismatch,
+        invalid_state,
+        allocation_failed
+    };
+
+    struct cartridge_address_mapping_t
+    {
+        cartridge_address_kind_t kind{ cartridge_address_kind_t::unmapped };
+        uint32_t storage_offset{ 0 };
+    };
+
     struct cartridge_header_t
     {
         cartridge_mapping_mode_t mapping_mode{ cartridge_mapping_mode_t::none };
@@ -49,6 +73,8 @@ namespace clover::core
         uint8_t raw_ram_size{ 0 };
         uint8_t destination_code{ 0 };
         uint16_t reset_vector{ 0 };
+
+        [[nodiscard]] bool operator==(const cartridge_header_t&) const noexcept = default;
     };
 
     struct cartridge_t
@@ -56,11 +82,31 @@ namespace clover::core
     public:
         static constexpr uint32_t k_bootstrap_program_rom_size{ 64 * 1024u };
 
+        struct causal_state_t
+        {
+            static constexpr uint32_t schema_version{ 1 };
+
+            std::array<uint8_t, k_bootstrap_program_rom_size> bootstrap_program_rom{};
+            std::vector<uint8_t> ram_data{};
+            size_t canonical_media_size{ 0 };
+            cartridge_header_t header{};
+            cartridge_mapping_mode_t mapping_mode{ cartridge_mapping_mode_t::bootstrap };
+            cartridge_hardware_t hardware{ cartridge_hardware_t::base };
+            bool loaded{ false };
+            bool ram_persistent{ false };
+            bool ram_dirty{ false };
+
+            [[nodiscard]] bool operator==(const causal_state_t&) const noexcept = default;
+        };
+
         void reset() noexcept;
         [[nodiscard]] bool load(std::span<const std::byte> rom_data) noexcept;
         [[nodiscard]] uint8_t read_u8(uint32_t address, uint8_t open_bus = 0) const noexcept;
         void write_u8(uint32_t address, uint8_t value) noexcept;
         [[nodiscard]] bool loaded() const noexcept;
+        [[nodiscard]] std::span<const std::byte> canonical_media() const noexcept;
+        [[nodiscard]] cartridge_address_mapping_t translate_address(uint32_t address) const noexcept;
+        [[nodiscard]] bool inspect_u8(uint32_t address, uint8_t& value) const noexcept;
         [[nodiscard]] cartridge_mapping_mode_t mapping_mode() const noexcept;
         [[nodiscard]] const cartridge_header_t& header() const noexcept;
         [[nodiscard]] cartridge_hardware_t hardware() const noexcept;
@@ -72,6 +118,12 @@ namespace clover::core
         void mark_persistent_memory_clean() noexcept;
         void step_coprocessor(master_clock_delta_t clocks) noexcept;
         [[nodiscard]] bool coprocessor_irq_pending() const noexcept;
+        [[nodiscard]] cartridge_state_result_t capture_causal_state(
+            causal_state_t& state
+        ) const noexcept;
+        [[nodiscard]] cartridge_state_result_t restore_causal_state(
+            const causal_state_t& state
+        ) noexcept;
 
     private:
         struct header_candidate_t
@@ -133,4 +185,6 @@ namespace clover::core
         bool _ram_persistent{ false };
         bool _ram_dirty{ false };
     };
+
+    using cartridge_causal_state_t = cartridge_t::causal_state_t;
 }

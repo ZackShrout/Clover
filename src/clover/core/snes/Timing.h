@@ -30,6 +30,8 @@ namespace clover::core
         uint16_t hblank_start_dot{ 1096 };
         uint16_t hdma_trigger_dot{ 1104 };
 
+        [[nodiscard]] constexpr bool operator==(const video_timing_t&) const noexcept = default;
+
         [[nodiscard]] constexpr master_clock_delta_t scanline_clocks(uint16_t scanline,
                                                                      bool odd_field,
                                                                      bool interlace) const noexcept
@@ -106,6 +108,8 @@ namespace clover::core
     {
         uint16_t scanline{ 0 };
         uint16_t dot{ 0 };
+
+        [[nodiscard]] constexpr bool operator==(const raster_position_t&) const noexcept = default;
     };
 
     struct timing_snapshot_t
@@ -114,6 +118,8 @@ namespace clover::core
         raster_position_t raster{};
         bool in_hblank{ false };
         bool in_vblank{ false };
+
+        [[nodiscard]] constexpr bool operator==(const timing_snapshot_t&) const noexcept = default;
     };
 
     struct raster_counter_t
@@ -122,6 +128,8 @@ namespace clover::core
         uint16_t scanline{ 0 };
         uint16_t dot{ 0 };
         bool odd_field{ false };
+
+        [[nodiscard]] constexpr bool operator==(const raster_counter_t&) const noexcept = default;
 
         void reset() noexcept
         {
@@ -246,10 +254,21 @@ namespace clover::core
         bool irq_requested{ false };
     };
 
+    enum class cpu_step_boundary_t : uint8_t
+    {
+        none,
+        instruction_retired,
+        reset_completed,
+        interrupt_entered,
+        waiting,
+        stopped
+    };
+
     struct cpu_step_result_t
     {
         master_clock_delta_t master_clocks{ 0 };
         ppu_step_result_t ppu{};
+        cpu_step_boundary_t boundary{ cpu_step_boundary_t::none };
         bool stepped_hardware{ false };
     };
 
@@ -264,5 +283,19 @@ namespace clover::core
         hardware_slot_owner_t slot_owner{ hardware_slot_owner_t::cpu };
         master_clock_delta_t elapsed_master_clocks{ 0 };
         ppu_step_result_t ppu{};
+        cpu_step_boundary_t cpu_boundary{ cpu_step_boundary_t::none };
+    };
+
+    enum class cpu_boundary_step_status_t : uint8_t
+    {
+        complete,
+        not_powered
+    };
+
+    struct cpu_boundary_step_result_t
+    {
+        cpu_boundary_step_status_t status{ cpu_boundary_step_status_t::not_powered };
+        cpu_step_boundary_t boundary{ cpu_step_boundary_t::none };
+        master_clock_count_t elapsed_master_clocks{ 0 };
     };
 }

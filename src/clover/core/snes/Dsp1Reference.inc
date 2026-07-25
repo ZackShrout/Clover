@@ -182,40 +182,6 @@ const short DSP1_SinTable[256] = {
 	 -0x30fb, -0x2e11, -0x2b1f, -0x2826, -0x2528, -0x2223, -0x1f19, -0x1c0b,
 	 -0x18f8, -0x15e2, -0x12c8, -0x0fab, -0x0c8b, -0x096a, -0x0647, -0x0324};
 
-short Nx;
-short Ny;
-short Nz;
-
-short CentreX;
-short CentreY;
-short CentreZ;
-
-short Gx;
-short Gy;
-short Gz;
-
-short VOffset;
-short VPlane_C;
-short VPlane_E;
-
-short Les_C;
-short Les_E;
-short Les_G;
-
-// Azimuth and Zenith angles
-short SinAas;
-short CosAas;
-short SinAzs;
-short CosAzs;
-
-// Clipped Zenith angle
-short SinAzsB;
-short CosAzsB;
-short SecAzs_C1;
-short SecAzs_E1;
-short SecAzs_C2;
-short SecAzs_E2;
-
 short DSP1_Sin(short Angle)
 {
 	if (Angle < 0) {
@@ -531,8 +497,12 @@ const short MaxAzs_Exp[16] = {
 	0x38ce, 0x38d0, 0x38d4, 0x38d7, 0x38da, 0x38dd, 0x38e0, 0x38e4
 };
 
-void DSP1_Parameter(short Fx, short Fy, short Fz, short Lfe, short Les, short Aas, short Azs, short &Vof, short &Vva, short &Cx, short &Cy)
+void DSP1_Parameter(dsp1_projection_state_t& state, short Fx, short Fy, short Fz, short Lfe, short Les, short Aas, short Azs, short &Vof, short &Vva, short &Cx, short &Cy)
 {
+	auto& [Nx, Ny, Nz, CentreX, CentreY, CentreZ, Gx, Gy, Gz,
+	       VOffset, VPlane_C, VPlane_E, Les_C, Les_E, Les_G,
+	       SinAas, CosAas, SinAzs, CosAzs, SinAzsB, CosAzsB,
+	       SecAzs_C1, SecAzs_E1, SecAzs_C2, SecAzs_E2] = state;
 	short Sec_C, C, E;
 
 	// Copy Zenith angle for clipping
@@ -627,8 +597,12 @@ void DSP1_Parameter(short Fx, short Fy, short Fz, short Lfe, short Les, short Aa
 	DSP1_Inverse(CosAzsB, 0, SecAzs_C2, SecAzs_E2);
 }
 
-void DSP1_Raster(short Vs, short &An, short &Bn, short &Cn, short &Dn)
+void DSP1_Raster(const dsp1_projection_state_t& state, short Vs, short &An, short &Bn, short &Cn, short &Dn)
 {
+	const auto& [Nx, Ny, Nz, CentreX, CentreY, CentreZ, Gx, Gy, Gz,
+	             VOffset, VPlane_C, VPlane_E, Les_C, Les_E, Les_G,
+	             SinAas, CosAas, SinAzs, CosAzs, SinAzsB, CosAzsB,
+	             SecAzs_C1, SecAzs_E1, SecAzs_C2, SecAzs_E2] = state;
 	short C, E, C1, E1;
 
 	DSP1_Inverse((Vs * SinAzs >> 15) + VOffset, 7, C, E);
@@ -652,8 +626,12 @@ void DSP1_Raster(short Vs, short &An, short &Bn, short &Cn, short &Dn)
 	Dn = C * CosAas >> 15;
 }
 
-void DSP1_Target(short H, short V, short &X, short &Y)
+void DSP1_Target(const dsp1_projection_state_t& state, short H, short V, short &X, short &Y)
 {
+	const auto& [Nx, Ny, Nz, CentreX, CentreY, CentreZ, Gx, Gy, Gz,
+	             VOffset, VPlane_C, VPlane_E, Les_C, Les_E, Les_G,
+	             SinAas, CosAas, SinAzs, CosAzs, SinAzsB, CosAzsB,
+	             SecAzs_C1, SecAzs_E1, SecAzs_C2, SecAzs_E2] = state;
 	short C, E, C1, E1;
 
 	DSP1_Inverse((V * SinAzs >> 15) + VOffset, 8, C, E);

@@ -20,6 +20,23 @@ namespace clover::core
         bool nmi_pending{ false };
         bool irq_pending{ false };
         bool irq_lock{ false };
+
+        [[nodiscard]] bool operator==(const interrupt_state_t&) const noexcept = default;
+    };
+
+    struct interrupt_controller_causal_state_t
+    {
+        static constexpr uint32_t schema_version{ 1 };
+
+        interrupt_state_t state{};
+        bool cpu_irq_line{ false };
+        bool cartridge_irq_line{ false };
+        master_clock_count_t nmi_transition_clock{ 0 };
+        master_clock_count_t irq_transition_clock{ 0 };
+
+        [[nodiscard]] bool operator==(
+            const interrupt_controller_causal_state_t&
+        ) const noexcept = default;
     };
 
     struct interrupt_controller_t
@@ -46,6 +63,10 @@ namespace clover::core
         [[nodiscard]] bool irq_lock() const noexcept;
         void set_irq_lock() noexcept;
         void clear_irq_lock() noexcept;
+        [[nodiscard]] interrupt_controller_causal_state_t capture_causal_state() const noexcept;
+        [[nodiscard]] bool restore_causal_state(
+            const interrupt_controller_causal_state_t& state
+        ) noexcept;
 
     private:
         void refresh_irq_line() noexcept;

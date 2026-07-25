@@ -70,6 +70,9 @@ target_link_libraries(clover_snes_checkpoint PUBLIC clover_core clover_media_ide
 add_executable(clover ${CLOVER_APP_SOURCES})
 target_include_directories(clover PRIVATE src)
 target_link_libraries(clover PRIVATE clover_core)
+if(WIN32 AND CLOVER_PACKAGE_DISTRIBUTION)
+    set_target_properties(clover PROPERTIES OUTPUT_NAME clover-cli)
+endif()
 
 if(CLOVER_BUILD_SDL_FRONTEND)
     find_package(SDL3 CONFIG REQUIRED)

@@ -5,6 +5,8 @@
 
 #include "clover/platform/sdl/SdlAppShell.h"
 
+#include <SDL3/SDL_main.h>
+
 int main(int argc, char** argv)
 {
     clover::platform::sdl_app_shell_t app{};

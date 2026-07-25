@@ -8,6 +8,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(CLOVER_BUILD_SDL_FRONTEND "Build the SDL3 desktop frontend." OFF)
 option(CLOVER_PACKAGE_DISTRIBUTION "Build an OS-native distributable application." OFF)
 
+if(MSVC AND CLOVER_PACKAGE_DISTRIBUTION)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 set(CLOVER_CORE_SOURCES
     src/clover/core/snes/Apu.cpp
     src/clover/core/snes/ApuOpsAlu.cpp

@@ -41,11 +41,21 @@ namespace clover::analysis::snes
         uint8_t value{ 0 };
     };
 
+    enum class byte_identity_t : uint8_t
+    {
+        canonical_media,
+        writable_memory,
+        unavailable
+    };
+
     struct byte_source_t
     {
     public:
         virtual ~byte_source_t() = default;
         [[nodiscard]] virtual inspected_byte_t inspect(uint32_t cpu_address) const noexcept = 0;
+        [[nodiscard]] virtual byte_identity_t identity(
+            uint32_t cpu_address
+        ) const noexcept = 0;
     };
 
     enum class decode_status_t : uint8_t

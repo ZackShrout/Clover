@@ -6,6 +6,7 @@
 #include "clover/platform/sdl/WorkbenchAppShell.h"
 
 #include "clover/analysis/snes/Formatter.h"
+#include "clover/analysis/snes/HybridAnalyzer.h"
 #include "clover/analysis/snes/StaticListing.h"
 #include "clover/frontend/EmulatorCore.h"
 #include "clover/frontend/SnesEmulatorCore.h"
@@ -145,12 +146,20 @@ namespace
         return result / "projects";
     }
 
-    [[nodiscard]] std::optional<uint32_t> reset_entry(
-        const clover::analysis::snes::debug_target_byte_source_t& source
+    [[nodiscard]] std::optional<uint32_t> vector_entry(
+        const clover::analysis::snes::debug_target_byte_source_t& source,
+        uint32_t vector_address
     )
     {
-        const auto low{ source.inspect(0x00fffcu) };
-        const auto high{ source.inspect(0x00fffdu) };
+        const auto low{ source.inspect(vector_address) };
+        const auto high{
+            source.inspect(
+                clover::analysis::snes::advance_program_address(
+                    vector_address,
+                    1u
+                )
+            )
+        };
         using clover::analysis::snes::byte_inspection_status_t;
         if (low.status != byte_inspection_status_t::available
             || high.status != byte_inspection_status_t::available)
@@ -159,6 +168,13 @@ namespace
         }
         return static_cast<uint32_t>(low.value)
             | (static_cast<uint32_t>(high.value) << 8u);
+    }
+
+    [[nodiscard]] std::optional<uint32_t> reset_entry(
+        const clover::analysis::snes::debug_target_byte_source_t& source
+    )
+    {
+        return vector_entry(source, 0x00fffcu);
     }
 
     void draw_text(SDL_Renderer* renderer,
@@ -238,6 +254,54 @@ namespace
         case debugger_stop_reason_t::error: return "debugger error";
         }
         return "debugger";
+    }
+
+    [[nodiscard]] std::string_view confidence_name(
+        clover::analysis::confidence_t confidence
+    )
+    {
+        using clover::analysis::confidence_t;
+        switch (confidence)
+        {
+        case confidence_t::confirmed: return "confirmed";
+        case confidence_t::strongly_inferred: return "strong";
+        case confidence_t::weakly_inferred: return "weak";
+        case confidence_t::unresolved: return "unresolved";
+        case confidence_t::conflicting: return "conflicting";
+        }
+        return "unknown";
+    }
+
+    [[nodiscard]] std::string_view edge_kind_name(
+        clover::analysis::edge_kind_t kind
+    )
+    {
+        using clover::analysis::edge_kind_t;
+        switch (kind)
+        {
+        case edge_kind_t::fallthrough: return "fallthrough";
+        case edge_kind_t::conditional_branch: return "branch";
+        case edge_kind_t::jump: return "jump";
+        case edge_kind_t::call: return "call";
+        case edge_kind_t::return_: return "return";
+        case edge_kind_t::interrupt: return "interrupt";
+        case edge_kind_t::unresolved: return "unresolved";
+        }
+        return "edge";
+    }
+
+    [[nodiscard]] std::string_view code_identity_name(
+        clover::analysis::code_identity_t identity
+    )
+    {
+        using clover::analysis::code_identity_t;
+        switch (identity)
+        {
+        case code_identity_t::canonical_media: return "ROM";
+        case code_identity_t::writable_memory: return "writable";
+        case code_identity_t::unavailable: return "unknown";
+        }
+        return "unknown";
     }
 }
 
@@ -412,6 +476,13 @@ namespace clover::platform
         std::vector<workbench::bookmark_t> bookmarks{};
         std::vector<workbench::classification_t> classifications{};
         std::vector<workbench::symbol_t> symbols{};
+        analysis::program_model_t analysis_model{};
+        if (const auto stored{ project.current_analysis(error) };
+            stored.has_value())
+        {
+            analysis_model = *stored;
+        }
+        error.clear();
         size_t selected{ 0u };
         bool refresh_listing{ true };
         bool refresh_facts{ true };
@@ -444,6 +515,87 @@ namespace clover::platform
             {
                 status = error;
             }
+        };
+        const auto run_analysis = [&]()
+        {
+            analysis::snes::hybrid_analysis_options_t options{};
+            options.seeds = analysis::snes::default_snes_vector_seeds(source);
+
+            const uint32_t reset_address{
+                reset_entry(source).value_or(0x008000u)
+            };
+            for (const workbench::classification_t& classification
+                 : classifications)
+            {
+                if (classification.location.address_space
+                        != k_cpu_address_space
+                    || classification.layer
+                        != workbench::fact_layer_t::user
+                    || classification.length > UINT32_MAX)
+                {
+                    continue;
+                }
+                options.classifications.push_back({
+                    .address = static_cast<uint32_t>(
+                        classification.location.address
+                    ),
+                    .length = static_cast<uint32_t>(classification.length),
+                    .code = classification.kind
+                        == workbench::classification_kind_t::code
+                });
+                if (classification.kind
+                        == workbench::classification_kind_t::code
+                    && classification.location.address != reset_address)
+                {
+                    options.seeds.push_back({
+                        .address = static_cast<uint32_t>(
+                            classification.location.address
+                        ),
+                        .context = {},
+                        .kind = analysis::snes::analysis_seed_kind_t::user,
+                        .source = "user-code-classification"
+                    });
+                }
+            }
+            options.runtime_edges = debugger.runtime_edges();
+            const analysis::snes::hybrid_analysis_result_t analyzed{
+                analysis::snes::analyze_program(source, options)
+            };
+            if (analyzed.limit_reached)
+            {
+                status = "Analysis limit reached; previous generation preserved";
+                return;
+            }
+            const std::string fingerprint{
+                analysis::snes::hybrid_analysis_fingerprint(
+                    project.identity().canonical_media_sha256,
+                    options
+                )
+            };
+            uint64_t generation{};
+            error.clear();
+            if (!project.publish_analysis(
+                    analyzed.model,
+                    workbench::k_analyzer_version,
+                    workbench::k_decoder_version,
+                    fingerprint,
+                    generation,
+                    error
+                ))
+            {
+                status = error;
+                return;
+            }
+            analysis_model = analyzed.model;
+            refresh_facts = true;
+            status = "Published analysis generation "
+                + std::to_string(generation) + ": "
+                + std::to_string(analysis_model.functions.size())
+                + " functions, "
+                + std::to_string(analysis_model.basic_blocks.size())
+                + " blocks, "
+                + std::to_string(analysis_model.conflicts.size())
+                + " conflicts";
         };
 
         while (running)
@@ -849,6 +1001,96 @@ namespace clover::platform
                     status = imported ? "Hardware symbols refreshed" : error;
                     refresh_facts = imported;
                 }
+                else if (event.key.scancode == SDL_SCANCODE_A)
+                {
+                    run_analysis();
+                }
+                else if (event.key.scancode == SDL_SCANCODE_N
+                         && !analysis_model.functions.empty())
+                {
+                    const uint32_t current_address{ selected_address() };
+                    const auto next{
+                        std::find_if(
+                            analysis_model.functions.begin(),
+                            analysis_model.functions.end(),
+                            [current_address](
+                                const analysis::function_fact_t& function
+                            )
+                            {
+                                return function.entry.address > current_address;
+                            }
+                        )
+                    };
+                    const auto& function{
+                        next != analysis_model.functions.end()
+                            ? *next
+                            : analysis_model.functions.front()
+                    };
+                    navigate(static_cast<uint32_t>(function.entry.address));
+                    status = "Function " + function.stable_id;
+                }
+                else if (event.key.scancode == SDL_SCANCODE_X)
+                {
+                    const uint32_t address{ selected_address() };
+                    const bool incoming{
+                        (event.key.mod & SDL_KMOD_SHIFT) != 0
+                    };
+                    const auto reference{
+                        std::find_if(
+                            analysis_model.cross_references.begin(),
+                            analysis_model.cross_references.end(),
+                            [address, incoming](
+                                const analysis::cross_reference_fact_t& fact
+                            )
+                            {
+                                return incoming
+                                    ? fact.target.address == address
+                                    : fact.source.address == address;
+                            }
+                        )
+                    };
+                    if (reference != analysis_model.cross_references.end())
+                    {
+                        navigate(static_cast<uint32_t>(
+                            incoming
+                                ? reference->source.address
+                                : reference->target.address
+                        ));
+                        status = incoming
+                            ? "Followed incoming cross-reference"
+                            : "Followed outgoing cross-reference";
+                    }
+                    else
+                    {
+                        status = incoming
+                            ? "No incoming cross-reference"
+                            : "No outgoing cross-reference";
+                    }
+                }
+                else if (event.key.scancode == SDL_SCANCODE_K
+                         && !analysis_model.conflicts.empty())
+                {
+                    const uint32_t current_address{ selected_address() };
+                    const auto next{
+                        std::find_if(
+                            analysis_model.conflicts.begin(),
+                            analysis_model.conflicts.end(),
+                            [current_address](
+                                const analysis::conflict_fact_t& conflict
+                            )
+                            {
+                                return conflict.location.address > current_address;
+                            }
+                        )
+                    };
+                    const auto& conflict{
+                        next != analysis_model.conflicts.end()
+                            ? *next
+                            : analysis_model.conflicts.front()
+                    };
+                    navigate(static_cast<uint32_t>(conflict.location.address));
+                    status = "Conflict: " + conflict.detail;
+                }
             }
 
             int width{};
@@ -900,7 +1142,24 @@ namespace clover::platform
                 "Breakpoints " + std::to_string(debugger.breakpoints().size())
                     + "  Watches " + std::to_string(debugger.watchpoints().size())
             );
-            float fact_y{ 128.f };
+            draw_text(
+                sdl.renderer,
+                left.x + 10.f,
+                116.f,
+                "Functions " + std::to_string(analysis_model.functions.size())
+                    + "  Blocks "
+                    + std::to_string(analysis_model.basic_blocks.size())
+            );
+            draw_text(
+                sdl.renderer,
+                left.x + 10.f,
+                132.f,
+                "Xrefs "
+                    + std::to_string(analysis_model.cross_references.size())
+                    + "  Conflicts "
+                    + std::to_string(analysis_model.conflicts.size())
+            );
+            float fact_y{ 160.f };
             for (auto iterator{ bookmarks.rbegin() };
                  iterator != bookmarks.rend() && fact_y < left.y + left.h - 24.f;
                  ++iterator)
@@ -963,15 +1222,23 @@ namespace clover::platform
                         }
                     )
                 };
+                const bool has_coverage{
+                    fact_at(analysis_model.coverage, instruction.address)
+                        != nullptr
+                };
                 const std::string marker{
                     is_current
                         ? "> "
                         : (has_breakpoint
                             ? "B "
-                            : (fact_at(classifications, instruction.address)
-                                    != nullptr
-                                ? "* "
-                                : "  "))
+                            : (has_coverage
+                                ? "+ "
+                                : (fact_at(
+                                        classifications,
+                                        instruction.address
+                                    ) != nullptr
+                                    ? "* "
+                                    : "  ")))
                 };
                 draw_text(
                     sdl.renderer,
@@ -1062,7 +1329,211 @@ namespace clover::platform
                 );
                 inspector_y += 18.f;
             }
+            const analysis::instruction_fact_t* analyzed_instruction{
+                fact_at(analysis_model.instructions, current)
+            };
+            if (analyzed_instruction != nullptr)
+            {
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    "Analysis: "
+                        + std::string{
+                            confidence_name(analyzed_instruction->confidence)
+                        }
+                        + " / "
+                        + std::string{
+                            code_identity_name(
+                                analyzed_instruction->code_identity
+                            )
+                        }
+                );
+                inspector_y += 18.f;
+                const auto provenance{
+                    std::find_if(
+                        analysis_model.evidence.begin(),
+                        analysis_model.evidence.end(),
+                        [analyzed_instruction](
+                            const analysis::evidence_fact_t& fact
+                        )
+                        {
+                            return fact.subject_id
+                                == analyzed_instruction->stable_id;
+                        }
+                    )
+                };
+                if (provenance != analysis_model.evidence.end())
+                {
+                    draw_text(
+                        sdl.renderer,
+                        right.x + 10.f,
+                        inspector_y,
+                        "Evidence: " + provenance->source
+                            + (provenance->session.empty()
+                                ? ""
+                                : " / " + provenance->session)
+                    );
+                    inspector_y += 18.f;
+                }
+            }
+            if (const auto* coverage{
+                    fact_at(analysis_model.coverage, current)
+                };
+                coverage != nullptr)
+            {
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    "Coverage: " + std::to_string(coverage->hit_count)
+                        + " (" + coverage->session + ")"
+                );
+                inspector_y += 18.f;
+            }
+            const auto function{
+                std::find_if(
+                    analysis_model.functions.begin(),
+                    analysis_model.functions.end(),
+                    [current](const analysis::function_fact_t& fact)
+                    {
+                        return fact.entry.address == current;
+                    }
+                )
+            };
+            if (function != analysis_model.functions.end())
+            {
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    "Function: " + function->stable_id
+                );
+                inspector_y += 18.f;
+            }
+            const auto block{
+                std::find_if(
+                    analysis_model.basic_blocks.begin(),
+                    analysis_model.basic_blocks.end(),
+                    [current](const analysis::basic_block_fact_t& fact)
+                    {
+                        return fact.start.address <= current
+                            && fact.end.address > current;
+                    }
+                )
+            };
+            if (block != analysis_model.basic_blocks.end())
+            {
+                const auto owner{
+                    std::find_if(
+                        analysis_model.function_blocks.begin(),
+                        analysis_model.function_blocks.end(),
+                        [&block](
+                            const analysis::function_block_fact_t& membership
+                        )
+                        {
+                            return membership.block_id == block->stable_id;
+                        }
+                    )
+                };
+                if (owner != analysis_model.function_blocks.end())
+                {
+                    draw_text(
+                        sdl.renderer,
+                        right.x + 10.f,
+                        inspector_y,
+                        "Owner: " + owner->function_id
+                    );
+                    inspector_y += 18.f;
+                }
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    "Block: "
+                        + formatted_address(
+                            static_cast<uint32_t>(block->start.address)
+                        )
+                        + "-"
+                        + formatted_address(
+                            static_cast<uint32_t>(block->end.address)
+                        )
+                );
+                inspector_y += 18.f;
+                size_t displayed_edges{};
+                for (const analysis::edge_fact_t& edge : analysis_model.edges)
+                {
+                    if (edge.source_block_id != block->stable_id
+                        || displayed_edges >= 3u)
+                    {
+                        continue;
+                    }
+                    draw_text(
+                        sdl.renderer,
+                        right.x + 20.f,
+                        inspector_y,
+                        std::string{ edge_kind_name(edge.kind) } + " -> "
+                            + (edge.target.has_value()
+                                ? formatted_address(
+                                    static_cast<uint32_t>(
+                                        edge.target->address
+                                    )
+                                )
+                                : "?")
+                    );
+                    inspector_y += 16.f;
+                    ++displayed_edges;
+                }
+            }
+            const size_t incoming_xrefs{
+                static_cast<size_t>(std::count_if(
+                    analysis_model.cross_references.begin(),
+                    analysis_model.cross_references.end(),
+                    [current](const analysis::cross_reference_fact_t& fact)
+                    {
+                        return fact.target.address == current;
+                    }
+                ))
+            };
+            const size_t outgoing_xrefs{
+                static_cast<size_t>(std::count_if(
+                    analysis_model.cross_references.begin(),
+                    analysis_model.cross_references.end(),
+                    [current](const analysis::cross_reference_fact_t& fact)
+                    {
+                        return fact.source.address == current;
+                    }
+                ))
+            };
+            if (incoming_xrefs != 0u || outgoing_xrefs != 0u)
+            {
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    "Xrefs: in " + std::to_string(incoming_xrefs)
+                        + " / out " + std::to_string(outgoing_xrefs)
+                );
+                inspector_y += 18.f;
+            }
+            if (const auto* conflict{
+                    fact_at(analysis_model.conflicts, current)
+                };
+                conflict != nullptr)
+            {
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    "Conflict: " + conflict->detail
+                );
+                inspector_y += 18.f;
+            }
             inspector_y += 12.f;
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y, "A        analyze / publish");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 16.f, "N / K    function / conflict");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 32.f, "X / SHIFT+X xref out / in");
+            inspector_y += 48.f;
             draw_text(sdl.renderer, right.x + 10.f, inspector_y, "F5       run / pause");
             draw_text(sdl.renderer, right.x + 10.f, inspector_y + 16.f, "F9       breakpoint");
             draw_text(sdl.renderer, right.x + 10.f, inspector_y + 32.f, "F10      step over");

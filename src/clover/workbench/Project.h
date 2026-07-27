@@ -1,9 +1,11 @@
 //
+// Created by Zack Shrout on 7/27/26.
 // Copyright (c) 2026 BunnySoft. All rights reserved.
 //
 
 #pragma once
 
+#include "clover/analysis/ProgramModel.h"
 #include "clover/frontend/EmulatorCore.h"
 
 #include <cstddef>
@@ -19,8 +21,8 @@ struct sqlite3;
 
 namespace clover::workbench
 {
-    inline constexpr uint32_t k_project_schema_version{ 3u };
-    inline constexpr std::string_view k_analyzer_version{ "clover-analyzer-1" };
+    inline constexpr uint32_t k_project_schema_version{ 4u };
+    inline constexpr std::string_view k_analyzer_version{ "clover-analyzer-2" };
     inline constexpr std::string_view k_decoder_version{ "wdc65c816-decoder-1" };
 
     enum class fact_layer_t : uint8_t
@@ -43,12 +45,15 @@ namespace clover::workbench
         uint64_t canonical_media_size{ 0 };
     };
 
-    struct address_key_t
-    {
-        std::string address_space{};
-        uint64_t address{ 0 };
+    using address_key_t = analysis::address_t;
 
-        [[nodiscard]] bool operator==(const address_key_t&) const noexcept = default;
+    struct analysis_generation_t
+    {
+        uint64_t generation{ 0 };
+        std::string analyzer_version{};
+        std::string decoder_version{};
+        std::string input_fingerprint{};
+        bool current{ false };
     };
 
     struct named_fact_t
@@ -174,6 +179,24 @@ namespace clover::workbench
             std::string& error
         );
         [[nodiscard]] uint64_t analysis_generation(std::string& error) const;
+        [[nodiscard]] bool publish_analysis(
+            const analysis::program_model_t& model,
+            std::string_view analyzer_version,
+            std::string_view decoder_version,
+            std::string_view input_fingerprint,
+            uint64_t& generation,
+            std::string& error
+        );
+        [[nodiscard]] std::vector<analysis_generation_t> analysis_generations(
+            std::string& error
+        ) const;
+        [[nodiscard]] std::optional<analysis::program_model_t> current_analysis(
+            std::string& error
+        ) const;
+        [[nodiscard]] std::optional<analysis::program_model_t> analysis(
+            uint64_t generation,
+            std::string& error
+        ) const;
 
         [[nodiscard]] bool record_navigation(const address_key_t& location,
                                              std::string_view view,

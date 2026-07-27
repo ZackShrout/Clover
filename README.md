@@ -119,6 +119,21 @@ instruction boundary. Optional `--d` and `--db` arguments supply direct-page
 and data-bank context. Static ROM reads pass through the same side-effect-free
 CPU-address translation boundary used by the debugger substrate.
 
+The Stage 4 hybrid analyzer is also available headlessly. It discovers
+instructions, basic blocks, provisional functions, graph edges, and
+cross-references while preserving confidence, provenance, conflicts, runtime
+coverage, and canonical-ROM versus writable-code identity:
+
+```bash
+./build/clover_workbench_analyze "/path/to/game.sfc" \
+  --project-root "/path/to/projects" \
+  --run-instructions 100000
+```
+
+The optional execution sample is bounded and aggregated. Publishing a new
+SQLite analysis generation is atomic; prior generations and user-authored facts
+survive failed analysis or publication.
+
 ## SDL Desktop App
 
 The checked-in `SDL Release` CMake preset builds the optimized `clover_sdl`
@@ -149,7 +164,9 @@ bookmarks, code/data classifications, imported SNES hardware symbols, and
 navigation history survive restarts. Its live debugger provides runtime
 mode-correct disassembly, registers, memory, instruction stepping, step
 over/out, run-to-cursor, persistent breakpoints and watchpoints, and
-hardware-register access stops. Its controls and project model are
+hardware-register access stops. Its hybrid analyzer adds functions, blocks,
+graph edges, cross-references, runtime coverage, confidence, provenance, and
+explicit conflicts. Its controls and project model are
 documented in [`docs/WORKBENCH.md`](docs/WORKBENCH.md).
 
 ### Downloadable beta builds

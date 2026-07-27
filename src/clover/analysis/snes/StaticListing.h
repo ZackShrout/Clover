@@ -20,6 +20,9 @@ namespace clover::analysis::snes
     public:
         span_byte_source_t(std::span<const std::byte> bytes, uint32_t origin) noexcept;
         [[nodiscard]] inspected_byte_t inspect(uint32_t cpu_address) const noexcept override;
+        [[nodiscard]] byte_identity_t identity(
+            uint32_t cpu_address
+        ) const noexcept override;
 
     private:
         std::span<const std::byte> _bytes{};
@@ -35,6 +38,9 @@ namespace clover::analysis::snes
             frontend::address_space_id_t canonical_media_space
         ) noexcept;
         [[nodiscard]] inspected_byte_t inspect(uint32_t cpu_address) const noexcept override;
+        [[nodiscard]] byte_identity_t identity(
+            uint32_t cpu_address
+        ) const noexcept override;
 
     private:
         const frontend::debug_target_t& _target;

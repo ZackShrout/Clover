@@ -252,6 +252,122 @@ int main()
         return fail("derived_invalidation_preserves_authored_facts", error);
     }
 
+    analysis::program_model_t model{};
+    model.instructions.push_back({
+        .stable_id = "instruction@008000[E=1;M=1;X=1;D=0000;DB=00]",
+        .location = reset_entry,
+        .context = "E=1;M=1;X=1;D=0000;DB=00",
+        .opcode = 0x78u,
+        .encoded_size = 1u,
+        .code_identity = analysis::code_identity_t::canonical_media,
+        .confidence = analysis::confidence_t::confirmed
+    });
+    model.basic_blocks.push_back({
+        .stable_id = "block@008000[E=1;M=1;X=1;D=0000;DB=00]",
+        .start = reset_entry,
+        .end = { "snes.cpu-bus", 0x008001u },
+        .context = "E=1;M=1;X=1;D=0000;DB=00",
+        .confidence = analysis::confidence_t::confirmed
+    });
+    model.functions.push_back({
+        .stable_id = "function@008000",
+        .entry = reset_entry,
+        .confidence = analysis::confidence_t::confirmed
+    });
+    model.function_blocks.push_back({
+        .stable_id = "membership-reset",
+        .function_id = "function@008000",
+        .block_id = "block@008000[E=1;M=1;X=1;D=0000;DB=00]"
+    });
+    model.edges.push_back({
+        .stable_id = "edge-return",
+        .source_block_id = "block@008000[E=1;M=1;X=1;D=0000;DB=00]",
+        .kind = analysis::edge_kind_t::return_,
+        .confidence = analysis::confidence_t::strongly_inferred
+    });
+    model.cross_references.push_back({
+        .stable_id = "xref-reset",
+        .source = reset_entry,
+        .target = { "snes.cpu-bus", 0x008010u },
+        .kind = analysis::cross_reference_kind_t::code,
+        .confidence = analysis::confidence_t::strongly_inferred
+    });
+    model.evidence.push_back({
+        .stable_id = "evidence-reset",
+        .subject_id = model.instructions.front().stable_id,
+        .kind = analysis::evidence_kind_t::vector,
+        .source = "reset",
+        .observation_count = 1u
+    });
+    model.conflicts.push_back({
+        .stable_id = "conflict-indirect",
+        .location = { "snes.cpu-bus", 0x008020u },
+        .kind = analysis::conflict_kind_t::unresolved_transfer,
+        .detail = "Synthetic unresolved transfer"
+    });
+    model.coverage.push_back({
+        .location = reset_entry,
+        .session = "test-session",
+        .hit_count = 4u
+    });
+    uint64_t published_generation{};
+    if (!project.publish_analysis(
+            model,
+            k_analyzer_version,
+            k_decoder_version,
+            "fixture-input",
+            published_generation,
+            error
+        )
+        || published_generation != 2u)
+    {
+        return fail("publish_analysis", error);
+    }
+    const auto loaded_model{ project.current_analysis(error) };
+    const auto prior_model{ project.analysis(1u, error) };
+    const auto generations{ project.analysis_generations(error) };
+    if (!error.empty() || !loaded_model.has_value() || !prior_model.has_value()
+        || !prior_model->instructions.empty()
+        || loaded_model->instructions.size() != 1u
+        || loaded_model->instructions.front().code_identity
+            != analysis::code_identity_t::canonical_media
+        || loaded_model->basic_blocks.size() != 1u
+        || loaded_model->functions.size() != 1u
+        || loaded_model->function_blocks.size() != 1u
+        || loaded_model->edges.size() != 1u
+        || loaded_model->cross_references.size() != 1u
+        || loaded_model->evidence.size() != 1u
+        || loaded_model->conflicts.size() != 1u
+        || loaded_model->coverage.size() != 1u
+        || loaded_model->coverage.front().hit_count != 4u
+        || generations.size() != 3u
+        || !generations.back().current
+        || generations.back().input_fingerprint != "fixture-input")
+    {
+        return fail("load_published_analysis", error);
+    }
+
+    analysis::program_model_t invalid_model{ model };
+    invalid_model.instructions.push_back(model.instructions.front());
+    uint64_t rejected_generation{};
+    error.clear();
+    if (project.publish_analysis(
+            invalid_model,
+            k_analyzer_version,
+            k_decoder_version,
+            "invalid",
+            rejected_generation,
+            error
+        )
+        || error.empty() || rejected_generation != 0u
+        || project.analysis_generation(error) != published_generation
+        || project.analysis_generations(error).size() != generations.size()
+        || project.labels(error).size() != 1u)
+    {
+        return fail("failed_publication_preserves_current_generation", error);
+    }
+    error.clear();
+
     std::vector<std::byte> headered(512u + media.size(), std::byte{ 0x55u });
     std::copy(media.begin(), media.end(), headered.begin() + 512);
     project_t headered_project{};
@@ -288,6 +404,16 @@ int main()
     if (sqlite3_open(expected_path_utf8.c_str(), &migration_database) != SQLITE_OK)
         return fail("open_migration_fixture");
     const char* downgrade_sql{
+        "DROP TABLE analysis_coverage;"
+        "DROP TABLE analysis_conflicts;"
+        "DROP TABLE analysis_evidence;"
+        "DROP TABLE analysis_cross_references;"
+        "DROP TABLE analysis_edges;"
+        "DROP TABLE analysis_function_blocks;"
+        "DROP TABLE analysis_functions;"
+        "DROP TABLE analysis_basic_blocks;"
+        "DROP TABLE analysis_instructions;"
+        "DROP TABLE analysis_generations;"
         "DROP TABLE debug_watchpoints;"
         "DROP TABLE debug_breakpoints;"
         "DROP TABLE navigation_state;"

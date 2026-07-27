@@ -109,9 +109,26 @@ The SDL build produces two distinct applications. `clover_sdl` is the focused
 Player and does not link the Workbench project or analysis libraries.
 `clover_workbench` is the analysis host: it composes the debug-target byte
 source, Stage 1 decoder/listing services, the Workbench-owned run controller,
-and the SQLite-backed project service.
+the Stage 4 hybrid analyzer, and the SQLite-backed project service.
 Workbench persistence itself lives under `src/clover/workbench/`, is UI
 independent, and is included in the default headless build for testing.
+
+`clover_analysis` owns the system-neutral `ProgramModel` and the SNES analyzer.
+The analyzer consumes immutable bytes, explicit decode contexts, user
+classifications, and bounded runtime edges. It emits stable instructions,
+basic blocks, many-to-many function ownership, typed control-flow edges,
+cross-references, confidence, evidence, conflicts, and coverage. Runtime code
+identity explicitly distinguishes canonical cartridge bytes from execution in
+writable storage.
+
+The project schema publishes a complete program model as one analysis
+generation transaction. A candidate is built outside SQLite; the prior
+generation remains current and readable until every new row and constraint
+validates and the publication commits. Analyzer failure, cancellation, or
+database failure therefore cannot expose a partial graph or delete user facts.
+The debugger's runtime evidence is aggregated by address edge, decode context,
+and session under a fixed distinct-edge limit with explicit dropped-record
+accounting.
 
 The future checkpoint boundary is specified by
 `docs/SNES_MACHINE_STATE_AUDIT.md`. Checkpoints preserve causal hardware state

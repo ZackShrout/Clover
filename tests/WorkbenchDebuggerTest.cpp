@@ -202,6 +202,16 @@ int main()
     {
         return fail("live_memory");
     }
+    if (debugger.runtime_edges().empty()
+        || debugger.analysis_session().empty()
+        || debugger.dropped_runtime_edges() != 0u
+        || debugger.runtime_edges().front().session
+            != debugger.analysis_session()
+        || debugger.runtime_edges().front().from_identity
+            != analysis::code_identity_t::canonical_media)
+    {
+        return fail("bounded_runtime_evidence");
+    }
 
     frontend::debug_session_control_t* const session{
         target->debug_session_control()
@@ -221,7 +231,8 @@ int main()
 
     std::printf(
         "Workbench debugger tests passed: runtime state, stepping, "
-        "breakpoints, watchpoints, run-to, and call/return observation\n"
+        "breakpoints, watchpoints, run-to, call/return observation, "
+        "and bounded analysis evidence\n"
     );
     return 0;
 }

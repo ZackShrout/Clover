@@ -58,28 +58,33 @@ The disassembler is the first major view into that system, but it is only one vi
 
 ## Document Status and Planning Horizons
 
-This document is a product north star and architectural direction. It is not a
-claim that every supporting service already exists, and it is not yet a
-component-level implementation specification.
+This document is a product north star and architectural direction. Section 28
+also serves as the authoritative delivery ledger. As of July 27, 2026, Stages
+0 through 4 are complete: Clover has the inspection and checkpoint substrate,
+the structured decoder, the persistent Workbench, live debugger integration,
+and the hybrid analyzer. Descriptions outside Section 28 define the target
+experience unless they explicitly describe the current implementation.
 
 The capabilities described here fall into four planning horizons:
 
 ```text
-Foundation
+Established
     Side-effect-free inspection, address translation, observation contracts,
-    state-model audit, decoder infrastructure
+    exact checkpoints, decoder infrastructure, persistent projects,
+    live stepping, breakpoints, watchpoints, durable annotations, functions,
+    blocks, cross-references, runtime coverage, provenance, and conflicts
 
-Near term
-    Correct disassembly, hardware symbols, a read-only listing, live stepping,
-    basic breakpoints, and durable annotations
+Next
+    Typed data, graphics and audio views, DMA provenance, and hardware-aware
+    inspectors
 
 Medium term
-    Hybrid analysis, typed data, cross-references, coverage, graphs, and
-    hardware-aware inspectors
+    Reverse-debugging workflows built on the checkpoint substrate and temporal
+    investigation
 
 Long term
-    Checkpoint replay, reverse debugging, graphics and audio provenance,
-    asset authoring, patching, and reassemblable reconstruction
+    Reverse-debugging workflows built on the checkpoint substrate, asset
+    authoring, patching, and reassemblable reconstruction
 ```
 
 Later sections intentionally describe all four horizons so that early
@@ -258,54 +263,50 @@ Those belong to Workbench.
 
 This preserves the distinction between emulated hardware truth and user-facing interpretation.
 
-## 2.4 Current Clover substrate and missing foundations
+## 2.4 Current Clover substrate and remaining work
 
-Clover already provides useful foundations:
+Clover now provides the foundations and first end-to-end Workbench slices:
 
 - a headless `console_t`;
 - explicit CPU, bus, PPU, APU, DMA, interrupt, and cartridge ownership;
 - master-clock, raster, and frame coordinates;
-- hardware-step and frame-step execution surfaces;
-- readable CPU and device state;
-- bounded diagnostic buffers used during hardware bring-up;
+- hardware-step, frame-step, and main-CPU instruction-step execution surfaces;
+- side-effect-free live memory inspection and typed processor-register state;
+- public, pure cartridge-aware CPU-bus address translation;
+- masked, bounded, opt-in instruction-boundary and CPU-memory observations;
+- frontend debug-session, execution-control, observation, and checkpoint
+  capabilities;
+- exact, portable, schema-versioned machine capture and transactional restore;
+- deterministic replay-equivalence coverage across base and implemented
+  enhancement hardware;
 - deterministic-capable startup through explicit entropy configuration;
 - deterministic controller input capture and replay;
-- canonical ROM hashing in the platform ROM library;
+- shared canonical-media identity outside the SDL platform layer;
 - save-RAM restoration;
-- clean frontend and platform boundaries.
+- a headless structured 65C816 decoder and listing service;
+- a transactional SQLite analysis project keyed by canonical media identity;
+- a separate SDL Workbench with durable annotations and navigation; and
+- a Workbench-owned live run controller with persistent execution breakpoints,
+  CPU-bus watchpoints, stepping, runtime-correct disassembly, registers, and
+  safe memory views.
 
-These are prerequisites, not a completed debugger substrate. The current
-frontend contract is primarily frame-oriented. It does not yet expose:
+The remaining work is no longer the creation of a debugger substrate. It is
+the expansion of that substrate into richer analysis and investigation
+services:
 
-- debugger session control;
-- an explicit instruction-step result;
-- breakpoint or watchpoint installation;
-- a general typed event subscription protocol;
-- side-effect-free live memory inspection;
-- public cartridge address translation;
-- complete machine-state serialization and restoration;
-- deterministic checkpoints;
-- a persistent analysis service.
-
-The existing diagnostic traces are valuable evidence that typed, bounded
-observations fit Clover’s architecture. They are currently targeted bring-up
-tools, including selected-register and selected-address watches, rather than the
-general event system Workbench will require.
-
-The existing canonical ROM hash is owned by the platform ROM-library component.
-Workbench should reuse the identity algorithm through a small shared
-media-identity service rather than depending on the SDL platform library.
-
-Similarly, LoROM and HiROM mapping exist in `cartridge_t`, but the translation
-helpers are private implementation details. Workbench needs a public, pure
-address translator that can report mapped, mirrored, unmapped, RAM, ROM, and
-device identities without performing a hardware bus access.
+- typed DMA, interrupt, PPU, APU, and cartridge-device observations where a
+  later feature has a concrete consumer;
+- SPC700 and optional cartridge-processor debug stepping;
+- typed-data and hardware-aware asset inspection;
+- reverse-debugging UI and temporal queries built on the verified checkpoint
+  primitive; and
+- authoring, patching, and reconstructed-source workflows.
 
 This distinction is important when describing current readiness:
 
-> Clover has several of the right architectural prerequisites, but Workbench
-> still needs an explicit inspection, observation, control, and serialization
-> substrate.
+> Clover has a tested inspection, observation, control, checkpoint, decoder,
+> project, live-debugger, and hybrid-analysis substrate. The next challenge is
+> applying that connected model to typed game data and hardware-aware assets.
 
 ## 2.5 Player separation and non-interference
 
@@ -2737,6 +2738,13 @@ changing it, and a documented path to exact state restoration.
 
 ### Stage 0 implementation status
 
+**Status: complete.**
+
+This section retains the implementation chronology because it records why the
+checkpoint and observation boundaries have their present shape. Statements
+about work remaining "at that point" describe the named historical slice, not
+the current repository.
+
 The first Stage 0 slice was established on July 24, 2026. It provides:
 
 - system-neutral execution-domain and address-space descriptors;
@@ -2777,7 +2785,7 @@ The first Stage 0 slice was established on July 24, 2026. It provides:
   suppression, resume, reset, and media replacement.
 
 At that point, this first slice intentionally did not claim Stage 0 completion.
-The remaining substrate work was:
+The remaining substrate work at that time was:
 
 - SPC700 and optional cartridge-processor instruction stepping;
 - additional typed event families for memory, DMA/HDMA, interrupts, PPU, APU,
@@ -2898,7 +2906,15 @@ execution and require explicit diagnostic-host opt-in. Saturated fixed buffers
 therefore cannot shift thousands of records in the emulation loop while the
 focused bring-up tools remain available.
 
+Together, the audited state ownership, exact transactional checkpoint,
+portable frontend envelope, replay-equivalence gate, side-effect-free
+inspection, explicit stepping, and opt-in observation boundary complete the
+Stage 0 deliverable. Later stages may add observation families and execution
+domains for concrete features without reopening Stage 0.
+
 ## Stage 1: Correct decoder and basic disassembly
+
+**Status: complete.**
 
 Implement:
 
@@ -3051,25 +3067,224 @@ non-interference.
 
 ## Stage 4: Hybrid analyzer
 
-Implement:
+**Status: complete.**
 
-- recursive traversal;
-- function discovery;
-- basic blocks;
-- control-flow graph;
-- call graph;
-- cross-references;
-- runtime execution coverage;
-- indirect-target discovery;
-- code/data classification;
-- confidence and provenance;
-- conflict handling.
+Goal:
+
+Turn the Stage 1 decoder, Stage 2 durable project, and Stage 3 runtime evidence
+into a deterministic program model. Stage 4 must improve what Workbench knows
+without converting an inference into a user fact or hiding ambiguity.
+
+### Stage 4.1: Analysis model and ownership
+
+Implement a headless analyzer service in the analysis/Workbench service layer,
+never in the emulated hardware core or SDL shell. Its inputs are:
+
+- canonical media identity and cartridge mapping;
+- an immutable byte source and explicit 65C816 decode context;
+- user code/data classifications and user-selected entry points;
+- imported symbols;
+- optional runtime observations from identified sessions; and
+- analyzer, decoder, schema, and analysis-generation versions.
+
+Its output is a candidate analysis generation containing decoded instructions,
+basic blocks, functions, edges, cross-references, coverage summaries,
+unresolved targets, conflicts, and evidence links. Analysis must be
+deterministic for identical inputs. A failed or cancelled run must not publish
+a partial generation.
+
+User and imported facts remain authoritative inputs. Analyzer output is
+regenerable derived data. The analyzer may report that user facts conflict with
+bytes or runtime evidence, but it must not rewrite those facts.
+
+### Stage 4.2: Deterministic static traversal
+
+Seed a stable worklist from:
+
+- reset and interrupt vectors that map to inspectable code;
+- explicit user entry points and code classifications;
+- statically known direct branch, jump, and call targets; and
+- runtime-executed addresses supplied as evidence.
+
+Decode recursively with an explicit `E/M/X/D/DB` context. Split basic blocks at
+entry points, control transfers, calls, returns, stops, context conflicts,
+user-data boundaries, and already-owned byte ranges. Record fallthrough and
+known targets without sweeping through ambiguous widths or classified data.
+
+Traversal order and identifiers must be stable. Reaching the same byte under
+incompatible width contexts, overlapping an existing instruction, entering
+user-classified data, reading an unavailable byte, or encountering an
+unresolved indirect transfer produces an explicit conflict or unresolved fact;
+it must never be silently guessed through.
+
+### Stage 4.3: Graphs, functions, and cross-references
+
+Represent:
+
+- basic-block ranges and their entry contexts;
+- typed control-flow edges for fallthrough, conditional branch, jump, call,
+  return, interrupt entry, and unresolved transfer;
+- provisional functions rooted at vectors, explicit user entries, and direct
+  call targets;
+- call-graph edges without assuming that every shared block belongs to exactly
+  one function; and
+- code, data, pointer, hardware-register, and runtime-observed
+  cross-references with source address, target identity, and evidence.
+
+Function discovery must tolerate tail calls, shared epilogues, non-returning
+routines, multiple entry points, and unresolved indirect calls. Those cases
+remain represented rather than forced into a conventional compiler model.
+
+### Stage 4.4: Runtime evidence and coverage
+
+Extend observation capture only as required by analyzer consumers. Aggregate
+instruction and edge coverage without retaining an unbounded trace. Runtime
+evidence may:
+
+- confirm that an instruction or edge executed;
+- provide an observed decode context;
+- add an observed target for an indirect jump or call;
+- identify code executing from writable memory; and
+- increase confidence while retaining its session provenance.
+
+Runtime execution is evidence, not permanent truth about every session.
+Coverage and observed targets must name their source session and media
+identity. Player keeps all analyzer probes disabled, and Workbench uses bounded
+buffers with dropped-event accounting.
+
+### Stage 4.5: Confidence, provenance, and conflicts
+
+Every derived fact records:
+
+- its analysis generation and producer version;
+- the evidence kind and source identity that support it;
+- a confidence/status classification such as confirmed, strongly inferred,
+  weakly inferred, unresolved, or conflicting; and
+- any competing interpretation that prevents promotion.
+
+Confidence follows explicit, tested rules. Multiple independent evidence
+sources may strengthen a fact; absence of runtime coverage must not weaken
+otherwise valid static evidence. User confirmation creates or updates a user
+fact rather than mutating the derived record in place.
+
+### Stage 4.6: Persistence and invalidation
+
+Add a transactional project-schema migration beyond the current Stage 3
+schema. Persist published analysis generations and their derived instructions,
+blocks, functions, edges, cross-references, coverage, evidence, and conflicts.
+Foreign keys and uniqueness constraints must prevent facts from crossing media
+identities or generations.
+
+Starting a generation leaves the previously published generation readable.
+Publishing atomically switches the current generation only after validation.
+Decoder, analyzer, mapping, or relevant input-fact changes invalidate derived
+results without deleting labels, comments, bookmarks, breakpoints,
+watchpoints, or other user-authored facts.
+
+### Stage 4.7: First analysis UI
+
+The first UI slice should add:
+
+- analyze/reanalyze status and generation identity;
+- function and basic-block navigation;
+- incoming and outgoing cross-references;
+- coverage markers distinct from current-PC and breakpoint markers;
+- unresolved-target and conflict views; and
+- provenance/confidence inspection for the selected derived fact.
+
+Graph rendering may begin as a simple navigable block/edge view. Layout is UI
+state, not analyzer truth, and must not be required for headless tests.
+
+### Stage 4 implementation slices
+
+1. **Persistent model:** schema migration, generation publication, evidence,
+   conflicts, and invalidation tests.
+2. **Static core:** deterministic seeds, recursive traversal, block splitting,
+   direct edges, provisional functions, and cross-references.
+3. **Dynamic merge:** bounded coverage and observed indirect targets with
+   session provenance and writable-code identity.
+4. **Workbench surface:** analysis commands, function/xref navigation,
+   coverage, conflicts, provenance, and a first graph view.
+
+Each slice must remain independently testable and leave Player free of
+Workbench and analyzer dependencies.
+
+### Stage 4 acceptance gates
+
+Stage 4 is complete only when:
+
+- synthetic cartridges cover branches, calls, returns, vectors, loops,
+  context changes, shared blocks, tail calls, indirect transfers, overlaps,
+  ambiguous widths, and code/data conflicts;
+- repeated analysis of identical inputs produces byte-for-byte equivalent
+  derived facts and stable identifiers;
+- a failed or cancelled analysis preserves the prior published generation;
+- user facts survive reanalysis and derived-fact invalidation;
+- runtime coverage and indirect targets merge without losing session
+  provenance or fabricating unobserved targets;
+- writable-memory execution is distinguished from canonical ROM identity;
+- headless tests exercise the analyzer without SDL;
+- Player has no Workbench/analyzer link dependency and disabled observation
+  remains behaviorally equivalent; and
+- a real-ROM smoke test can navigate from an executed instruction to its
+  function, callers/callees, cross-references, evidence, and conflicts.
+
+Non-goals for Stage 4 are decompilation, rich typed-data inference, asset
+viewers, reverse execution, and complete resolution of arbitrary indirect
+control flow. Those remain later-stage work.
+
+### Stage 4 implementation status
+
+Stage 4 was completed on July 27, 2026. It provides:
+
+- a system-neutral `ProgramModel` owned by `clover_analysis`;
+- a deterministic SNES hybrid analyzer with vector, user-code, and runtime
+  seeds; conservative `E/M/X/D/DB` propagation; recursive traversal; stable
+  instruction and block identities; provisional functions; many-to-many
+  function/block membership; typed graph edges; code, data, hardware, and
+  runtime cross-references; explicit unresolved and conflicting facts; and
+  deterministic input fingerprints;
+- bounded, aggregated debugger runtime edges with decode contexts, session
+  identity, hit counts, and dropped-record accounting;
+- confirmed runtime indirect targets and coverage without retaining an
+  unbounded trace;
+- explicit canonical-media versus writable-memory code identity;
+- transactional schema-v4 analysis generations containing instructions,
+  blocks, function ownership, functions, edges, cross-references, evidence,
+  conflicts, and coverage;
+- atomic generation publication: prior generations remain readable until a
+  candidate validates and commits, while failed publication rolls back without
+  changing the current generation or user facts;
+- a headless `clover_workbench_analyze` command that can combine vector-led
+  static analysis with a bounded live execution sample and optionally publish
+  the result;
+- Workbench analysis controls, coverage markers, function and conflict
+  navigation, incoming/outgoing cross-reference navigation, confidence and
+  provenance inspection, writable-code identity, and a compact navigable block
+  edge view; and
+- Player separation: the Player neither links the Workbench project service
+  nor enables the analyzer’s observations.
+
+`clover_hybrid_analyzer_test` covers deterministic results, width-context
+changes and ambiguity, incompatible contexts, overlaps, branches, calls,
+returns, indirect targets, shared blocks, tail jumps, user-data conflicts,
+runtime provenance, and writable code. `clover_workbench_project_test` covers
+schema migration, full model round trips, historical generation reads, atomic
+publication rollback, and user-fact preservation.
+`clover_workbench_analysis_integration_test` executes a cartridge and follows
+the resulting chain from coverage to instruction, block, function, graph,
+evidence, conflicts, and durable reload. A 100,000-instruction Final Fantasy
+III smoke run produced 127 covered addresses and 130 bounded runtime edges with
+zero dropped records, then published and reloaded the hybrid model.
 
 Deliverable:
 
-A genuine program-analysis environment rather than a listing.
+A deterministic, persistent, evidence-backed program-analysis environment
+rather than a listing.
 
 ## Stage 5: Typed data and assets
+
+**Status: next planned stage.**
 
 Implement:
 
@@ -3094,10 +3309,13 @@ A game-oriented reverse-engineering environment.
 
 ## Stage 6: Deterministic reverse debugging
 
+**Status: planned; checkpoint and replay primitives are established.**
+
 Implement:
 
-- checkpoints;
-- deterministic replay;
+- checkpoint scheduling, indexing, retention, and storage policy built on the
+  established capture/restore envelope;
+- deterministic replay orchestration from a checkpoint plus recorded input;
 - timeline;
 - last-writer queries;
 - event history;
@@ -3111,6 +3329,8 @@ Deliverable:
 A causal debugger capable of explaining how state arose.
 
 ## Stage 7: Game-authoring workflow
+
+**Status: planned.**
 
 Implement:
 
@@ -3134,6 +3354,8 @@ Deliverable:
 A practical game modification and authoring environment.
 
 ## Stage 8: Reconstructed assembly-source export
+
+**Status: planned.**
 
 Stage 8 turns the analysis project into a maintainable assembly-source project.
 It does not claim to recover the historical source tree. It emits a
@@ -3503,10 +3725,11 @@ Clover already contains several architectural prerequisites that make this feasi
 - exact regression workflows;
 - a policy of hardware correctness over ROM-specific workarounds.
 
-These foundations reduce architectural risk, but they do not mean the debugger,
-analysis event system, state serializer, checkpoint engine, or persistent
-Workbench service already exists. Section 2.4 and Stage 0 identify that missing
-substrate explicitly.
+These foundations have now produced an explicit inspection and observation
+boundary, exact portable checkpoints, a structured decoder, a persistent
+Workbench project, and a live debugger. Sections 2.4 and 28 distinguish that
+implemented substrate from the hybrid analysis, typed-data, reverse-debugging,
+and authoring services that remain.
 
 Many emulator projects attempt to add an advanced debugger after years of accumulating tightly coupled state and ad hoc logging.
 

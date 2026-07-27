@@ -1,4 +1,5 @@
 //
+// Created by Zack Shrout on 7/27/26.
 // Copyright (c) 2026 BunnySoft. All rights reserved.
 //
 
@@ -94,13 +95,21 @@ namespace
         if (sqlite3_bind_text(
                 statement,
                 index,
-                value.data(),
+                value.empty() ? "" : value.data(),
                 static_cast<int>(value.size()),
                 SQLITE_TRANSIENT
             ) == SQLITE_OK)
         {
             return true;
         }
+        error = sqlite3_errmsg(sqlite3_db_handle(statement));
+        return false;
+    }
+
+    [[nodiscard]] bool step_done(sqlite3_stmt* statement, std::string& error)
+    {
+        if (sqlite3_step(statement) == SQLITE_DONE)
+            return true;
         error = sqlite3_errmsg(sqlite3_db_handle(statement));
         return false;
     }
@@ -119,6 +128,100 @@ namespace
             && location.address <= static_cast<uint64_t>(
                 std::numeric_limits<sqlite3_int64>::max()
             );
+    }
+
+    [[nodiscard]] bool valid_model(const clover::analysis::program_model_t& model,
+                                   std::string& error)
+    {
+        for (const clover::analysis::instruction_fact_t& fact : model.instructions)
+        {
+            if (fact.stable_id.empty() || !valid_location(fact.location)
+                || fact.context.empty() || fact.encoded_size == 0u
+                || fact.encoded_size > 4u)
+            {
+                error = "Invalid analysis instruction";
+                return false;
+            }
+        }
+        for (const clover::analysis::basic_block_fact_t& fact : model.basic_blocks)
+        {
+            if (fact.stable_id.empty() || !valid_location(fact.start)
+                || !valid_location(fact.end) || fact.context.empty())
+            {
+                error = "Invalid analysis basic block";
+                return false;
+            }
+        }
+        for (const clover::analysis::function_fact_t& fact : model.functions)
+        {
+            if (fact.stable_id.empty() || !valid_location(fact.entry))
+            {
+                error = "Invalid analysis function";
+                return false;
+            }
+        }
+        for (const clover::analysis::function_block_fact_t& fact
+             : model.function_blocks)
+        {
+            if (fact.stable_id.empty() || fact.function_id.empty()
+                || fact.block_id.empty())
+            {
+                error = "Invalid analysis function membership";
+                return false;
+            }
+        }
+        for (const clover::analysis::edge_fact_t& fact : model.edges)
+        {
+            if (fact.stable_id.empty() || fact.source_block_id.empty()
+                || (fact.target.has_value() && !valid_location(*fact.target)))
+            {
+                error = "Invalid analysis edge";
+                return false;
+            }
+        }
+        for (const clover::analysis::cross_reference_fact_t& fact
+             : model.cross_references)
+        {
+            if (fact.stable_id.empty() || !valid_location(fact.source)
+                || !valid_location(fact.target))
+            {
+                error = "Invalid analysis cross-reference";
+                return false;
+            }
+        }
+        for (const clover::analysis::evidence_fact_t& fact : model.evidence)
+        {
+            if (fact.stable_id.empty() || fact.subject_id.empty()
+                || fact.observation_count == 0u
+                || fact.observation_count > static_cast<uint64_t>(
+                    std::numeric_limits<sqlite3_int64>::max()
+                ))
+            {
+                error = "Invalid analysis evidence";
+                return false;
+            }
+        }
+        for (const clover::analysis::conflict_fact_t& fact : model.conflicts)
+        {
+            if (fact.stable_id.empty() || !valid_location(fact.location))
+            {
+                error = "Invalid analysis conflict";
+                return false;
+            }
+        }
+        for (const clover::analysis::coverage_fact_t& fact : model.coverage)
+        {
+            if (!valid_location(fact.location) || fact.session.empty()
+                || fact.hit_count == 0u
+                || fact.hit_count > static_cast<uint64_t>(
+                    std::numeric_limits<sqlite3_int64>::max()
+                ))
+            {
+                error = "Invalid analysis coverage";
+                return false;
+            }
+        }
+        return true;
     }
 
     [[nodiscard]] bool begin_transaction(sqlite3* database, std::string& error)
@@ -236,6 +339,104 @@ namespace
         " ON debug_breakpoints(address_space,address);"
         "CREATE INDEX debug_watchpoints_location"
         " ON debug_watchpoints(address_space,address);"
+    };
+
+    constexpr const char* k_schema_v4{
+        "CREATE TABLE analysis_generations("
+        "generation INTEGER PRIMARY KEY CHECK(generation>=0),"
+        "analyzer_version TEXT NOT NULL,decoder_version TEXT NOT NULL,"
+        "input_fingerprint TEXT NOT NULL DEFAULT '',"
+        "published_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
+        "INSERT INTO analysis_generations("
+        "generation,analyzer_version,decoder_version,input_fingerprint)"
+        " SELECT generation,analyzer_version,decoder_version,'' FROM analysis_state;"
+        "CREATE TABLE analysis_instructions("
+        "generation INTEGER NOT NULL REFERENCES analysis_generations(generation)"
+        " ON DELETE CASCADE,"
+        "stable_id TEXT NOT NULL,address_space TEXT NOT NULL,address INTEGER NOT NULL,"
+        "context TEXT NOT NULL,opcode INTEGER NOT NULL CHECK(opcode BETWEEN 0 AND 255),"
+        "encoded_size INTEGER NOT NULL CHECK(encoded_size BETWEEN 1 AND 4),"
+        "code_identity INTEGER NOT NULL CHECK(code_identity BETWEEN 0 AND 2),"
+        "confidence INTEGER NOT NULL CHECK(confidence BETWEEN 0 AND 4),"
+        "PRIMARY KEY(generation,stable_id),"
+        "UNIQUE(generation,address_space,address,context));"
+        "CREATE TABLE analysis_basic_blocks("
+        "generation INTEGER NOT NULL REFERENCES analysis_generations(generation)"
+        " ON DELETE CASCADE,"
+        "stable_id TEXT NOT NULL,start_space TEXT NOT NULL,start_address INTEGER NOT NULL,"
+        "end_space TEXT NOT NULL,end_address INTEGER NOT NULL,context TEXT NOT NULL,"
+        "confidence INTEGER NOT NULL CHECK(confidence BETWEEN 0 AND 4),"
+        "PRIMARY KEY(generation,stable_id));"
+        "CREATE TABLE analysis_functions("
+        "generation INTEGER NOT NULL REFERENCES analysis_generations(generation)"
+        " ON DELETE CASCADE,"
+        "stable_id TEXT NOT NULL,entry_space TEXT NOT NULL,entry_address INTEGER NOT NULL,"
+        "confidence INTEGER NOT NULL CHECK(confidence BETWEEN 0 AND 4),"
+        "PRIMARY KEY(generation,stable_id),"
+        "UNIQUE(generation,entry_space,entry_address));"
+        "CREATE TABLE analysis_function_blocks("
+        "generation INTEGER NOT NULL REFERENCES analysis_generations(generation)"
+        " ON DELETE CASCADE,"
+        "stable_id TEXT NOT NULL,function_id TEXT NOT NULL,block_id TEXT NOT NULL,"
+        "PRIMARY KEY(generation,stable_id),"
+        "UNIQUE(generation,function_id,block_id),"
+        "FOREIGN KEY(generation,function_id)"
+        " REFERENCES analysis_functions(generation,stable_id) ON DELETE CASCADE,"
+        "FOREIGN KEY(generation,block_id)"
+        " REFERENCES analysis_basic_blocks(generation,stable_id) ON DELETE CASCADE);"
+        "CREATE TABLE analysis_edges("
+        "generation INTEGER NOT NULL REFERENCES analysis_generations(generation)"
+        " ON DELETE CASCADE,"
+        "stable_id TEXT NOT NULL,source_block_id TEXT NOT NULL,"
+        "target_block_id TEXT,target_space TEXT,target_address INTEGER,"
+        "kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 6),"
+        "confidence INTEGER NOT NULL CHECK(confidence BETWEEN 0 AND 4),"
+        "CHECK((target_space IS NULL)=(target_address IS NULL)),"
+        "PRIMARY KEY(generation,stable_id),"
+        "FOREIGN KEY(generation,source_block_id)"
+        " REFERENCES analysis_basic_blocks(generation,stable_id) ON DELETE CASCADE);"
+        "CREATE TABLE analysis_cross_references("
+        "generation INTEGER NOT NULL REFERENCES analysis_generations(generation)"
+        " ON DELETE CASCADE,"
+        "stable_id TEXT NOT NULL,source_space TEXT NOT NULL,source_address INTEGER NOT NULL,"
+        "target_space TEXT NOT NULL,target_address INTEGER NOT NULL,"
+        "kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 4),"
+        "confidence INTEGER NOT NULL CHECK(confidence BETWEEN 0 AND 4),"
+        "PRIMARY KEY(generation,stable_id));"
+        "CREATE TABLE analysis_evidence("
+        "generation INTEGER NOT NULL REFERENCES analysis_generations(generation)"
+        " ON DELETE CASCADE,"
+        "stable_id TEXT NOT NULL,subject_id TEXT NOT NULL,"
+        "kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 6),"
+        "source TEXT NOT NULL,session TEXT NOT NULL,"
+        "observation_count INTEGER NOT NULL CHECK(observation_count>0),"
+        "PRIMARY KEY(generation,stable_id));"
+        "CREATE TABLE analysis_conflicts("
+        "generation INTEGER NOT NULL REFERENCES analysis_generations(generation)"
+        " ON DELETE CASCADE,"
+        "stable_id TEXT NOT NULL,address_space TEXT NOT NULL,address INTEGER NOT NULL,"
+        "kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 7),detail TEXT NOT NULL,"
+        "PRIMARY KEY(generation,stable_id));"
+        "CREATE TABLE analysis_coverage("
+        "generation INTEGER NOT NULL REFERENCES analysis_generations(generation)"
+        " ON DELETE CASCADE,"
+        "address_space TEXT NOT NULL,address INTEGER NOT NULL,session TEXT NOT NULL,"
+        "hit_count INTEGER NOT NULL CHECK(hit_count>0),"
+        "PRIMARY KEY(generation,address_space,address,session));"
+        "CREATE INDEX analysis_instructions_location"
+        " ON analysis_instructions(generation,address_space,address);"
+        "CREATE INDEX analysis_blocks_location"
+        " ON analysis_basic_blocks(generation,start_space,start_address);"
+        "CREATE INDEX analysis_functions_location"
+        " ON analysis_functions(generation,entry_space,entry_address);"
+        "CREATE INDEX analysis_xrefs_source"
+        " ON analysis_cross_references(generation,source_space,source_address);"
+        "CREATE INDEX analysis_xrefs_target"
+        " ON analysis_cross_references(generation,target_space,target_address);"
+        "CREATE INDEX analysis_conflicts_location"
+        " ON analysis_conflicts(generation,address_space,address);"
+        "CREATE INDEX analysis_coverage_location"
+        " ON analysis_coverage(generation,address_space,address);"
     };
 }
 
@@ -374,8 +575,10 @@ namespace clover::workbench
             success = execute(_database, k_schema_v2, error);
         if (success && version <= 2)
             success = execute(_database, k_schema_v3, error);
+        if (success && version <= 3)
+            success = execute(_database, k_schema_v4, error);
         if (success)
-            success = execute(_database, "PRAGMA user_version=3;", error);
+            success = execute(_database, "PRAGMA user_version=4;", error);
         if (success)
             success = commit_transaction(_database, error);
         if (!success)
@@ -891,44 +1094,1009 @@ namespace clover::workbench
         std::string& error
     )
     {
-        if (_database == nullptr || analyzer_version.empty() || decoder_version.empty())
+        uint64_t generation{};
+        return publish_analysis(
+            {},
+            analyzer_version,
+            decoder_version,
+            {},
+            generation,
+            error
+        );
+    }
+
+    bool project_t::publish_analysis(
+        const analysis::program_model_t& model,
+        std::string_view analyzer_version,
+        std::string_view decoder_version,
+        std::string_view input_fingerprint,
+        uint64_t& generation,
+        std::string& error
+    )
+    {
+        generation = 0u;
+        error.clear();
+        if (_database == nullptr || analyzer_version.empty()
+            || decoder_version.empty() || !valid_model(model, error))
         {
-            error = "Invalid analysis generation";
+            if (error.empty())
+                error = "Invalid analysis generation";
             return false;
         }
         if (!begin_transaction(_database, error))
             return false;
-        bool success{
-            execute(_database, "DELETE FROM labels WHERE layer=2;", error)
-            && execute(_database, "DELETE FROM comments WHERE layer=2;", error)
-            && execute(_database, "DELETE FROM classifications WHERE layer=2;", error)
-            && execute(_database, "DELETE FROM symbols WHERE layer=2;", error)
-        };
-        statement_t statement{};
+
+        bool success{ true };
+        statement_t next_generation{};
+        if (!next_generation.prepare(
+                _database,
+                "SELECT COALESCE(MAX(generation),-1)+1"
+                " FROM analysis_generations;",
+                error
+            )
+            || sqlite3_step(next_generation.get()) != SQLITE_ROW)
+        {
+            if (error.empty())
+                error = sqlite3_errmsg(_database);
+            success = false;
+        }
         if (success)
         {
-            success = statement.prepare(
+            generation = static_cast<uint64_t>(
+                sqlite3_column_int64(next_generation.get(), 0)
+            );
+        }
+
+        statement_t insert_generation{};
+        if (success)
+        {
+            success = insert_generation.prepare(
                 _database,
-                "UPDATE analysis_state SET analyzer_version=?,decoder_version=?,"
-                "generation=generation+1 WHERE singleton=1;",
+                "INSERT INTO analysis_generations("
+                "generation,analyzer_version,decoder_version,input_fingerprint)"
+                " VALUES(?,?,?,?);",
                 error
             );
         }
         if (success)
-            success = bind_text(statement.get(), 1, analyzer_version, error);
-        if (success)
-            success = bind_text(statement.get(), 2, decoder_version, error);
+        {
+            sqlite3_bind_int64(
+                insert_generation.get(),
+                1,
+                static_cast<sqlite3_int64>(generation)
+            );
+            success = bind_text(
+                insert_generation.get(),
+                2,
+                analyzer_version,
+                error
+            ) && bind_text(
+                insert_generation.get(),
+                3,
+                decoder_version,
+                error
+            ) && bind_text(
+                insert_generation.get(),
+                4,
+                input_fingerprint,
+                error
+            ) && step_done(insert_generation.get(), error);
+        }
+
+        statement_t instruction{};
         if (success)
         {
-            success = sqlite3_step(statement.get()) == SQLITE_DONE;
+            success = instruction.prepare(
+                _database,
+                "INSERT INTO analysis_instructions("
+                "generation,stable_id,address_space,address,context,opcode,"
+                "encoded_size,code_identity,confidence)"
+                " VALUES(?,?,?,?,?,?,?,?,?);",
+                error
+            );
+        }
+        for (const analysis::instruction_fact_t& fact : model.instructions)
+        {
             if (!success)
-                error = sqlite3_errmsg(_database);
+                break;
+            sqlite3_reset(instruction.get());
+            sqlite3_clear_bindings(instruction.get());
+            sqlite3_bind_int64(
+                instruction.get(),
+                1,
+                static_cast<sqlite3_int64>(generation)
+            );
+            success = bind_text(instruction.get(), 2, fact.stable_id, error)
+                && bind_text(
+                    instruction.get(),
+                    3,
+                    fact.location.address_space,
+                    error
+                );
+            sqlite3_bind_int64(
+                instruction.get(),
+                4,
+                static_cast<sqlite3_int64>(fact.location.address)
+            );
+            success = success
+                && bind_text(instruction.get(), 5, fact.context, error);
+            sqlite3_bind_int(instruction.get(), 6, fact.opcode);
+            sqlite3_bind_int(instruction.get(), 7, fact.encoded_size);
+            sqlite3_bind_int(
+                instruction.get(),
+                8,
+                static_cast<int>(fact.code_identity)
+            );
+            sqlite3_bind_int(
+                instruction.get(),
+                9,
+                static_cast<int>(fact.confidence)
+            );
+            success = success && step_done(instruction.get(), error);
+        }
+
+        statement_t block{};
+        if (success)
+        {
+            success = block.prepare(
+                _database,
+                "INSERT INTO analysis_basic_blocks("
+                "generation,stable_id,start_space,start_address,end_space,"
+                "end_address,context,confidence) VALUES(?,?,?,?,?,?,?,?);",
+                error
+            );
+        }
+        for (const analysis::basic_block_fact_t& fact : model.basic_blocks)
+        {
+            if (!success)
+                break;
+            sqlite3_reset(block.get());
+            sqlite3_clear_bindings(block.get());
+            sqlite3_bind_int64(
+                block.get(),
+                1,
+                static_cast<sqlite3_int64>(generation)
+            );
+            success = bind_text(block.get(), 2, fact.stable_id, error)
+                && bind_text(block.get(), 3, fact.start.address_space, error);
+            sqlite3_bind_int64(
+                block.get(),
+                4,
+                static_cast<sqlite3_int64>(fact.start.address)
+            );
+            success = success
+                && bind_text(block.get(), 5, fact.end.address_space, error);
+            sqlite3_bind_int64(
+                block.get(),
+                6,
+                static_cast<sqlite3_int64>(fact.end.address)
+            );
+            success = success && bind_text(block.get(), 7, fact.context, error);
+            sqlite3_bind_int(
+                block.get(),
+                8,
+                static_cast<int>(fact.confidence)
+            );
+            success = success && step_done(block.get(), error);
+        }
+
+        statement_t function{};
+        if (success)
+        {
+            success = function.prepare(
+                _database,
+                "INSERT INTO analysis_functions("
+                "generation,stable_id,entry_space,entry_address,confidence)"
+                " VALUES(?,?,?,?,?);",
+                error
+            );
+        }
+        for (const analysis::function_fact_t& fact : model.functions)
+        {
+            if (!success)
+                break;
+            sqlite3_reset(function.get());
+            sqlite3_clear_bindings(function.get());
+            sqlite3_bind_int64(
+                function.get(),
+                1,
+                static_cast<sqlite3_int64>(generation)
+            );
+            success = bind_text(function.get(), 2, fact.stable_id, error)
+                && bind_text(function.get(), 3, fact.entry.address_space, error);
+            sqlite3_bind_int64(
+                function.get(),
+                4,
+                static_cast<sqlite3_int64>(fact.entry.address)
+            );
+            sqlite3_bind_int(
+                function.get(),
+                5,
+                static_cast<int>(fact.confidence)
+            );
+            success = success && step_done(function.get(), error);
+        }
+
+        statement_t function_block{};
+        if (success)
+        {
+            success = function_block.prepare(
+                _database,
+                "INSERT INTO analysis_function_blocks("
+                "generation,stable_id,function_id,block_id)"
+                " VALUES(?,?,?,?);",
+                error
+            );
+        }
+        for (const analysis::function_block_fact_t& fact
+             : model.function_blocks)
+        {
+            if (!success)
+                break;
+            sqlite3_reset(function_block.get());
+            sqlite3_clear_bindings(function_block.get());
+            sqlite3_bind_int64(
+                function_block.get(),
+                1,
+                static_cast<sqlite3_int64>(generation)
+            );
+            success = bind_text(
+                function_block.get(),
+                2,
+                fact.stable_id,
+                error
+            ) && bind_text(
+                function_block.get(),
+                3,
+                fact.function_id,
+                error
+            ) && bind_text(
+                function_block.get(),
+                4,
+                fact.block_id,
+                error
+            ) && step_done(function_block.get(), error);
+        }
+
+        statement_t edge{};
+        if (success)
+        {
+            success = edge.prepare(
+                _database,
+                "INSERT INTO analysis_edges("
+                "generation,stable_id,source_block_id,target_block_id,"
+                "target_space,target_address,kind,confidence)"
+                " VALUES(?,?,?,?,?,?,?,?);",
+                error
+            );
+        }
+        for (const analysis::edge_fact_t& fact : model.edges)
+        {
+            if (!success)
+                break;
+            sqlite3_reset(edge.get());
+            sqlite3_clear_bindings(edge.get());
+            sqlite3_bind_int64(
+                edge.get(),
+                1,
+                static_cast<sqlite3_int64>(generation)
+            );
+            success = bind_text(edge.get(), 2, fact.stable_id, error)
+                && bind_text(edge.get(), 3, fact.source_block_id, error);
+            if (fact.target_block_id.has_value())
+            {
+                success = success
+                    && bind_text(edge.get(), 4, *fact.target_block_id, error);
+            }
+            else
+            {
+                sqlite3_bind_null(edge.get(), 4);
+            }
+            if (fact.target.has_value())
+            {
+                success = success && bind_text(
+                    edge.get(),
+                    5,
+                    fact.target->address_space,
+                    error
+                );
+                sqlite3_bind_int64(
+                    edge.get(),
+                    6,
+                    static_cast<sqlite3_int64>(fact.target->address)
+                );
+            }
+            else
+            {
+                sqlite3_bind_null(edge.get(), 5);
+                sqlite3_bind_null(edge.get(), 6);
+            }
+            sqlite3_bind_int(edge.get(), 7, static_cast<int>(fact.kind));
+            sqlite3_bind_int(
+                edge.get(),
+                8,
+                static_cast<int>(fact.confidence)
+            );
+            success = success && step_done(edge.get(), error);
+        }
+
+        statement_t reference{};
+        if (success)
+        {
+            success = reference.prepare(
+                _database,
+                "INSERT INTO analysis_cross_references("
+                "generation,stable_id,source_space,source_address,target_space,"
+                "target_address,kind,confidence) VALUES(?,?,?,?,?,?,?,?);",
+                error
+            );
+        }
+        for (const analysis::cross_reference_fact_t& fact
+             : model.cross_references)
+        {
+            if (!success)
+                break;
+            sqlite3_reset(reference.get());
+            sqlite3_clear_bindings(reference.get());
+            sqlite3_bind_int64(
+                reference.get(),
+                1,
+                static_cast<sqlite3_int64>(generation)
+            );
+            success = bind_text(reference.get(), 2, fact.stable_id, error)
+                && bind_text(
+                    reference.get(),
+                    3,
+                    fact.source.address_space,
+                    error
+                );
+            sqlite3_bind_int64(
+                reference.get(),
+                4,
+                static_cast<sqlite3_int64>(fact.source.address)
+            );
+            success = success && bind_text(
+                reference.get(),
+                5,
+                fact.target.address_space,
+                error
+            );
+            sqlite3_bind_int64(
+                reference.get(),
+                6,
+                static_cast<sqlite3_int64>(fact.target.address)
+            );
+            sqlite3_bind_int(reference.get(), 7, static_cast<int>(fact.kind));
+            sqlite3_bind_int(
+                reference.get(),
+                8,
+                static_cast<int>(fact.confidence)
+            );
+            success = success && step_done(reference.get(), error);
+        }
+
+        statement_t evidence{};
+        if (success)
+        {
+            success = evidence.prepare(
+                _database,
+                "INSERT INTO analysis_evidence("
+                "generation,stable_id,subject_id,kind,source,session,"
+                "observation_count) VALUES(?,?,?,?,?,?,?);",
+                error
+            );
+        }
+        for (const analysis::evidence_fact_t& fact : model.evidence)
+        {
+            if (!success)
+                break;
+            sqlite3_reset(evidence.get());
+            sqlite3_clear_bindings(evidence.get());
+            sqlite3_bind_int64(
+                evidence.get(),
+                1,
+                static_cast<sqlite3_int64>(generation)
+            );
+            success = bind_text(evidence.get(), 2, fact.stable_id, error)
+                && bind_text(evidence.get(), 3, fact.subject_id, error);
+            sqlite3_bind_int(evidence.get(), 4, static_cast<int>(fact.kind));
+            success = success
+                && bind_text(evidence.get(), 5, fact.source, error)
+                && bind_text(evidence.get(), 6, fact.session, error);
+            sqlite3_bind_int64(
+                evidence.get(),
+                7,
+                static_cast<sqlite3_int64>(fact.observation_count)
+            );
+            success = success && step_done(evidence.get(), error);
+        }
+
+        statement_t conflict{};
+        if (success)
+        {
+            success = conflict.prepare(
+                _database,
+                "INSERT INTO analysis_conflicts("
+                "generation,stable_id,address_space,address,kind,detail)"
+                " VALUES(?,?,?,?,?,?);",
+                error
+            );
+        }
+        for (const analysis::conflict_fact_t& fact : model.conflicts)
+        {
+            if (!success)
+                break;
+            sqlite3_reset(conflict.get());
+            sqlite3_clear_bindings(conflict.get());
+            sqlite3_bind_int64(
+                conflict.get(),
+                1,
+                static_cast<sqlite3_int64>(generation)
+            );
+            success = bind_text(conflict.get(), 2, fact.stable_id, error)
+                && bind_text(
+                    conflict.get(),
+                    3,
+                    fact.location.address_space,
+                    error
+                );
+            sqlite3_bind_int64(
+                conflict.get(),
+                4,
+                static_cast<sqlite3_int64>(fact.location.address)
+            );
+            sqlite3_bind_int(conflict.get(), 5, static_cast<int>(fact.kind));
+            success = success && bind_text(
+                conflict.get(),
+                6,
+                fact.detail,
+                error
+            ) && step_done(conflict.get(), error);
+        }
+
+        statement_t coverage{};
+        if (success)
+        {
+            success = coverage.prepare(
+                _database,
+                "INSERT INTO analysis_coverage("
+                "generation,address_space,address,session,hit_count)"
+                " VALUES(?,?,?,?,?);",
+                error
+            );
+        }
+        for (const analysis::coverage_fact_t& fact : model.coverage)
+        {
+            if (!success)
+                break;
+            sqlite3_reset(coverage.get());
+            sqlite3_clear_bindings(coverage.get());
+            sqlite3_bind_int64(
+                coverage.get(),
+                1,
+                static_cast<sqlite3_int64>(generation)
+            );
+            success = bind_text(
+                coverage.get(),
+                2,
+                fact.location.address_space,
+                error
+            );
+            sqlite3_bind_int64(
+                coverage.get(),
+                3,
+                static_cast<sqlite3_int64>(fact.location.address)
+            );
+            success = success
+                && bind_text(coverage.get(), 4, fact.session, error);
+            sqlite3_bind_int64(
+                coverage.get(),
+                5,
+                static_cast<sqlite3_int64>(fact.hit_count)
+            );
+            success = success && step_done(coverage.get(), error);
+        }
+
+        statement_t publish{};
+        if (success)
+        {
+            success = publish.prepare(
+                _database,
+                "UPDATE analysis_state SET analyzer_version=?,decoder_version=?,"
+                "generation=? WHERE singleton=1;",
+                error
+            );
+        }
+        if (success)
+        {
+            success = bind_text(publish.get(), 1, analyzer_version, error)
+                && bind_text(publish.get(), 2, decoder_version, error);
+            sqlite3_bind_int64(
+                publish.get(),
+                3,
+                static_cast<sqlite3_int64>(generation)
+            );
+            success = success && step_done(publish.get(), error);
+        }
+        if (success)
+        {
+            success =
+                execute(_database, "DELETE FROM labels WHERE layer=2;", error)
+                && execute(_database, "DELETE FROM comments WHERE layer=2;", error)
+                && execute(
+                    _database,
+                    "DELETE FROM classifications WHERE layer=2;",
+                    error
+                )
+                && execute(_database, "DELETE FROM symbols WHERE layer=2;", error);
         }
         if (success)
             success = commit_transaction(_database, error);
         if (!success)
+        {
             rollback_transaction(_database);
+            generation = 0u;
+        }
         return success;
+    }
+
+    std::vector<analysis_generation_t> project_t::analysis_generations(
+        std::string& error
+    ) const
+    {
+        std::vector<analysis_generation_t> result{};
+        error.clear();
+        if (_database == nullptr)
+        {
+            error = "Workbench project is not open";
+            return result;
+        }
+        statement_t statement{};
+        if (!statement.prepare(
+                _database,
+                "SELECT g.generation,g.analyzer_version,g.decoder_version,"
+                "g.input_fingerprint,g.generation=s.generation"
+                " FROM analysis_generations g CROSS JOIN analysis_state s"
+                " WHERE s.singleton=1 ORDER BY g.generation;",
+                error
+            ))
+        {
+            return result;
+        }
+        int step_result{};
+        while ((step_result = sqlite3_step(statement.get())) == SQLITE_ROW)
+        {
+            result.push_back({
+                .generation = static_cast<uint64_t>(
+                    sqlite3_column_int64(statement.get(), 0)
+                ),
+                .analyzer_version = column_text(statement.get(), 1),
+                .decoder_version = column_text(statement.get(), 2),
+                .input_fingerprint = column_text(statement.get(), 3),
+                .current = sqlite3_column_int(statement.get(), 4) != 0
+            });
+        }
+        if (step_result != SQLITE_DONE)
+            error = sqlite3_errmsg(_database);
+        return result;
+    }
+
+    std::optional<analysis::program_model_t> project_t::current_analysis(
+        std::string& error
+    ) const
+    {
+        error.clear();
+        if (_database == nullptr)
+        {
+            error = "Workbench project is not open";
+            return std::nullopt;
+        }
+        const uint64_t generation{ analysis_generation(error) };
+        if (!error.empty())
+            return std::nullopt;
+        return analysis(generation, error);
+    }
+
+    std::optional<analysis::program_model_t> project_t::analysis(
+        uint64_t generation,
+        std::string& error
+    ) const
+    {
+        error.clear();
+        if (_database == nullptr
+            || generation > static_cast<uint64_t>(
+                std::numeric_limits<sqlite3_int64>::max()
+            ))
+        {
+            error = "Invalid analysis generation";
+            return std::nullopt;
+        }
+        statement_t exists{};
+        if (!exists.prepare(
+                _database,
+                "SELECT 1 FROM analysis_generations WHERE generation=?;",
+                error
+            ))
+        {
+            return std::nullopt;
+        }
+        sqlite3_bind_int64(
+            exists.get(),
+            1,
+            static_cast<sqlite3_int64>(generation)
+        );
+        if (sqlite3_step(exists.get()) != SQLITE_ROW)
+        {
+            error = "Analysis generation does not exist";
+            return std::nullopt;
+        }
+        analysis::program_model_t model{};
+        int step_result{};
+
+        statement_t instruction{};
+        if (!instruction.prepare(
+                _database,
+                "SELECT stable_id,address_space,address,context,opcode,"
+                "encoded_size,code_identity,confidence FROM analysis_instructions"
+                " WHERE generation=? ORDER BY stable_id;",
+                error
+            ))
+        {
+            return std::nullopt;
+        }
+        sqlite3_bind_int64(
+            instruction.get(),
+            1,
+            static_cast<sqlite3_int64>(generation)
+        );
+        while ((step_result = sqlite3_step(instruction.get())) == SQLITE_ROW)
+        {
+            model.instructions.push_back({
+                .stable_id = column_text(instruction.get(), 0),
+                .location = {
+                    .address_space = column_text(instruction.get(), 1),
+                    .address = static_cast<uint64_t>(
+                        sqlite3_column_int64(instruction.get(), 2)
+                    )
+                },
+                .context = column_text(instruction.get(), 3),
+                .opcode = static_cast<uint8_t>(
+                    sqlite3_column_int(instruction.get(), 4)
+                ),
+                .encoded_size = static_cast<uint8_t>(
+                    sqlite3_column_int(instruction.get(), 5)
+                ),
+                .code_identity = static_cast<analysis::code_identity_t>(
+                    sqlite3_column_int(instruction.get(), 6)
+                ),
+                .confidence = static_cast<analysis::confidence_t>(
+                    sqlite3_column_int(instruction.get(), 7)
+                )
+            });
+        }
+        if (step_result != SQLITE_DONE)
+        {
+            error = sqlite3_errmsg(_database);
+            return std::nullopt;
+        }
+
+        statement_t block{};
+        if (!block.prepare(
+                _database,
+                "SELECT stable_id,start_space,start_address,end_space,"
+                "end_address,context,confidence FROM analysis_basic_blocks"
+                " WHERE generation=? ORDER BY stable_id;",
+                error
+            ))
+        {
+            return std::nullopt;
+        }
+        sqlite3_bind_int64(
+            block.get(),
+            1,
+            static_cast<sqlite3_int64>(generation)
+        );
+        while ((step_result = sqlite3_step(block.get())) == SQLITE_ROW)
+        {
+            model.basic_blocks.push_back({
+                .stable_id = column_text(block.get(), 0),
+                .start = {
+                    .address_space = column_text(block.get(), 1),
+                    .address = static_cast<uint64_t>(
+                        sqlite3_column_int64(block.get(), 2)
+                    )
+                },
+                .end = {
+                    .address_space = column_text(block.get(), 3),
+                    .address = static_cast<uint64_t>(
+                        sqlite3_column_int64(block.get(), 4)
+                    )
+                },
+                .context = column_text(block.get(), 5),
+                .confidence = static_cast<analysis::confidence_t>(
+                    sqlite3_column_int(block.get(), 6)
+                )
+            });
+        }
+        if (step_result != SQLITE_DONE)
+        {
+            error = sqlite3_errmsg(_database);
+            return std::nullopt;
+        }
+
+        statement_t function{};
+        if (!function.prepare(
+                _database,
+                "SELECT stable_id,entry_space,entry_address,confidence"
+                " FROM analysis_functions WHERE generation=?"
+                " ORDER BY stable_id;",
+                error
+            ))
+        {
+            return std::nullopt;
+        }
+        sqlite3_bind_int64(
+            function.get(),
+            1,
+            static_cast<sqlite3_int64>(generation)
+        );
+        while ((step_result = sqlite3_step(function.get())) == SQLITE_ROW)
+        {
+            model.functions.push_back({
+                .stable_id = column_text(function.get(), 0),
+                .entry = {
+                    .address_space = column_text(function.get(), 1),
+                    .address = static_cast<uint64_t>(
+                        sqlite3_column_int64(function.get(), 2)
+                    )
+                },
+                .confidence = static_cast<analysis::confidence_t>(
+                    sqlite3_column_int(function.get(), 3)
+                )
+            });
+        }
+        if (step_result != SQLITE_DONE)
+        {
+            error = sqlite3_errmsg(_database);
+            return std::nullopt;
+        }
+
+        statement_t function_block{};
+        if (!function_block.prepare(
+                _database,
+                "SELECT stable_id,function_id,block_id"
+                " FROM analysis_function_blocks WHERE generation=?"
+                " ORDER BY stable_id;",
+                error
+            ))
+        {
+            return std::nullopt;
+        }
+        sqlite3_bind_int64(
+            function_block.get(),
+            1,
+            static_cast<sqlite3_int64>(generation)
+        );
+        while ((step_result = sqlite3_step(function_block.get())) == SQLITE_ROW)
+        {
+            model.function_blocks.push_back({
+                .stable_id = column_text(function_block.get(), 0),
+                .function_id = column_text(function_block.get(), 1),
+                .block_id = column_text(function_block.get(), 2)
+            });
+        }
+        if (step_result != SQLITE_DONE)
+        {
+            error = sqlite3_errmsg(_database);
+            return std::nullopt;
+        }
+
+        statement_t edge{};
+        if (!edge.prepare(
+                _database,
+                "SELECT stable_id,source_block_id,target_block_id,target_space,"
+                "target_address,kind,confidence FROM analysis_edges"
+                " WHERE generation=? ORDER BY stable_id;",
+                error
+            ))
+        {
+            return std::nullopt;
+        }
+        sqlite3_bind_int64(
+            edge.get(),
+            1,
+            static_cast<sqlite3_int64>(generation)
+        );
+        while ((step_result = sqlite3_step(edge.get())) == SQLITE_ROW)
+        {
+            analysis::edge_fact_t fact{
+                .stable_id = column_text(edge.get(), 0),
+                .source_block_id = column_text(edge.get(), 1),
+                .kind = static_cast<analysis::edge_kind_t>(
+                    sqlite3_column_int(edge.get(), 5)
+                ),
+                .confidence = static_cast<analysis::confidence_t>(
+                    sqlite3_column_int(edge.get(), 6)
+                )
+            };
+            if (sqlite3_column_type(edge.get(), 2) != SQLITE_NULL)
+                fact.target_block_id = column_text(edge.get(), 2);
+            if (sqlite3_column_type(edge.get(), 3) != SQLITE_NULL)
+            {
+                fact.target = analysis::address_t{
+                    .address_space = column_text(edge.get(), 3),
+                    .address = static_cast<uint64_t>(
+                        sqlite3_column_int64(edge.get(), 4)
+                    )
+                };
+            }
+            model.edges.push_back(std::move(fact));
+        }
+        if (step_result != SQLITE_DONE)
+        {
+            error = sqlite3_errmsg(_database);
+            return std::nullopt;
+        }
+
+        statement_t reference{};
+        if (!reference.prepare(
+                _database,
+                "SELECT stable_id,source_space,source_address,target_space,"
+                "target_address,kind,confidence FROM analysis_cross_references"
+                " WHERE generation=? ORDER BY stable_id;",
+                error
+            ))
+        {
+            return std::nullopt;
+        }
+        sqlite3_bind_int64(
+            reference.get(),
+            1,
+            static_cast<sqlite3_int64>(generation)
+        );
+        while ((step_result = sqlite3_step(reference.get())) == SQLITE_ROW)
+        {
+            model.cross_references.push_back({
+                .stable_id = column_text(reference.get(), 0),
+                .source = {
+                    .address_space = column_text(reference.get(), 1),
+                    .address = static_cast<uint64_t>(
+                        sqlite3_column_int64(reference.get(), 2)
+                    )
+                },
+                .target = {
+                    .address_space = column_text(reference.get(), 3),
+                    .address = static_cast<uint64_t>(
+                        sqlite3_column_int64(reference.get(), 4)
+                    )
+                },
+                .kind = static_cast<analysis::cross_reference_kind_t>(
+                    sqlite3_column_int(reference.get(), 5)
+                ),
+                .confidence = static_cast<analysis::confidence_t>(
+                    sqlite3_column_int(reference.get(), 6)
+                )
+            });
+        }
+        if (step_result != SQLITE_DONE)
+        {
+            error = sqlite3_errmsg(_database);
+            return std::nullopt;
+        }
+
+        statement_t evidence{};
+        if (!evidence.prepare(
+                _database,
+                "SELECT stable_id,subject_id,kind,source,session,"
+                "observation_count FROM analysis_evidence"
+                " WHERE generation=? ORDER BY stable_id;",
+                error
+            ))
+        {
+            return std::nullopt;
+        }
+        sqlite3_bind_int64(
+            evidence.get(),
+            1,
+            static_cast<sqlite3_int64>(generation)
+        );
+        while ((step_result = sqlite3_step(evidence.get())) == SQLITE_ROW)
+        {
+            model.evidence.push_back({
+                .stable_id = column_text(evidence.get(), 0),
+                .subject_id = column_text(evidence.get(), 1),
+                .kind = static_cast<analysis::evidence_kind_t>(
+                    sqlite3_column_int(evidence.get(), 2)
+                ),
+                .source = column_text(evidence.get(), 3),
+                .session = column_text(evidence.get(), 4),
+                .observation_count = static_cast<uint64_t>(
+                    sqlite3_column_int64(evidence.get(), 5)
+                )
+            });
+        }
+        if (step_result != SQLITE_DONE)
+        {
+            error = sqlite3_errmsg(_database);
+            return std::nullopt;
+        }
+
+        statement_t conflict{};
+        if (!conflict.prepare(
+                _database,
+                "SELECT stable_id,address_space,address,kind,detail"
+                " FROM analysis_conflicts WHERE generation=?"
+                " ORDER BY stable_id;",
+                error
+            ))
+        {
+            return std::nullopt;
+        }
+        sqlite3_bind_int64(
+            conflict.get(),
+            1,
+            static_cast<sqlite3_int64>(generation)
+        );
+        while ((step_result = sqlite3_step(conflict.get())) == SQLITE_ROW)
+        {
+            model.conflicts.push_back({
+                .stable_id = column_text(conflict.get(), 0),
+                .location = {
+                    .address_space = column_text(conflict.get(), 1),
+                    .address = static_cast<uint64_t>(
+                        sqlite3_column_int64(conflict.get(), 2)
+                    )
+                },
+                .kind = static_cast<analysis::conflict_kind_t>(
+                    sqlite3_column_int(conflict.get(), 3)
+                ),
+                .detail = column_text(conflict.get(), 4)
+            });
+        }
+        if (step_result != SQLITE_DONE)
+        {
+            error = sqlite3_errmsg(_database);
+            return std::nullopt;
+        }
+
+        statement_t coverage{};
+        if (!coverage.prepare(
+                _database,
+                "SELECT address_space,address,session,hit_count"
+                " FROM analysis_coverage WHERE generation=?"
+                " ORDER BY address_space,address,session;",
+                error
+            ))
+        {
+            return std::nullopt;
+        }
+        sqlite3_bind_int64(
+            coverage.get(),
+            1,
+            static_cast<sqlite3_int64>(generation)
+        );
+        while ((step_result = sqlite3_step(coverage.get())) == SQLITE_ROW)
+        {
+            model.coverage.push_back({
+                .location = {
+                    .address_space = column_text(coverage.get(), 0),
+                    .address = static_cast<uint64_t>(
+                        sqlite3_column_int64(coverage.get(), 1)
+                    )
+                },
+                .session = column_text(coverage.get(), 2),
+                .hit_count = static_cast<uint64_t>(
+                    sqlite3_column_int64(coverage.get(), 3)
+                )
+            });
+        }
+        if (step_result != SQLITE_DONE)
+        {
+            error = sqlite3_errmsg(_database);
+            return std::nullopt;
+        }
+
+        return model;
     }
 
     bool project_t::record_navigation(const address_key_t& location,

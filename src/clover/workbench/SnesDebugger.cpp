@@ -9,6 +9,9 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
+#include <limits>
+#include <utility>
 
 namespace
 {
@@ -56,13 +59,25 @@ namespace clover::workbench
     }
 
     bool snes_debugger_t::initialize(frontend::debug_target_t& target,
-                                     std::string& error)
+                                     std::string& error,
+                                     std::string analysis_session)
     {
         shutdown();
         error.clear();
         _breakpoints.clear();
         _watchpoints.clear();
         _control_flow.clear();
+        clear_runtime_evidence();
+        _analysis_session = std::move(analysis_session);
+        if (_analysis_session.empty())
+        {
+            _analysis_session = "debug-session-"
+                + std::to_string(
+                    std::chrono::steady_clock::now()
+                        .time_since_epoch()
+                        .count()
+                );
+        }
         _observed_calls = 0u;
         _observed_returns = 0u;
         _next_breakpoint_id = 1u;
@@ -238,16 +253,23 @@ namespace clover::workbench
             error = "Pause before stepping";
             return false;
         }
-        const auto instruction{ current_instruction(error) };
-        if (!instruction.has_value())
+        live_processor_state_t before_state{};
+        if (!snapshot(before_state, error) || _source == nullptr)
             return false;
-        if (instruction->control_flow != analysis::snes::control_flow_kind_t::call)
+        const analysis::snes::decoded_instruction_t instruction{
+            analysis::snes::decode_instruction(
+                *_source,
+                static_cast<uint32_t>(before_state.instruction_address.value),
+                before_state.decode_context
+            )
+        };
+        if (instruction.control_flow != analysis::snes::control_flow_kind_t::call)
             return execute_one(debugger_stop_reason_t::step_over, error);
         const frontend::debug_address_t return_address{
             frontend::snes_debug::k_cpu_bus_space,
             analysis::snes::advance_program_address(
-                instruction->address,
-                instruction->encoded_size
+                instruction.address,
+                instruction.encoded_size
             )
         };
         return begin_run(operation_t::step_over, return_address, error);
@@ -387,9 +409,16 @@ namespace clover::workbench
             error = "Debugger is not initialized";
             return false;
         }
-        const auto instruction{ current_instruction(error) };
-        if (!instruction.has_value())
+        live_processor_state_t before_state{};
+        if (!snapshot(before_state, error) || _source == nullptr)
             return false;
+        const analysis::snes::decoded_instruction_t instruction{
+            analysis::snes::decode_instruction(
+                *_source,
+                static_cast<uint32_t>(before_state.instruction_address.value),
+                before_state.decode_context
+            )
+        };
         _observations->clear_observations();
         const frontend::execution_step_result_t step{
             _execution->step_execution_domain(
@@ -415,7 +444,8 @@ namespace clover::workbench
             stop(debugger_stop_reason_t::error, {}, error);
             return false;
         }
-        observe_control_flow(*instruction, after_state.instruction_address);
+        observe_control_flow(instruction, after_state.instruction_address);
+        observe_runtime_edge(before_state, after_state);
         if (drain.events_dropped != 0u)
         {
             stop(
@@ -594,6 +624,70 @@ namespace clover::workbench
             _control_flow.erase(_control_flow.begin());
     }
 
+    void snes_debugger_t::observe_runtime_edge(
+        const live_processor_state_t& before,
+        const live_processor_state_t& after
+    )
+    {
+        const uint32_t from{
+            static_cast<uint32_t>(before.instruction_address.value) & 0x00ffffffu
+        };
+        const uint32_t to{
+            static_cast<uint32_t>(after.instruction_address.value) & 0x00ffffffu
+        };
+        const std::string key{
+            std::to_string(from) + ">" + std::to_string(to) + "|"
+            + analysis::snes::context_signature(before.decode_context) + "|"
+            + analysis::snes::context_signature(after.decode_context) + "|"
+            + _analysis_session
+        };
+        if (const auto found{ _runtime_edge_indexes.find(key) };
+            found != _runtime_edge_indexes.end())
+        {
+            uint64_t& hits{ _runtime_edges[found->second].hit_count };
+            if (hits != std::numeric_limits<uint64_t>::max())
+                ++hits;
+            return;
+        }
+        constexpr size_t k_maximum_runtime_edges{ 65536u };
+        if (_runtime_edges.size() >= k_maximum_runtime_edges)
+        {
+            if (_dropped_runtime_edges != std::numeric_limits<uint64_t>::max())
+                ++_dropped_runtime_edges;
+            return;
+        }
+        _runtime_edge_indexes.emplace(key, _runtime_edges.size());
+        const auto identity = [this](frontend::debug_address_t address)
+        {
+            if (_target != nullptr
+                && _target->translate_address(
+                    address,
+                    frontend::snes_debug::k_canonical_media_space
+                ).status == frontend::address_translation_status_t::complete)
+            {
+                return analysis::code_identity_t::canonical_media;
+            }
+            std::array<std::byte, 1> byte{};
+            if (_target != nullptr
+                && _target->inspect_memory(address, byte).status
+                    == frontend::memory_inspection_status_t::complete)
+            {
+                return analysis::code_identity_t::writable_memory;
+            }
+            return analysis::code_identity_t::unavailable;
+        };
+        _runtime_edges.push_back({
+            .from = from,
+            .to = to,
+            .context_before = before.decode_context,
+            .context_after = after.decode_context,
+            .from_identity = identity(before.instruction_address),
+            .to_identity = identity(after.instruction_address),
+            .session = _analysis_session,
+            .hit_count = 1u
+        });
+    }
+
     uint64_t snes_debugger_t::add_breakpoint(
         frontend::debug_address_t address,
         bool temporary
@@ -728,5 +822,28 @@ namespace clover::workbench
     uint64_t snes_debugger_t::observed_return_count() const noexcept
     {
         return _observed_returns;
+    }
+
+    const std::vector<analysis::snes::runtime_edge_t>&
+        snes_debugger_t::runtime_edges() const noexcept
+    {
+        return _runtime_edges;
+    }
+
+    uint64_t snes_debugger_t::dropped_runtime_edges() const noexcept
+    {
+        return _dropped_runtime_edges;
+    }
+
+    const std::string& snes_debugger_t::analysis_session() const noexcept
+    {
+        return _analysis_session;
+    }
+
+    void snes_debugger_t::clear_runtime_evidence() noexcept
+    {
+        _runtime_edges.clear();
+        _runtime_edge_indexes.clear();
+        _dropped_runtime_edges = 0u;
     }
 }

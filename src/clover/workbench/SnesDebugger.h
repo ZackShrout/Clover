@@ -5,6 +5,7 @@
 #pragma once
 
 #include "clover/analysis/snes/Decoder.h"
+#include "clover/analysis/snes/HybridAnalyzer.h"
 #include "clover/analysis/snes/StaticListing.h"
 #include "clover/frontend/DebugTarget.h"
 
@@ -14,6 +15,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace clover::workbench
@@ -109,7 +111,8 @@ namespace clover::workbench
         snes_debugger_t& operator=(const snes_debugger_t&) = delete;
 
         [[nodiscard]] bool initialize(frontend::debug_target_t& target,
-                                      std::string& error);
+                                      std::string& error,
+                                      std::string analysis_session = {});
         void shutdown() noexcept;
         [[nodiscard]] bool is_initialized() const noexcept;
         [[nodiscard]] debugger_run_state_t run_state() const noexcept;
@@ -149,6 +152,11 @@ namespace clover::workbench
             control_flow_observations() const noexcept;
         [[nodiscard]] uint64_t observed_call_count() const noexcept;
         [[nodiscard]] uint64_t observed_return_count() const noexcept;
+        [[nodiscard]] const std::vector<analysis::snes::runtime_edge_t>&
+            runtime_edges() const noexcept;
+        [[nodiscard]] uint64_t dropped_runtime_edges() const noexcept;
+        [[nodiscard]] const std::string& analysis_session() const noexcept;
+        void clear_runtime_evidence() noexcept;
 
     private:
         enum class operation_t : uint8_t
@@ -180,6 +188,10 @@ namespace clover::workbench
             const analysis::snes::decoded_instruction_t& instruction,
             frontend::debug_address_t after
         );
+        void observe_runtime_edge(
+            const live_processor_state_t& before,
+            const live_processor_state_t& after
+        );
 
         frontend::debug_target_t* _target{ nullptr };
         frontend::execution_control_t* _execution{ nullptr };
@@ -195,6 +207,10 @@ namespace clover::workbench
         std::vector<breakpoint_t> _breakpoints{};
         std::vector<watchpoint_t> _watchpoints{};
         std::vector<control_flow_observation_t> _control_flow{};
+        std::vector<analysis::snes::runtime_edge_t> _runtime_edges{};
+        std::unordered_map<std::string, size_t> _runtime_edge_indexes{};
+        std::string _analysis_session{};
+        uint64_t _dropped_runtime_edges{ 0 };
         uint64_t _observed_calls{ 0 };
         uint64_t _observed_returns{ 0 };
         uint64_t _next_breakpoint_id{ 1 };

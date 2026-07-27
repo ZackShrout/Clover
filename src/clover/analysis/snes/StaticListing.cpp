@@ -34,6 +34,13 @@ namespace clover::analysis::snes
         };
     }
 
+    byte_identity_t span_byte_source_t::identity(uint32_t cpu_address) const noexcept
+    {
+        return inspect(cpu_address).status == byte_inspection_status_t::available
+            ? byte_identity_t::canonical_media
+            : byte_identity_t::unavailable;
+    }
+
     debug_target_byte_source_t::debug_target_byte_source_t(
         const frontend::debug_target_t& target,
         frontend::address_space_id_t cpu_bus_space,
@@ -70,6 +77,24 @@ namespace clover::analysis::snes
             .status = byte_inspection_status_t::available,
             .value = std::to_integer<uint8_t>(byte[0])
         };
+    }
+
+    byte_identity_t debug_target_byte_source_t::identity(
+        uint32_t cpu_address
+    ) const noexcept
+    {
+        const frontend::debug_address_t address{
+            .space = _cpu_bus_space,
+            .value = cpu_address & 0x00ffffffu
+        };
+        if (_target.translate_address(address, _canonical_media_space).status
+            == frontend::address_translation_status_t::complete)
+        {
+            return byte_identity_t::canonical_media;
+        }
+        return inspect(cpu_address).status == byte_inspection_status_t::available
+            ? byte_identity_t::writable_memory
+            : byte_identity_t::unavailable;
     }
 
     static_listing_result_t build_static_listing(

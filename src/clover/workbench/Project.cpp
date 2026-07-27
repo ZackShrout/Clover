@@ -218,6 +218,25 @@ namespace
         "CREATE INDEX classifications_location ON classifications(address_space,address);"
         "CREATE INDEX symbols_location ON symbols(address_space,address);"
     };
+
+    constexpr const char* k_schema_v3{
+        "CREATE TABLE debug_breakpoints("
+        "id INTEGER PRIMARY KEY,address_space TEXT NOT NULL,address INTEGER NOT NULL,"
+        "enabled INTEGER NOT NULL CHECK(enabled IN(0,1)),"
+        "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+        "UNIQUE(address_space,address));"
+        "CREATE TABLE debug_watchpoints("
+        "id INTEGER PRIMARY KEY,address_space TEXT NOT NULL,address INTEGER NOT NULL,"
+        "length INTEGER NOT NULL CHECK(length>0),"
+        "access INTEGER NOT NULL CHECK(access BETWEEN 1 AND 3),"
+        "enabled INTEGER NOT NULL CHECK(enabled IN(0,1)),"
+        "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+        "UNIQUE(address_space,address,length,access));"
+        "CREATE INDEX debug_breakpoints_location"
+        " ON debug_breakpoints(address_space,address);"
+        "CREATE INDEX debug_watchpoints_location"
+        " ON debug_watchpoints(address_space,address);"
+    };
 }
 
 namespace clover::workbench
@@ -353,8 +372,10 @@ namespace clover::workbench
             success = execute(_database, k_schema_v1, error);
         if (success && version <= 1)
             success = execute(_database, k_schema_v2, error);
+        if (success && version <= 2)
+            success = execute(_database, k_schema_v3, error);
         if (success)
-            success = execute(_database, "PRAGMA user_version=2;", error);
+            success = execute(_database, "PRAGMA user_version=3;", error);
         if (success)
             success = commit_transaction(_database, error);
         if (!success)
@@ -1113,6 +1134,249 @@ namespace clover::workbench
                     )
                 },
                 .view = column_text(statement.get(), 3)
+            });
+        }
+        if (step_result != SQLITE_DONE)
+            error = sqlite3_errmsg(_database);
+        return result;
+    }
+
+    bool project_t::set_debug_breakpoint(const address_key_t& location,
+                                         bool enabled,
+                                         std::string& error)
+    {
+        if (_database == nullptr || !valid_location(location))
+        {
+            error = "Invalid debugger breakpoint";
+            return false;
+        }
+        statement_t statement{};
+        if (!statement.prepare(
+                _database,
+                "INSERT INTO debug_breakpoints(address_space,address,enabled)"
+                " VALUES(?,?,?)"
+                " ON CONFLICT(address_space,address) DO UPDATE SET"
+                " enabled=excluded.enabled;",
+                error
+            )
+            || !bind_text(statement.get(), 1, location.address_space, error))
+        {
+            return false;
+        }
+        sqlite3_bind_int64(
+            statement.get(),
+            2,
+            static_cast<sqlite3_int64>(location.address)
+        );
+        sqlite3_bind_int(statement.get(), 3, enabled ? 1 : 0);
+        if (sqlite3_step(statement.get()) != SQLITE_DONE)
+        {
+            error = sqlite3_errmsg(_database);
+            return false;
+        }
+        return true;
+    }
+
+    bool project_t::remove_debug_breakpoint(const address_key_t& location,
+                                            std::string& error)
+    {
+        if (_database == nullptr || !valid_location(location))
+        {
+            error = "Invalid debugger breakpoint";
+            return false;
+        }
+        statement_t statement{};
+        if (!statement.prepare(
+                _database,
+                "DELETE FROM debug_breakpoints"
+                " WHERE address_space=? AND address=?;",
+                error
+            )
+            || !bind_text(statement.get(), 1, location.address_space, error))
+        {
+            return false;
+        }
+        sqlite3_bind_int64(
+            statement.get(),
+            2,
+            static_cast<sqlite3_int64>(location.address)
+        );
+        if (sqlite3_step(statement.get()) != SQLITE_DONE)
+        {
+            error = sqlite3_errmsg(_database);
+            return false;
+        }
+        return true;
+    }
+
+    std::vector<project_breakpoint_t> project_t::debug_breakpoints(
+        std::string& error
+    ) const
+    {
+        std::vector<project_breakpoint_t> result{};
+        if (_database == nullptr)
+        {
+            error = "Workbench project is not open";
+            return result;
+        }
+        statement_t statement{};
+        if (!statement.prepare(
+                _database,
+                "SELECT id,address_space,address,enabled"
+                " FROM debug_breakpoints ORDER BY id;",
+                error
+            ))
+        {
+            return result;
+        }
+        int step_result{};
+        while ((step_result = sqlite3_step(statement.get())) == SQLITE_ROW)
+        {
+            result.push_back({
+                .id = sqlite3_column_int64(statement.get(), 0),
+                .location = {
+                    .address_space = column_text(statement.get(), 1),
+                    .address = static_cast<uint64_t>(
+                        sqlite3_column_int64(statement.get(), 2)
+                    )
+                },
+                .enabled = sqlite3_column_int(statement.get(), 3) != 0
+            });
+        }
+        if (step_result != SQLITE_DONE)
+            error = sqlite3_errmsg(_database);
+        return result;
+    }
+
+    bool project_t::set_debug_watchpoint(
+        const address_key_t& location,
+        uint64_t length,
+        project_watch_access_t access,
+        bool enabled,
+        std::string& error
+    )
+    {
+        const int access_value{ static_cast<int>(access) };
+        if (_database == nullptr || !valid_location(location) || length == 0u
+            || length > static_cast<uint64_t>(
+                std::numeric_limits<sqlite3_int64>::max()
+            )
+            || access_value < static_cast<int>(project_watch_access_t::read)
+            || access_value
+                > static_cast<int>(project_watch_access_t::read_write))
+        {
+            error = "Invalid debugger watchpoint";
+            return false;
+        }
+        statement_t statement{};
+        if (!statement.prepare(
+                _database,
+                "INSERT INTO debug_watchpoints("
+                "address_space,address,length,access,enabled) VALUES(?,?,?,?,?)"
+                " ON CONFLICT(address_space,address,length,access) DO UPDATE SET"
+                " enabled=excluded.enabled;",
+                error
+            )
+            || !bind_text(statement.get(), 1, location.address_space, error))
+        {
+            return false;
+        }
+        sqlite3_bind_int64(
+            statement.get(),
+            2,
+            static_cast<sqlite3_int64>(location.address)
+        );
+        sqlite3_bind_int64(statement.get(), 3, static_cast<sqlite3_int64>(length));
+        sqlite3_bind_int(statement.get(), 4, access_value);
+        sqlite3_bind_int(statement.get(), 5, enabled ? 1 : 0);
+        if (sqlite3_step(statement.get()) != SQLITE_DONE)
+        {
+            error = sqlite3_errmsg(_database);
+            return false;
+        }
+        return true;
+    }
+
+    bool project_t::remove_debug_watchpoint(
+        const address_key_t& location,
+        uint64_t length,
+        project_watch_access_t access,
+        std::string& error
+    )
+    {
+        const int access_value{ static_cast<int>(access) };
+        if (_database == nullptr || !valid_location(location) || length == 0u
+            || access_value < static_cast<int>(project_watch_access_t::read)
+            || access_value
+                > static_cast<int>(project_watch_access_t::read_write))
+        {
+            error = "Invalid debugger watchpoint";
+            return false;
+        }
+        statement_t statement{};
+        if (!statement.prepare(
+                _database,
+                "DELETE FROM debug_watchpoints WHERE"
+                " address_space=? AND address=? AND length=? AND access=?;",
+                error
+            )
+            || !bind_text(statement.get(), 1, location.address_space, error))
+        {
+            return false;
+        }
+        sqlite3_bind_int64(
+            statement.get(),
+            2,
+            static_cast<sqlite3_int64>(location.address)
+        );
+        sqlite3_bind_int64(statement.get(), 3, static_cast<sqlite3_int64>(length));
+        sqlite3_bind_int(statement.get(), 4, access_value);
+        if (sqlite3_step(statement.get()) != SQLITE_DONE)
+        {
+            error = sqlite3_errmsg(_database);
+            return false;
+        }
+        return true;
+    }
+
+    std::vector<project_watchpoint_t> project_t::debug_watchpoints(
+        std::string& error
+    ) const
+    {
+        std::vector<project_watchpoint_t> result{};
+        if (_database == nullptr)
+        {
+            error = "Workbench project is not open";
+            return result;
+        }
+        statement_t statement{};
+        if (!statement.prepare(
+                _database,
+                "SELECT id,address_space,address,length,access,enabled"
+                " FROM debug_watchpoints ORDER BY id;",
+                error
+            ))
+        {
+            return result;
+        }
+        int step_result{};
+        while ((step_result = sqlite3_step(statement.get())) == SQLITE_ROW)
+        {
+            result.push_back({
+                .id = sqlite3_column_int64(statement.get(), 0),
+                .location = {
+                    .address_space = column_text(statement.get(), 1),
+                    .address = static_cast<uint64_t>(
+                        sqlite3_column_int64(statement.get(), 2)
+                    )
+                },
+                .length = static_cast<uint64_t>(
+                    sqlite3_column_int64(statement.get(), 3)
+                ),
+                .access = static_cast<project_watch_access_t>(
+                    sqlite3_column_int(statement.get(), 4)
+                ),
+                .enabled = sqlite3_column_int(statement.get(), 5) != 0
             });
         }
         if (step_result != SQLITE_DONE)

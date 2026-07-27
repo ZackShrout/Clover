@@ -65,6 +65,12 @@ namespace clover::frontend
             debug_address_t source,
             address_space_id_t destination_space
         ) const noexcept override;
+        [[nodiscard]] std::span<const processor_register_descriptor_t>
+            processor_registers(execution_domain_id_t domain) const noexcept override;
+        [[nodiscard]] processor_state_result_t inspect_processor_state(
+            execution_domain_id_t domain,
+            std::span<processor_register_value_t> destination
+        ) const noexcept override;
         [[nodiscard]] execution_control_t* execution_control() noexcept override;
         [[nodiscard]] execution_step_result_t step_execution_domain(
             execution_domain_id_t domain
@@ -150,6 +156,18 @@ namespace clover::frontend
                 16u,
                 0x00010000u
             }
+        };
+        std::array<processor_register_descriptor_t, 10> _main_cpu_registers{
+            processor_register_descriptor_t{ "pc", "PC", 16u },
+            processor_register_descriptor_t{ "sp", "SP", 16u },
+            processor_register_descriptor_t{ "a", "A", 16u },
+            processor_register_descriptor_t{ "x", "X", 16u },
+            processor_register_descriptor_t{ "y", "Y", 16u },
+            processor_register_descriptor_t{ "d", "D", 16u },
+            processor_register_descriptor_t{ "p", "P", 8u },
+            processor_register_descriptor_t{ "db", "DB", 8u },
+            processor_register_descriptor_t{ "pb", "PB", 8u },
+            processor_register_descriptor_t{ "e", "E", 1u }
         };
         static constexpr size_t k_observation_capacity{ 1024u };
         std::unique_ptr<core::snes_observation_event_t[]> _observation_storage{};

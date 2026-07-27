@@ -19,7 +19,7 @@ struct sqlite3;
 
 namespace clover::workbench
 {
-    inline constexpr uint32_t k_project_schema_version{ 2u };
+    inline constexpr uint32_t k_project_schema_version{ 3u };
     inline constexpr std::string_view k_analyzer_version{ "clover-analyzer-1" };
     inline constexpr std::string_view k_decoder_version{ "wdc65c816-decoder-1" };
 
@@ -94,6 +94,29 @@ namespace clover::workbench
         std::string view{};
     };
 
+    struct project_breakpoint_t
+    {
+        int64_t id{ 0 };
+        address_key_t location{};
+        bool enabled{ true };
+    };
+
+    enum class project_watch_access_t : uint8_t
+    {
+        read = 1u << 0u,
+        write = 1u << 1u,
+        read_write = (1u << 0u) | (1u << 1u)
+    };
+
+    struct project_watchpoint_t
+    {
+        int64_t id{ 0 };
+        address_key_t location{};
+        uint64_t length{ 1 };
+        project_watch_access_t access{ project_watch_access_t::read_write };
+        bool enabled{ true };
+    };
+
     class project_t
     {
     public:
@@ -165,6 +188,32 @@ namespace clover::workbench
             std::string& error
         );
         [[nodiscard]] std::vector<navigation_entry_t> navigation_history(
+            std::string& error
+        ) const;
+        [[nodiscard]] bool set_debug_breakpoint(const address_key_t& location,
+                                                bool enabled,
+                                                std::string& error);
+        [[nodiscard]] bool remove_debug_breakpoint(
+            const address_key_t& location,
+            std::string& error
+        );
+        [[nodiscard]] std::vector<project_breakpoint_t> debug_breakpoints(
+            std::string& error
+        ) const;
+        [[nodiscard]] bool set_debug_watchpoint(
+            const address_key_t& location,
+            uint64_t length,
+            project_watch_access_t access,
+            bool enabled,
+            std::string& error
+        );
+        [[nodiscard]] bool remove_debug_watchpoint(
+            const address_key_t& location,
+            uint64_t length,
+            project_watch_access_t access,
+            std::string& error
+        );
+        [[nodiscard]] std::vector<project_watchpoint_t> debug_watchpoints(
             std::string& error
         ) const;
 

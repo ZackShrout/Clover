@@ -389,6 +389,71 @@ namespace clover::frontend
         };
     }
 
+    std::span<const processor_register_descriptor_t>
+        snes_emulator_core_t::processor_registers(
+            execution_domain_id_t domain
+        ) const noexcept
+    {
+        if (domain == snes_debug::k_main_cpu_domain)
+            return _main_cpu_registers;
+        return {};
+    }
+
+    processor_state_result_t snes_emulator_core_t::inspect_processor_state(
+        execution_domain_id_t domain,
+        std::span<processor_register_value_t> destination
+    ) const noexcept
+    {
+        if (domain != snes_debug::k_main_cpu_domain)
+        {
+            return {
+                .status = domain == snes_debug::k_audio_cpu_domain
+                    ? processor_state_status_t::unsupported
+                    : processor_state_status_t::invalid_domain,
+                .domain = domain
+            };
+        }
+        if (!_machine_running)
+        {
+            return {
+                .status = processor_state_status_t::not_running,
+                .domain = domain
+            };
+        }
+        if (destination.size() < _main_cpu_registers.size())
+        {
+            return {
+                .status = processor_state_status_t::insufficient_storage,
+                .domain = domain
+            };
+        }
+
+        const core::cpu_state_t& cpu{ _console.cpu_state() };
+        const std::array<uint64_t, 10> values{
+            cpu.pc,
+            cpu.sp,
+            cpu.a,
+            cpu.x,
+            cpu.y,
+            cpu.d,
+            cpu.p,
+            cpu.db,
+            cpu.pb,
+            cpu.emulation_mode ? 1u : 0u
+        };
+        for (size_t index{ 0 }; index < values.size(); ++index)
+            destination[index].value = values[index];
+        return {
+            .status = processor_state_status_t::complete,
+            .domain = domain,
+            .instruction_address = {
+                .space = snes_debug::k_cpu_bus_space,
+                .value = (static_cast<uint32_t>(cpu.pb) << 16u) | cpu.pc
+            },
+            .registers_written = values.size()
+        };
+    }
+
     execution_control_t* snes_emulator_core_t::execution_control() noexcept
     {
         return this;
@@ -450,7 +515,7 @@ namespace clover::frontend
 
     observation_mask_t snes_emulator_core_t::available_observations() const noexcept
     {
-        return k_observe_execution_boundary;
+        return k_observe_execution_boundary | k_observe_memory_access;
     }
 
     observation_mask_t snes_emulator_core_t::observation_mask() const noexcept
@@ -483,9 +548,14 @@ namespace clover::frontend
                 return false;
         }
 
+        core::snes_observation_mask_t core_mask{};
+        if ((mask & k_observe_execution_boundary) != 0u)
+            core_mask |= core::k_snes_observe_cpu_boundary;
+        if ((mask & k_observe_memory_access) != 0u)
+            core_mask |= core::k_snes_observe_cpu_memory_access;
         _observation_sink.configure(
             { _observation_storage.get(), k_observation_capacity },
-            core::k_snes_observe_cpu_boundary
+            core_mask
         );
         _console.set_observation_sink(&_observation_sink);
         _observation_mask = mask;
@@ -503,25 +573,51 @@ namespace clover::frontend
         for (size_t index{ 0 }; index < count; ++index)
         {
             const core::snes_observation_event_t& event{ source[index] };
-            destination[index] = {
-                .kind = observation_kind_t::execution_boundary,
+            observation_event_t translated{
+                .kind = event.kind == core::snes_observation_kind_t::cpu_boundary
+                    ? observation_kind_t::execution_boundary
+                    : observation_kind_t::memory_access,
                 .domain = snes_debug::k_main_cpu_domain,
                 .machine_clock = event.master_clock,
-                .frame_index = event.frame_index,
-                .execution_boundary = {
+                .frame_index = event.frame_index
+            };
+            if (event.kind == core::snes_observation_kind_t::cpu_boundary)
+            {
+                translated.execution_boundary = {
                     .boundary = execution_boundary(event.cpu_boundary.boundary),
                     .address_before = {
                         .space = snes_debug::k_cpu_bus_space,
-                        .value = (static_cast<uint32_t>(event.cpu_boundary.state_before.pb) << 16u)
-                            | event.cpu_boundary.state_before.pc
+                        .value = (static_cast<uint32_t>(
+                            event.cpu_boundary.state_before.pb
+                        ) << 16u) | event.cpu_boundary.state_before.pc
                     },
                     .address_after = {
                         .space = snes_debug::k_cpu_bus_space,
-                        .value = (static_cast<uint32_t>(event.cpu_boundary.state_after.pb) << 16u)
-                            | event.cpu_boundary.state_after.pc
+                        .value = (static_cast<uint32_t>(
+                            event.cpu_boundary.state_after.pb
+                        ) << 16u) | event.cpu_boundary.state_after.pc
                     }
-                }
-            };
+                };
+            }
+            else
+            {
+                translated.memory_access = {
+                    .kind = event.cpu_memory_access.kind
+                            == core::snes_memory_access_kind_t::write
+                        ? memory_access_kind_t::write
+                        : memory_access_kind_t::read,
+                    .address = {
+                        .space = snes_debug::k_cpu_bus_space,
+                        .value = event.cpu_memory_access.address
+                    },
+                    .value = event.cpu_memory_access.value,
+                    .instruction_address = {
+                        .space = snes_debug::k_cpu_bus_space,
+                        .value = event.cpu_memory_access.instruction_address
+                    }
+                };
+            }
+            destination[index] = translated;
         }
         _observation_sink.discard(count);
         return {

@@ -144,7 +144,15 @@ int main()
             "recursive-descent",
             error
         )
-        || !project.import_snes_hardware_symbols(error))
+        || !project.import_snes_hardware_symbols(error)
+        || !project.set_debug_breakpoint(reset_entry, true, error)
+        || !project.set_debug_watchpoint(
+            { "snes.cpu-bus", 0x002100u },
+            1u,
+            project_watch_access_t::write,
+            true,
+            error
+        ))
     {
         return fail("write_facts", error);
     }
@@ -215,7 +223,11 @@ int main()
     if (project.labels(error).size() != 2u
         || project.comments(error).size() != 1u
         || project.bookmarks(error).size() != 1u
-        || project.classifications(error).size() != 1u)
+        || project.classifications(error).size() != 1u
+        || project.debug_breakpoints(error).size() != 1u
+        || project.debug_watchpoints(error).size() != 1u
+        || project.debug_watchpoints(error).front().access
+            != project_watch_access_t::write)
     {
         return fail("durable_user_knowledge", error);
     }
@@ -276,6 +288,8 @@ int main()
     if (sqlite3_open(expected_path_utf8.c_str(), &migration_database) != SQLITE_OK)
         return fail("open_migration_fixture");
     const char* downgrade_sql{
+        "DROP TABLE debug_watchpoints;"
+        "DROP TABLE debug_breakpoints;"
         "DROP TABLE navigation_state;"
         "DROP TABLE navigation_history;"
         "DROP TABLE analysis_state;"
@@ -347,7 +361,7 @@ int main()
 
     std::printf(
         "Workbench project tests passed: identity, migrations, facts, "
-        "invalidation, symbols, and navigation\n"
+        "invalidation, symbols, debugger points, and navigation\n"
     );
     return 0;
 }

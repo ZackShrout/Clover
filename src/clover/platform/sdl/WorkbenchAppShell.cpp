@@ -11,10 +11,12 @@
 #include "clover/frontend/SnesEmulatorCore.h"
 #include "clover/utils/FileSystem.h"
 #include "clover/workbench/Project.h"
+#include "clover/workbench/SnesDebugger.h"
 
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -49,7 +51,8 @@ namespace
     {
         none,
         label,
-        comment
+        comment,
+        watchpoint
     };
 
     [[nodiscard]] bool parse_address(std::string value, uint32_t& address)
@@ -196,6 +199,46 @@ namespace
         };
         return found == facts.end() ? nullptr : &*found;
     }
+
+    [[nodiscard]] std::string formatted_memory(
+        std::span<const std::byte> bytes
+    )
+    {
+        std::ostringstream output{};
+        output << std::uppercase << std::hex << std::setfill('0');
+        for (size_t index{ 0 }; index < bytes.size(); ++index)
+        {
+            if (index != 0u)
+                output << ' ';
+            output << std::setw(2)
+                   << static_cast<uint32_t>(std::to_integer<uint8_t>(bytes[index]));
+        }
+        return output.str();
+    }
+
+    [[nodiscard]] std::string stop_reason_name(
+        clover::workbench::debugger_stop_reason_t reason
+    )
+    {
+        using clover::workbench::debugger_stop_reason_t;
+        switch (reason)
+        {
+        case debugger_stop_reason_t::none: return "ready";
+        case debugger_stop_reason_t::pause: return "paused";
+        case debugger_stop_reason_t::instruction_step: return "instruction step";
+        case debugger_stop_reason_t::breakpoint: return "breakpoint";
+        case debugger_stop_reason_t::watchpoint: return "watchpoint";
+        case debugger_stop_reason_t::run_to_cursor: return "run to cursor";
+        case debugger_stop_reason_t::step_over: return "step over";
+        case debugger_stop_reason_t::step_out: return "step out";
+        case debugger_stop_reason_t::waiting: return "CPU waiting";
+        case debugger_stop_reason_t::processor_stopped: return "CPU stopped";
+        case debugger_stop_reason_t::observation_overflow:
+            return "observation overflow";
+        case debugger_stop_reason_t::error: return "debugger error";
+        }
+        return "debugger";
+    }
 }
 
 namespace clover::platform
@@ -230,7 +273,7 @@ namespace clover::platform
             std::fprintf(stderr, "ROM was not recognized as supported SNES media.\n");
             return 1;
         }
-        const frontend::debug_target_t* const target{ core->debug_target() };
+        frontend::debug_target_t* const target{ core->debug_target() };
         if (target == nullptr)
         {
             std::fprintf(stderr, "SNES debug target is unavailable.\n");
@@ -282,6 +325,54 @@ namespace clover::platform
             return 1;
         }
 
+        core->power_on();
+        workbench::snes_debugger_t debugger{};
+        if (!debugger.initialize(*target, error))
+        {
+            std::fprintf(stderr, "Unable to attach debugger: %s\n", error.c_str());
+            return 1;
+        }
+        error.clear();
+        for (const workbench::project_breakpoint_t& saved
+             : project.debug_breakpoints(error))
+        {
+            const uint64_t id{
+                debugger.add_breakpoint({
+                    frontend::snes_debug::k_cpu_bus_space,
+                    saved.location.address
+                })
+            };
+            static_cast<void>(
+                debugger.set_breakpoint_enabled(id, saved.enabled)
+            );
+        }
+        for (const workbench::project_watchpoint_t& saved
+             : project.debug_watchpoints(error))
+        {
+            const uint64_t id{
+                debugger.add_watchpoint(
+                    {
+                        frontend::snes_debug::k_cpu_bus_space,
+                        saved.location.address
+                    },
+                    saved.length,
+                    static_cast<workbench::watch_access_t>(saved.access)
+                )
+            };
+            static_cast<void>(
+                debugger.set_watchpoint_enabled(id, saved.enabled)
+            );
+        }
+        if (!error.empty())
+        {
+            std::fprintf(
+                stderr,
+                "Unable to restore debugger points: %s\n",
+                error.c_str()
+            );
+            return 1;
+        }
+
         if (!SDL_Init(SDL_INIT_VIDEO))
         {
             std::fprintf(stderr, "SDL initialization failed: %s\n", SDL_GetError());
@@ -313,13 +404,8 @@ namespace clover::platform
             return 1;
         }
 
-        analysis::snes::cpu_decode_context_t context{
-            .emulation = analysis::snes::bit_state_t::set,
-            .accumulator_width = analysis::snes::bit_state_t::set,
-            .index_width = analysis::snes::bit_state_t::set,
-            .direct_page = 0u,
-            .data_bank = 0u
-        };
+        analysis::snes::cpu_decode_context_t context{};
+        workbench::live_processor_state_t live_state{};
         analysis::snes::static_listing_result_t listing{};
         std::vector<workbench::named_fact_t> labels{};
         std::vector<workbench::named_fact_t> comments{};
@@ -362,8 +448,45 @@ namespace clover::platform
 
         while (running)
         {
+            const bool debugger_was_running{
+                debugger.run_state() == workbench::debugger_run_state_t::running
+            };
+            if (debugger.run_state() == workbench::debugger_run_state_t::running)
+            {
+                error.clear();
+                static_cast<void>(debugger.pump(1000u, error));
+                if (!error.empty())
+                    status = error;
+            }
+            const workbench::debugger_run_state_t debugger_state{
+                debugger.run_state()
+            };
+            if (debugger_was_running
+                && debugger_state == workbench::debugger_run_state_t::stopped)
+            {
+                error.clear();
+                if (debugger.live_state(live_state, error))
+                {
+                    listing_address = static_cast<uint32_t>(
+                        live_state.instruction_address.value
+                    );
+                    selected = 0u;
+                    refresh_listing = true;
+                    status = "Stopped: "
+                        + stop_reason_name(debugger.last_stop().reason);
+                    if (!debugger.last_stop().detail.empty())
+                        status += " - " + debugger.last_stop().detail;
+                }
+                else
+                {
+                    status = error;
+                }
+            }
             if (refresh_listing)
             {
+                error.clear();
+                if (debugger.live_state(live_state, error))
+                    context = live_state.decode_context;
                 listing = analysis::snes::build_static_listing(
                     source,
                     {
@@ -428,6 +551,51 @@ namespace clover::platform
                     else if (event.key.scancode == SDL_SCANCODE_RETURN
                              && !edit_buffer.empty())
                     {
+                        if (edit_kind == edit_kind_t::watchpoint)
+                        {
+                            uint32_t watch_address{};
+                            const bool parsed{
+                                parse_address(edit_buffer, watch_address)
+                            };
+                            if (parsed)
+                            {
+                                error.clear();
+                                const address_key_t location{
+                                    std::string{ k_cpu_address_space },
+                                    watch_address
+                                };
+                                if (project.set_debug_watchpoint(
+                                        location,
+                                        1u,
+                                        workbench::project_watch_access_t::read_write,
+                                        true,
+                                        error
+                                    ))
+                                {
+                                    static_cast<void>(debugger.add_watchpoint(
+                                        {
+                                            frontend::snes_debug::k_cpu_bus_space,
+                                            watch_address
+                                        },
+                                        1u,
+                                        workbench::watch_access_t::read_write
+                                    ));
+                                    status = "Read/write watchpoint added at "
+                                        + formatted_address(watch_address);
+                                }
+                                else
+                                {
+                                    status = error;
+                                }
+                            }
+                            else
+                            {
+                                status = "Invalid watchpoint address";
+                            }
+                            edit_kind = edit_kind_t::none;
+                            SDL_StopTextInput(sdl.window);
+                            continue;
+                        }
                         const address_key_t location{
                             std::string{ k_cpu_address_space },
                             selected_address()
@@ -453,6 +621,65 @@ namespace clover::platform
                 };
                 if (event.key.scancode == SDL_SCANCODE_ESCAPE)
                     running = false;
+                else if (event.key.scancode == SDL_SCANCODE_F5)
+                {
+                    error.clear();
+                    const bool changed{
+                        debugger.run_state()
+                                == workbench::debugger_run_state_t::running
+                            ? debugger.pause(error)
+                            : debugger.resume(error)
+                    };
+                    status = changed
+                        ? (debugger.run_state()
+                                == workbench::debugger_run_state_t::running
+                            ? "Debugger running"
+                            : "Debugger paused")
+                        : error;
+                    if (changed
+                        && debugger.run_state()
+                            == workbench::debugger_run_state_t::stopped
+                        && debugger.live_state(live_state, error))
+                    {
+                        listing_address = static_cast<uint32_t>(
+                            live_state.instruction_address.value
+                        );
+                        selected = 0u;
+                        refresh_listing = true;
+                    }
+                }
+                else if (event.key.scancode == SDL_SCANCODE_F10)
+                {
+                    error.clear();
+                    status = debugger.step_over(error)
+                        ? "Step over"
+                        : error;
+                    if (debugger.run_state()
+                        == workbench::debugger_run_state_t::stopped)
+                    {
+                        refresh_listing = true;
+                    }
+                }
+                else if (event.key.scancode == SDL_SCANCODE_F11)
+                {
+                    error.clear();
+                    const bool step_out{
+                        (event.key.mod & SDL_KMOD_SHIFT) != 0
+                    };
+                    const bool stepped{
+                        step_out
+                            ? debugger.step_out(error)
+                            : debugger.step_instruction(error)
+                    };
+                    status = stepped
+                        ? (step_out ? "Step out" : "Instruction step")
+                        : error;
+                    if (debugger.run_state()
+                        == workbench::debugger_run_state_t::stopped)
+                    {
+                        refresh_listing = true;
+                    }
+                }
                 else if (alt && event.key.scancode == SDL_SCANCODE_LEFT)
                 {
                     error.clear();
@@ -495,12 +722,83 @@ namespace clover::platform
                     else
                         status = "Selected instruction has no statically known target";
                 }
+                else if (event.key.scancode == SDL_SCANCODE_F9)
+                {
+                    const uint32_t address{ selected_address() };
+                    auto found{
+                        std::find_if(
+                            debugger.breakpoints().begin(),
+                            debugger.breakpoints().end(),
+                            [address](const workbench::breakpoint_t& breakpoint)
+                            {
+                                return breakpoint.address.space
+                                        == frontend::snes_debug::k_cpu_bus_space
+                                    && breakpoint.address.value == address;
+                            }
+                        )
+                    };
+                    if (found == debugger.breakpoints().end())
+                    {
+                        error.clear();
+                        if (project.set_debug_breakpoint(
+                                { std::string{ k_cpu_address_space }, address },
+                                true,
+                                error
+                            ))
+                        {
+                            static_cast<void>(debugger.add_breakpoint({
+                                frontend::snes_debug::k_cpu_bus_space,
+                                address
+                            }));
+                            status = "Breakpoint added at "
+                                + formatted_address(address);
+                        }
+                        else
+                        {
+                            status = error;
+                        }
+                    }
+                    else
+                    {
+                        const uint64_t id{ found->id };
+                        error.clear();
+                        if (project.remove_debug_breakpoint(
+                                { std::string{ k_cpu_address_space }, address },
+                                error
+                            ))
+                        {
+                            static_cast<void>(debugger.remove_breakpoint(id));
+                            status = "Breakpoint removed";
+                        }
+                        else
+                        {
+                            status = error;
+                        }
+                    }
+                }
+                else if (event.key.scancode == SDL_SCANCODE_T)
+                {
+                    error.clear();
+                    status = debugger.run_to(
+                        {
+                            frontend::snes_debug::k_cpu_bus_space,
+                            selected_address()
+                        },
+                        error
+                    ) ? "Running to cursor" : error;
+                }
                 else if (event.key.scancode == SDL_SCANCODE_L
                          || event.key.scancode == SDL_SCANCODE_SEMICOLON)
                 {
                     edit_kind = event.key.scancode == SDL_SCANCODE_L
                         ? edit_kind_t::label
                         : edit_kind_t::comment;
+                    edit_buffer.clear();
+                    SDL_StartTextInput(sdl.window);
+                }
+                else if (event.key.scancode == SDL_SCANCODE_M)
+                {
+                    edit_kind = edit_kind_t::watchpoint;
                     edit_buffer.clear();
                     SDL_StartTextInput(sdl.window);
                 }
@@ -595,7 +893,14 @@ namespace clover::platform
                 "Bookmarks " + std::to_string(bookmarks.size())
                     + "  Symbols " + std::to_string(symbols.size())
             );
-            float fact_y{ 112.f };
+            draw_text(
+                sdl.renderer,
+                left.x + 10.f,
+                100.f,
+                "Breakpoints " + std::to_string(debugger.breakpoints().size())
+                    + "  Watches " + std::to_string(debugger.watchpoints().size())
+            );
+            float fact_y{ 128.f };
             for (auto iterator{ bookmarks.rbegin() };
                  iterator != bookmarks.rend() && fact_y < left.y + left.h - 24.f;
                  ++iterator)
@@ -616,7 +921,13 @@ namespace clover::platform
                 sdl.renderer,
                 center.x + 10.f,
                 48.f,
-                "DISASSEMBLY  E=1 M=1 X=1 D=0000 DB=00"
+                "LIVE DISASSEMBLY  "
+                    + std::string{
+                        debugger.run_state()
+                                == workbench::debugger_run_state_t::running
+                            ? "RUNNING"
+                            : "PAUSED"
+                    }
             );
             float row_y{ 72.f };
             for (size_t index{ 0 }; index < listing.instructions.size(); ++index)
@@ -638,8 +949,29 @@ namespace clover::platform
                         sdl.renderer, 238, 244, 255, 255
                     ));
                 }
+                const bool is_current{
+                    live_state.instruction_address.value == instruction.address
+                };
+                const bool has_breakpoint{
+                    std::any_of(
+                        debugger.breakpoints().begin(),
+                        debugger.breakpoints().end(),
+                        [&instruction](const workbench::breakpoint_t& breakpoint)
+                        {
+                            return breakpoint.enabled
+                                && breakpoint.address.value == instruction.address;
+                        }
+                    )
+                };
                 const std::string marker{
-                    fact_at(classifications, instruction.address) != nullptr ? "* " : "  "
+                    is_current
+                        ? "> "
+                        : (has_breakpoint
+                            ? "B "
+                            : (fact_at(classifications, instruction.address)
+                                    != nullptr
+                                ? "* "
+                                : "  "))
                 };
                 draw_text(
                     sdl.renderer,
@@ -658,6 +990,48 @@ namespace clover::platform
             draw_text(sdl.renderer, right.x + 10.f, 48.f, "INSPECTOR");
             draw_text(sdl.renderer, right.x + 10.f, 68.f, formatted_address(current));
             float inspector_y{ 92.f };
+            error.clear();
+            static_cast<void>(debugger.live_state(live_state, error));
+            for (size_t index{ 0 };
+                 index < live_state.descriptors.size() && index < 10u;
+                 ++index)
+            {
+                std::ostringstream register_text{};
+                register_text << live_state.descriptors[index].label << '='
+                              << std::uppercase << std::hex << std::setfill('0')
+                              << std::setw(
+                                  std::max<int>(
+                                      1,
+                                      live_state.descriptors[index].width_bits / 4
+                                  )
+                              )
+                              << live_state.values[index].value;
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f + static_cast<float>(index % 3u) * 92.f,
+                    inspector_y + static_cast<float>(index / 3u) * 16.f,
+                    register_text.str()
+                );
+            }
+            inspector_y += 76.f;
+            std::array<std::byte, 8> live_memory{};
+            const auto memory_result{
+                debugger.inspect_memory(
+                    { frontend::snes_debug::k_cpu_bus_space, current },
+                    live_memory
+                )
+            };
+            if (memory_result.status
+                == frontend::memory_inspection_status_t::complete)
+            {
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    "Memory: " + formatted_memory(live_memory)
+                );
+                inspector_y += 18.f;
+            }
             if (const auto* label{ fact_at(labels, current) }; label != nullptr)
             {
                 draw_text(sdl.renderer, right.x + 10.f, inspector_y, "Label: " + label->text);
@@ -689,20 +1063,28 @@ namespace clover::platform
                 inspector_y += 18.f;
             }
             inspector_y += 12.f;
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y, "UP/DOWN  select");
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 16.f, "ENTER    follow target");
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 32.f, "PGUP/DN  move listing");
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 48.f, "L / ;    label / comment");
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 64.f, "B        bookmark");
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 80.f, "C / D    code / data");
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 96.f, "ALT+LEFT/RIGHT history");
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 112.f, "H        refresh symbols");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y, "F5       run / pause");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 16.f, "F9       breakpoint");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 32.f, "F10      step over");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 48.f, "F11      step into");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 64.f, "SHIFT+F11 step out");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 80.f, "T / M    run-to / watch");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 112.f, "UP/DOWN  select");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 128.f, "ENTER    follow target");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 144.f, "L / ;    label / comment");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 160.f, "B        bookmark");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 176.f, "C / D    code / data");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 192.f, "ALT+LEFT/RIGHT history");
 
             static_cast<void>(SDL_SetRenderDrawColor(sdl.renderer, 159, 176, 202, 255));
             const std::string footer{
                 edit_kind == edit_kind_t::none
                     ? status
-                    : (edit_kind == edit_kind_t::label ? "Label: " : "Comment: ")
+                    : (edit_kind == edit_kind_t::label
+                        ? "Label: "
+                        : (edit_kind == edit_kind_t::comment
+                            ? "Comment: "
+                            : "Watch address: "))
                         + edit_buffer + "_"
             };
             draw_text(sdl.renderer, 12.f, height - 26.f, footer);

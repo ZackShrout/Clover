@@ -3005,7 +3005,9 @@ navigation history.
 
 ## Stage 3: Live debugger integration
 
-Implement:
+**Status: complete.**
+
+Implemented:
 
 - pause and resume;
 - instruction step;
@@ -3024,6 +3026,28 @@ Implement:
 Deliverable:
 
 A strong emulator debugger with a first-class disassembly surface.
+
+Stage 3 extends the system-neutral debug-target contract with opt-in CPU memory
+access observations and live processor-register snapshots. The Workbench-owned
+SNES debugger pumps exact whole-machine instruction boundaries while keeping
+run-control policy outside the hardware core. It provides persistent execution
+breakpoints and CPU-bus range watchpoints, temporary run operations, runtime
+65C816 decode context, bounded call/return observations, and explicit stop
+reasons. Read/write watchpoints over `$2100-$43ff` provide hardware-register
+breakpoints without reading volatile MMIO from the UI.
+
+The SDL Workbench now powers the target on, follows the live PC, highlights the
+current instruction, displays registers and side-effect-free memory, and
+provides pause/continue, step, step-over, step-out, run-to-cursor, breakpoint,
+and watchpoint controls. Player does not enable the new probes and retains its
+ordinary frame-running path.
+
+`clover_workbench_debugger_test` executes a synthetic cartridge through
+instruction stepping, `$2100` write observation, step-over/out, run-to-cursor,
+execute and read watchpoints, live memory, runtime context, and JSR/RTS
+observation. `clover_analysis_boundary_test` additionally guards register
+metadata, probe opt-in, bounded observation delivery, and disabled-probe
+non-interference.
 
 ## Stage 4: Hybrid analyzer
 

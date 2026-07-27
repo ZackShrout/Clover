@@ -233,6 +233,7 @@ namespace clover::core
             , _dma(dma)
             , _interrupts(interrupts)
             , _fast_rom_enabled(fast_rom_enabled)
+            , _instruction_address(program_address(cpu.state()))
         {
         }
 
@@ -256,6 +257,12 @@ namespace clover::core
             // before a read's final four clocks and before its data appears.
             _interrupts.clear_irq_lock();
             const uint8_t value{ _bus.read_u8(address) };
+            _bus.trace_cpu_memory_access(
+                address,
+                value,
+                false,
+                _instruction_address
+            );
             _bus.trace_cpu_apu_port_access(address, value, false, _master_clocks);
             _master_clocks = static_cast<master_clock_delta_t>(
                 _master_clocks + _cpu.advance_execution(
@@ -296,6 +303,12 @@ namespace clover::core
             _bus.trace_cpu_apu_port_access(address, value, true, _master_clocks);
             if (!ppu_register_write)
                 _bus.write_u8(address, value);
+            _bus.trace_cpu_memory_access(
+                address,
+                value,
+                true,
+                _instruction_address
+            );
         }
 
         [[nodiscard]] uint8_t fetch_opcode(cpu_state_t& state) noexcept
@@ -1042,6 +1055,7 @@ namespace clover::core
         dma_t& _dma;
         interrupt_controller_t& _interrupts;
         bool _fast_rom_enabled{ false };
+        uint32_t _instruction_address{ 0 };
         master_clock_delta_t _master_clocks{ 0 };
         bool _observed_opcode_edge{ false };
         bool _retired_instruction{ false };

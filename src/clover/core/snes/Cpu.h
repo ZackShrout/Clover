@@ -141,6 +141,7 @@ namespace clover::core
                          dma_t& dma,
                          interrupt_controller_t& interrupts) noexcept;
         [[nodiscard]] const cpu_state_t& state() const noexcept;
+        [[nodiscard]] master_clock_count_t master_clock() const noexcept;
         void set_controller_state(uint8_t port, uint16_t state) noexcept;
         void set_interrupt_poll_phase_for_testing(master_clock_delta_t phase) noexcept;
         [[nodiscard]] master_clock_delta_t interrupt_poll_phase_for_testing() const noexcept;

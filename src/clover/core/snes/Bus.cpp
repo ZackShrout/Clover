@@ -9,6 +9,7 @@
 #include "clover/core/snes/Cartridge.h"
 #include "clover/core/snes/Cpu.h"
 #include "clover/core/snes/Dma.h"
+#include "clover/core/snes/Observation.h"
 #include "clover/core/snes/Ppu.h"
 
 #include <algorithm>
@@ -677,6 +678,37 @@ namespace clover::core
             _system_register_write_trace_count = 0;
             _watched_write_trace_count = 0;
         }
+    }
+
+    void bus_t::set_observation_sink(snes_observation_sink_t* sink) noexcept
+    {
+        _observation_sink = sink;
+        _cpu_memory_observation_enabled = sink != nullptr
+            && sink->enabled(k_snes_observe_cpu_memory_access);
+    }
+
+    void bus_t::record_cpu_memory_access(uint32_t address,
+                                         uint8_t value,
+                                         bool is_write,
+                                         uint32_t instruction_address) noexcept
+    {
+        if (_observation_sink == nullptr || _cpu == nullptr)
+            return;
+        _observation_sink->push({
+            .kind = snes_observation_kind_t::cpu_memory_access,
+            .master_clock = _cpu->master_clock(),
+            .frame_index = _ppu != nullptr ? _ppu->frame_index() : 0u,
+            .timing = _ppu != nullptr ? _ppu->timing() : timing_snapshot_t{},
+            .cpu_memory_access = {
+                .kind = is_write
+                    ? snes_memory_access_kind_t::write
+                    : snes_memory_access_kind_t::read,
+                .address = address & 0x00ffffffu,
+                .instruction_address = instruction_address & 0x00ffffffu,
+                .value = value,
+                .cpu = _cpu->state()
+            }
+        });
     }
 
     void bus_t::trace_cpu_apu_port_access(uint32_t address,

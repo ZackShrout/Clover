@@ -16,13 +16,23 @@ namespace clover::core
     using snes_observation_mask_t = uint64_t;
 
     inline constexpr snes_observation_mask_t k_snes_observe_cpu_boundary{ 1u << 0u };
+    inline constexpr snes_observation_mask_t k_snes_observe_cpu_memory_access{
+        1u << 1u
+    };
     inline constexpr snes_observation_mask_t k_snes_observation_mask_all{
-        k_snes_observe_cpu_boundary
+        k_snes_observe_cpu_boundary | k_snes_observe_cpu_memory_access
     };
 
     enum class snes_observation_kind_t : uint8_t
     {
-        cpu_boundary
+        cpu_boundary,
+        cpu_memory_access
+    };
+
+    enum class snes_memory_access_kind_t : uint8_t
+    {
+        read,
+        write
     };
 
     struct snes_cpu_boundary_observation_t
@@ -32,6 +42,15 @@ namespace clover::core
         cpu_state_t state_after{};
     };
 
+    struct snes_cpu_memory_access_observation_t
+    {
+        snes_memory_access_kind_t kind{ snes_memory_access_kind_t::read };
+        uint32_t address{ 0 };
+        uint32_t instruction_address{ 0 };
+        uint8_t value{ 0 };
+        cpu_state_t cpu{};
+    };
+
     struct snes_observation_event_t
     {
         snes_observation_kind_t kind{ snes_observation_kind_t::cpu_boundary };
@@ -39,6 +58,7 @@ namespace clover::core
         uint64_t frame_index{ 0 };
         timing_snapshot_t timing{};
         snes_cpu_boundary_observation_t cpu_boundary{};
+        snes_cpu_memory_access_observation_t cpu_memory_access{};
     };
 
     struct snes_observation_sink_t

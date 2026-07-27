@@ -21,10 +21,17 @@ Workbench starts at the native reset vector unless an address is supplied:
 
 Use `--project-root <path>` to override the platform application-data location.
 
-## Stage 2 controls
+## Workbench controls
 
 | Control | Action |
 |---|---|
+| F5 | Continue or pause the live target |
+| F9 | Add or remove a persistent execution breakpoint |
+| F10 | Step over a call, otherwise step one instruction |
+| F11 | Step one instruction |
+| Shift+F11 | Step out of the current call |
+| T | Run to the selected instruction |
+| M | Add a persistent read/write CPU-bus watchpoint by address |
 | Up / Down | Select an instruction |
 | Enter | Follow a statically known direct target |
 | Page Up / Page Down | Move the linear listing |
@@ -37,8 +44,19 @@ Use `--project-root <path>` to override the platform application-data location.
 | Escape | Cancel an edit or quit |
 
 Text edits are committed with Enter. The first desktop slice deliberately uses
-an explicit reset decode context (`E=1`, `M=1`, `X=1`, `D=$0000`, `DB=$00`);
-runtime mode-correct disassembly belongs to Stage 3.
+the native reset state. Once the live debugger attaches, disassembly width and
+effective addresses use the current `E`, `M`, `X`, `D`, and `DB` register
+values. The current PC is marked with `>` and execution breakpoints with `B`.
+The inspector shows live registers and a side-effect-free memory window.
+
+Workbench runs debugger continue operations in bounded batches of exact
+whole-machine instruction steps. This keeps the desktop responsive and allows
+breakpoints and watchpoints to stop on an instruction boundary without placing
+UI policy or callbacks in the emulation core.
+
+An `M` watchpoint accepts a CPU-bus address such as `00:2100`. CPU read and
+write events are observed inside the real bus access path, so hardware-register
+writes can stop the debugger without the UI reading volatile MMIO.
 
 ## Project storage
 
@@ -66,3 +84,5 @@ Starting a new analysis generation records analyzer and decoder versions and
 removes only derived facts. User-authored and imported knowledge remains
 unchanged. Navigation history and its cursor are also persisted, with a
 512-entry bound and ordinary forward-history truncation after branching.
+Execution breakpoints and CPU-bus watchpoint ranges are persistent project
+facts and are restored when the same canonical cartridge project reopens.

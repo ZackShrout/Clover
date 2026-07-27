@@ -87,6 +87,14 @@ target_link_libraries(clover_workbench_project PUBLIC
     SQLite::SQLite3
 )
 
+add_library(clover_workbench_debugger STATIC
+    src/clover/workbench/SnesDebugger.cpp
+)
+target_include_directories(clover_workbench_debugger PUBLIC src)
+target_link_libraries(clover_workbench_debugger PUBLIC
+    clover_analysis
+)
+
 add_library(clover_snes_checkpoint STATIC
     src/clover/frontend/SnesCheckpoint.cpp
 )
@@ -167,6 +175,7 @@ if(CLOVER_BUILD_SDL_FRONTEND)
     target_link_libraries(clover_workbench PRIVATE
         clover_core
         clover_snes_checkpoint
+        clover_workbench_debugger
         clover_workbench_project
         clover_utils
         SDL3::SDL3
@@ -374,6 +383,18 @@ target_link_libraries(clover_workbench_project_test PRIVATE
     clover_workbench_project
 )
 
+add_executable(clover_workbench_debugger_test
+    tests/WorkbenchDebuggerTest.cpp
+    src/clover/frontend/EmulatorCore.cpp
+    src/clover/frontend/SnesEmulatorCore.cpp
+)
+target_include_directories(clover_workbench_debugger_test PRIVATE src)
+target_link_libraries(clover_workbench_debugger_test PRIVATE
+    clover_core
+    clover_snes_checkpoint
+    clover_workbench_debugger
+)
+
 if(MSVC)
     set(CLOVER_TEST_TARGETS
         clover_smoke_test
@@ -389,6 +410,7 @@ if(MSVC)
         clover_sdl_audio_pacing_test
         clover_file_system_test
         clover_workbench_project_test
+        clover_workbench_debugger_test
     )
     if(TARGET clover_rom_library_test)
         list(APPEND CLOVER_TEST_TARGETS clover_rom_library_test)
@@ -413,6 +435,7 @@ add_test(NAME clover_local_rom_regression_test COMMAND clover_local_rom_regressi
 add_test(NAME clover_sdl_audio_pacing_test COMMAND clover_sdl_audio_pacing_test)
 add_test(NAME clover_file_system_test COMMAND clover_file_system_test)
 add_test(NAME clover_workbench_project_test COMMAND clover_workbench_project_test)
+add_test(NAME clover_workbench_debugger_test COMMAND clover_workbench_debugger_test)
 if(CLOVER_BUILD_SDL_FRONTEND)
     add_test(NAME clover_rom_library_test COMMAND clover_rom_library_test)
 endif()

@@ -261,7 +261,8 @@ int main()
     };
     if (observation_control == nullptr
         || observation_control->available_observations()
-            != frontend::k_observe_execution_boundary
+            != (frontend::k_observe_execution_boundary
+                | frontend::k_observe_memory_access)
         || observation_control->observation_mask() != 0u)
     {
         return fail("observation_control_capability");
@@ -283,6 +284,20 @@ int main()
             != frontend::debug_session_state_t::not_running)
     {
         return fail("debug_session_capability");
+    }
+    const std::span<const frontend::processor_register_descriptor_t> registers{
+        target->processor_registers(frontend::snes_debug::k_main_cpu_domain)
+    };
+    std::array<frontend::processor_register_value_t, 10> register_values{};
+    if (registers.size() != register_values.size()
+        || registers[0].stable_id != std::string_view{ "pc" }
+        || registers[9].stable_id != std::string_view{ "e" }
+        || target->inspect_processor_state(
+            frontend::snes_debug::k_main_cpu_domain,
+            register_values
+        ).status != frontend::processor_state_status_t::not_running)
+    {
+        return fail("processor_state_capability");
     }
     const frontend::debug_session_transition_result_t pre_power_pause{
         session_control->pause_debug_session()
@@ -314,6 +329,21 @@ int main()
     emulator->power_on();
     if (session_control->debug_session_state() != frontend::debug_session_state_t::running)
         return fail("running_after_power");
+    const frontend::processor_state_result_t reset_state{
+        target->inspect_processor_state(
+            frontend::snes_debug::k_main_cpu_domain,
+            register_values
+        )
+    };
+    if (reset_state.status != frontend::processor_state_status_t::complete
+        || reset_state.registers_written != register_values.size()
+        || reset_state.instruction_address.value != 0x008000u
+        || register_values[0].value != 0x8000u
+        || register_values[8].value != 0u
+        || register_values[9].value != 1u)
+    {
+        return fail("live_processor_state");
+    }
     const frontend::execution_step_result_t running_step{
         execution_control->step_execution_domain(frontend::snes_debug::k_main_cpu_domain)
     };
@@ -433,6 +463,54 @@ int main()
     };
     if (empty_drain.events_written != 0u || empty_drain.events_dropped != 0u)
         return fail("observation_drain_reset");
+
+    observation_control->clear_observations();
+    if (!observation_control->set_observation_mask(
+            frontend::k_observe_execution_boundary
+                | frontend::k_observe_memory_access
+        ))
+    {
+        return fail("enable_memory_access_observation");
+    }
+    const frontend::processor_state_result_t before_memory_step{
+        target->inspect_processor_state(
+            frontend::snes_debug::k_main_cpu_domain,
+            register_values
+        )
+    };
+    if (before_memory_step.status != frontend::processor_state_status_t::complete)
+        return fail("memory_access_state");
+    static_cast<void>(
+        execution_control->step_execution_domain(frontend::snes_debug::k_main_cpu_domain)
+    );
+    std::array<frontend::observation_event_t, 32> memory_events{};
+    const frontend::observation_drain_result_t memory_drain{
+        observation_control->drain_observations(memory_events)
+    };
+    bool saw_opcode_read{ false };
+    bool saw_boundary{ false };
+    for (size_t index{ 0 }; index < memory_drain.events_written; ++index)
+    {
+        const frontend::observation_event_t& event{ memory_events[index] };
+        saw_boundary = saw_boundary
+            || event.kind == frontend::observation_kind_t::execution_boundary;
+        saw_opcode_read = saw_opcode_read
+            || (event.kind == frontend::observation_kind_t::memory_access
+                && event.memory_access.kind
+                    == frontend::memory_access_kind_t::read
+                && event.memory_access.address.value
+                    == before_memory_step.instruction_address.value
+                && event.memory_access.instruction_address.value
+                    == before_memory_step.instruction_address.value);
+    }
+    if (!saw_opcode_read || !saw_boundary || memory_drain.events_dropped != 0u)
+        return fail("memory_access_observation");
+    if (!observation_control->set_observation_mask(
+            frontend::k_observe_execution_boundary
+        ))
+    {
+        return fail("restore_boundary_observation");
+    }
 
     emulator->reset();
     if (session_control->debug_session_state() != frontend::debug_session_state_t::paused)

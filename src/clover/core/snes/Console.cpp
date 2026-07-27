@@ -229,6 +229,7 @@ namespace clover::core
     void console_t::set_observation_sink(snes_observation_sink_t* sink) noexcept
     {
         _scheduler.set_observation_sink(sink);
+        _bus.set_observation_sink(sink);
     }
 
     hardware_step_result_t console_t::step_hardware() noexcept

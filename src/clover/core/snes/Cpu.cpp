@@ -1200,6 +1200,11 @@ namespace clover::core
         return _state;
     }
 
+    master_clock_count_t cpu_t::master_clock() const noexcept
+    {
+        return _master_clock;
+    }
+
     void cpu_t::set_controller_state(uint8_t port, uint16_t state) noexcept
     {
         if (port < _controller_state.size())

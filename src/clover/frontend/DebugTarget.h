@@ -38,6 +38,27 @@ namespace clover::frontend
         processor_architecture_t architecture{ processor_architecture_t::unknown };
     };
 
+    struct processor_register_descriptor_t
+    {
+        std::string_view stable_id{};
+        std::string_view label{};
+        uint8_t width_bits{ 0 };
+    };
+
+    struct processor_register_value_t
+    {
+        uint64_t value{ 0 };
+    };
+
+    enum class processor_state_status_t : uint8_t
+    {
+        complete,
+        invalid_domain,
+        unsupported,
+        not_running,
+        insufficient_storage
+    };
+
     struct address_space_descriptor_t
     {
         address_space_id_t id{ 0 };
@@ -52,6 +73,14 @@ namespace clover::frontend
     {
         address_space_id_t space{ 0 };
         uint64_t value{ 0 };
+    };
+
+    struct processor_state_result_t
+    {
+        processor_state_status_t status{ processor_state_status_t::unsupported };
+        execution_domain_id_t domain{ 0 };
+        debug_address_t instruction_address{};
+        size_t registers_written{ 0 };
     };
 
     enum class memory_inspection_status_t : uint8_t
@@ -182,10 +211,18 @@ namespace clover::frontend
     using observation_mask_t = uint64_t;
 
     inline constexpr observation_mask_t k_observe_execution_boundary{ 1u << 0u };
+    inline constexpr observation_mask_t k_observe_memory_access{ 1u << 1u };
 
     enum class observation_kind_t : uint8_t
     {
-        execution_boundary
+        execution_boundary,
+        memory_access
+    };
+
+    enum class memory_access_kind_t : uint8_t
+    {
+        read,
+        write
     };
 
     struct execution_boundary_observation_t
@@ -195,6 +232,14 @@ namespace clover::frontend
         debug_address_t address_after{};
     };
 
+    struct memory_access_observation_t
+    {
+        memory_access_kind_t kind{ memory_access_kind_t::read };
+        debug_address_t address{};
+        uint8_t value{ 0 };
+        debug_address_t instruction_address{};
+    };
+
     struct observation_event_t
     {
         observation_kind_t kind{ observation_kind_t::execution_boundary };
@@ -202,6 +247,7 @@ namespace clover::frontend
         uint64_t machine_clock{ 0 };
         uint64_t frame_index{ 0 };
         execution_boundary_observation_t execution_boundary{};
+        memory_access_observation_t memory_access{};
     };
 
     struct observation_drain_result_t
@@ -240,6 +286,21 @@ namespace clover::frontend
             debug_address_t source,
             address_space_id_t destination_space
         ) const noexcept = 0;
+        [[nodiscard]] virtual std::span<const processor_register_descriptor_t>
+            processor_registers(execution_domain_id_t) const noexcept
+        {
+            return {};
+        }
+        [[nodiscard]] virtual processor_state_result_t inspect_processor_state(
+            execution_domain_id_t domain,
+            std::span<processor_register_value_t>
+        ) const noexcept
+        {
+            return {
+                .status = processor_state_status_t::unsupported,
+                .domain = domain
+            };
+        }
         [[nodiscard]] virtual execution_control_t* execution_control() noexcept
         {
             return nullptr;

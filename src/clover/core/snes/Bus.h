@@ -19,6 +19,7 @@ namespace clover::core
     struct cpu_t;
     struct dma_t;
     struct ppu_t;
+    struct snes_observation_sink_t;
 
     struct bus_t
     {
@@ -153,6 +154,22 @@ namespace clover::core
         [[nodiscard]] std::span<const uint8_t> wram_span(uint32_t offset, uint32_t length) const noexcept;
         void set_apu_port_trace_enabled(bool enabled) noexcept;
         void set_legacy_trace_enabled(bool enabled) noexcept;
+        void set_observation_sink(snes_observation_sink_t* sink) noexcept;
+        void trace_cpu_memory_access(uint32_t address,
+                                     uint8_t value,
+                                     bool is_write,
+                                     uint32_t instruction_address) noexcept
+        {
+            if (_cpu_memory_observation_enabled)
+            {
+                record_cpu_memory_access(
+                    address,
+                    value,
+                    is_write,
+                    instruction_address
+                );
+            }
+        }
         void trace_cpu_apu_port_access(uint32_t address,
                                        uint8_t value,
                                        bool is_write,
@@ -164,6 +181,10 @@ namespace clover::core
 
     private:
         void initialize(bool warm_reset) noexcept;
+        void record_cpu_memory_access(uint32_t address,
+                                      uint8_t value,
+                                      bool is_write,
+                                      uint32_t instruction_address) noexcept;
         void dispatch_write_u8(uint32_t address, uint8_t value) noexcept;
         void advance_apu_to(master_clock_delta_t target_clocks) noexcept;
         void dispatch_pending_apu_writes_to(master_clock_delta_t target_clocks) noexcept;
@@ -199,6 +220,8 @@ namespace clover::core
         std::array<watched_write_trace_t, k_watched_write_trace_capacity> _watched_write_trace{};
         uint8_t _watched_write_trace_count{ 0 };
         bool _legacy_trace_enabled{ false };
+        snes_observation_sink_t* _observation_sink{ nullptr };
+        bool _cpu_memory_observation_enabled{ false };
         bool _apu_port_trace_enabled{ false };
         std::array<apu_port_trace_t, k_apu_port_trace_capacity> _apu_port_trace{};
         uint16_t _apu_port_trace_count{ 0 };

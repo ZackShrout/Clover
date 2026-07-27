@@ -146,7 +146,10 @@ Controls and capture details are documented in
 Workbench creates a SQLite analysis project under the platform application-data
 directory, keyed by the ROM's canonical SHA-256 identity. Labels, comments,
 bookmarks, code/data classifications, imported SNES hardware symbols, and
-navigation history survive restarts. Its controls and project model are
+navigation history survive restarts. Its live debugger provides runtime
+mode-correct disassembly, registers, memory, instruction stepping, step
+over/out, run-to-cursor, persistent breakpoints and watchpoints, and
+hardware-register access stops. Its controls and project model are
 documented in [`docs/WORKBENCH.md`](docs/WORKBENCH.md).
 
 ### Downloadable beta builds

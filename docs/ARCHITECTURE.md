@@ -72,12 +72,18 @@ including intervening DMA work. Declared domains without stepping support
 report that limitation explicitly.
 
 The optional observation-control capability currently exposes masked main-CPU
-boundary events through a fixed-capacity buffer. Native core events are typed
-and written into caller-provided storage; the core performs no allocation,
-formatting, I/O, or virtual callback. The frontend allocates storage only when
-observation is enabled, translates native events into system-neutral records,
-and reports overflow through an explicit dropped-event count. Player frontends
-do not query these capabilities during ordinary execution.
+boundary and CPU-bus read/write events through a fixed-capacity buffer. Native
+core events are typed and written into caller-provided storage; the core
+performs no allocation, formatting, I/O, or virtual callback. A disabled memory
+probe is one inline branch in the CPU bus path. The frontend allocates storage
+only when observation is enabled, translates native events into system-neutral
+records, and reports overflow through an explicit dropped-event count. Player
+frontends do not query these capabilities during ordinary execution.
+
+The debug target also publishes register descriptors and caller-owned live
+register snapshots per execution domain. Workbench derives the 65C816 decode
+context from `E`, `P`, `D`, and `DB`; generic frontend clients do not depend on
+the native `cpu_state_t` layout.
 
 Debugger session state is also frontend policy. The optional session-control
 capability reports not-running, running, or paused and owns pause/resume
@@ -102,7 +108,8 @@ No SDL type crosses into `core/` or the frontend contract.
 The SDL build produces two distinct applications. `clover_sdl` is the focused
 Player and does not link the Workbench project or analysis libraries.
 `clover_workbench` is the analysis host: it composes the debug-target byte
-source, Stage 1 decoder/listing services, and the SQLite-backed project service.
+source, Stage 1 decoder/listing services, the Workbench-owned run controller,
+and the SQLite-backed project service.
 Workbench persistence itself lives under `src/clover/workbench/`, is UI
 independent, and is included in the default headless build for testing.
 

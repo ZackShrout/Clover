@@ -19,7 +19,8 @@
       "displayName": "Build SDL Release",
       "configurePreset": "sdl-release",
       "targets": [
-        "clover_sdl"
+        "clover_sdl",
+        "clover_workbench"
       ]
     }
   ]

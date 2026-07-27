@@ -99,6 +99,13 @@ completed video/audio views after each `run_frame()`.
 
 No SDL type crosses into `core/` or the frontend contract.
 
+The SDL build produces two distinct applications. `clover_sdl` is the focused
+Player and does not link the Workbench project or analysis libraries.
+`clover_workbench` is the analysis host: it composes the debug-target byte
+source, Stage 1 decoder/listing services, and the SQLite-backed project service.
+Workbench persistence itself lives under `src/clover/workbench/`, is UI
+independent, and is included in the default headless build for testing.
+
 The future checkpoint boundary is specified by
 `docs/SNES_MACHINE_STATE_AUDIT.md`. Checkpoints preserve causal hardware state
 and validate immutable media/configuration identity, while pointers, platform

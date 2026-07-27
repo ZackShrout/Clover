@@ -2969,7 +2969,9 @@ eight- or sixteen-bit interpretation.
 
 ## Stage 2: First persistent Workbench slice
 
-Implement:
+**Status: complete.**
+
+Implemented:
 
 - project creation keyed by canonical media identity;
 - transactional schema migrations;
@@ -2986,6 +2988,20 @@ Deliverable:
 
 A small but durable analysis project in which user knowledge survives decoder,
 analyzer, and UI changes.
+
+The Stage 2 project service stores one SQLite database at
+`<project-root>/<system>/<canonical-sha256>/project.sqlite3`. Schema upgrades
+run in immediate transactions and roll back as a unit. User facts, imported
+facts, and regenerable derived facts have explicit layers; starting a new
+analysis generation invalidates only the derived layer. A separate
+`clover_workbench` SDL application presents the Stage 1 listing with persistent
+annotations, classifications, symbols, and back/forward navigation. The Player
+target remains independent of all Workbench project and analysis libraries.
+
+`clover_workbench_project_test` verifies canonical copier-header identity,
+per-media isolation, successful migration, failed-migration rollback, durable
+user facts, derived-fact invalidation, hardware symbol import, and branched
+navigation history.
 
 ## Stage 3: Live debugger integration
 

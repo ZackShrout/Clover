@@ -122,13 +122,15 @@ CPU-address translation boundary used by the debugger substrate.
 ## SDL Desktop App
 
 The checked-in `SDL Release` CMake preset builds the optimized `clover_sdl`
-target. In CLion, select that profile and target to build and run in one step.
+Player and the separate `clover_workbench` analysis application. In CLion,
+select that profile and the desired target to build and run in one step.
 From a shell:
 
 ```bash
 cmake --preset sdl-release
 cmake --build --preset sdl-release
 ./cmake-build-sdl-release/clover_sdl "/path/to/game.sfc"
+./cmake-build-sdl-release/clover_workbench "/path/to/game.sfc"
 ```
 
 The ROM argument is optional. With no argument, Clover displays its frontend
@@ -140,6 +142,12 @@ runs and does not add that ROM to the library.
 The app also accepts `--frames <count>` to stop after a fixed number of frames.
 Controls and capture details are documented in
 [`docs/FRONTEND.md`](docs/FRONTEND.md).
+
+Workbench creates a SQLite analysis project under the platform application-data
+directory, keyed by the ROM's canonical SHA-256 identity. Labels, comments,
+bookmarks, code/data classifications, imported SNES hardware symbols, and
+navigation history survive restarts. Its controls and project model are
+documented in [`docs/WORKBENCH.md`](docs/WORKBENCH.md).
 
 ### Downloadable beta builds
 

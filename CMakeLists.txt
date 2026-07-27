@@ -8,6 +8,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(CLOVER_BUILD_SDL_FRONTEND "Build the SDL3 desktop frontend." OFF)
 option(CLOVER_PACKAGE_DISTRIBUTION "Build an OS-native distributable application." OFF)
 
+find_package(SQLite3 REQUIRED)
+
 if(MSVC AND CLOVER_PACKAGE_DISTRIBUTION)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
@@ -74,6 +76,17 @@ add_library(clover_analysis STATIC
 )
 target_include_directories(clover_analysis PUBLIC src)
 
+add_library(clover_workbench_project STATIC
+    src/clover/workbench/Project.cpp
+)
+target_include_directories(clover_workbench_project PUBLIC src)
+target_link_libraries(clover_workbench_project PUBLIC
+    clover_analysis
+    clover_media_identity
+    clover_utils
+    SQLite::SQLite3
+)
+
 add_library(clover_snes_checkpoint STATIC
     src/clover/frontend/SnesCheckpoint.cpp
 )
@@ -100,7 +113,6 @@ target_link_libraries(clover_workbench_disasm PRIVATE
 
 if(CLOVER_BUILD_SDL_FRONTEND)
     find_package(SDL3 CONFIG REQUIRED)
-    find_package(SQLite3 REQUIRED)
     add_library(clover_rom_library STATIC
         src/clover/platform/RomLibrary.cpp
     )
@@ -143,6 +155,27 @@ if(CLOVER_BUILD_SDL_FRONTEND)
     target_compile_definitions(clover_sdl PRIVATE CLOVER_VERSION="${PROJECT_VERSION}")
     if(MSVC)
         target_link_options(clover_sdl PRIVATE "/STACK:16777216")
+    endif()
+
+    add_executable(clover_workbench
+        src/clover/frontend/EmulatorCore.cpp
+        src/clover/frontend/SnesEmulatorCore.cpp
+        src/clover/platform/sdl/WorkbenchAppShell.cpp
+        src/workbench_main.cpp
+    )
+    target_include_directories(clover_workbench PRIVATE src)
+    target_link_libraries(clover_workbench PRIVATE
+        clover_core
+        clover_snes_checkpoint
+        clover_workbench_project
+        clover_utils
+        SDL3::SDL3
+    )
+    target_compile_definitions(
+        clover_workbench PRIVATE CLOVER_VERSION="${PROJECT_VERSION}"
+    )
+    if(MSVC)
+        target_link_options(clover_workbench PRIVATE "/STACK:16777216")
     endif()
     if(CLOVER_PACKAGE_DISTRIBUTION)
         set_target_properties(clover_sdl PROPERTIES OUTPUT_NAME Clover)
@@ -333,6 +366,14 @@ add_executable(clover_file_system_test
 target_include_directories(clover_file_system_test PRIVATE src)
 target_link_libraries(clover_file_system_test PRIVATE clover_utils)
 
+add_executable(clover_workbench_project_test
+    tests/WorkbenchProjectTest.cpp
+)
+target_include_directories(clover_workbench_project_test PRIVATE src)
+target_link_libraries(clover_workbench_project_test PRIVATE
+    clover_workbench_project
+)
+
 if(MSVC)
     set(CLOVER_TEST_TARGETS
         clover_smoke_test
@@ -347,6 +388,7 @@ if(MSVC)
         clover_local_rom_regression_test
         clover_sdl_audio_pacing_test
         clover_file_system_test
+        clover_workbench_project_test
     )
     if(TARGET clover_rom_library_test)
         list(APPEND CLOVER_TEST_TARGETS clover_rom_library_test)
@@ -370,6 +412,7 @@ add_test(NAME clover_checkpoint_replay_test COMMAND clover_checkpoint_replay_tes
 add_test(NAME clover_local_rom_regression_test COMMAND clover_local_rom_regression_test)
 add_test(NAME clover_sdl_audio_pacing_test COMMAND clover_sdl_audio_pacing_test)
 add_test(NAME clover_file_system_test COMMAND clover_file_system_test)
+add_test(NAME clover_workbench_project_test COMMAND clover_workbench_project_test)
 if(CLOVER_BUILD_SDL_FRONTEND)
     add_test(NAME clover_rom_library_test COMMAND clover_rom_library_test)
 endif()

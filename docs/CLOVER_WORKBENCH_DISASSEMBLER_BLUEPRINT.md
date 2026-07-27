@@ -2776,8 +2776,8 @@ The first Stage 0 slice was established on July 24, 2026. It provides:
   no-observer/disabled/enabled equivalence, session lifecycle, paused frame
   suppression, resume, reset, and media replacement.
 
-This slice intentionally does not claim Stage 0 completion. The next substrate
-work remains:
+At that point, this first slice intentionally did not claim Stage 0 completion.
+The remaining substrate work was:
 
 - SPC700 and optional cartridge-processor instruction stepping;
 - additional typed event families for memory, DMA/HDMA, interrupts, PPU, APU,
@@ -2916,6 +2916,56 @@ Deliverable:
 
 A reliable decoder and read-only listing that never hide context dependence and
 can be tested independently of the desktop UI.
+
+### Stage 1 implementation status
+
+Stage 1 was completed on July 27, 2026. It provides:
+
+- a headless `clover_analysis` library separate from the hardware executor and
+  SDL Player;
+- one complete 256-entry W65C816 architectural opcode table covering
+  instruction identity, addressing mode, operand-width rule, control-flow
+  category, and architectural status-flag effects;
+- structured decoding with explicit `E`, `M`, and `X` state plus optional
+  direct-page and data-bank context;
+- explicit `ambiguous_context` results with minimum and maximum encoded sizes
+  when immediate width cannot be established, plus rejection of contradictory
+  emulation-mode width flags;
+- separate text and JSON Lines formatting;
+- statically resolved branch, jump, and call targets where the encoding makes
+  them knowable;
+- built-in SNES PPU, APU-port, WRAM-port, CPU-I/O, controller, and DMA register
+  symbols, applied only when the effective bank is known to reach hardware
+  space;
+- a side-effect-free byte source backed by the Stage 0 CPU-bus-to-canonical-
+  media translator, with safe live-storage inspection as its fallback;
+- a read-only linear listing that refuses to advance through an ambiguous
+  instruction boundary;
+- the `clover_workbench_disasm` command-line tool with human-readable and
+  machine-readable output; and
+- an independent golden opcode matrix, kept outside production metadata, that
+  verifies all 256 mnemonic, addressing-mode, width-rule, control-flow, and
+  encoded-size results under emulation, native 8-bit, and native 16-bit
+  contexts;
+- a real-executor drift gate that runs every opcode through the S-CPU,
+  rejects placeholder dispatch, and verifies linear instructions consume the
+  golden operand length; and
+- focused ambiguity, contradiction, wrapping, target, formatting,
+  hardware-symbol, JSON, listing, and Stage 0 translation tests.
+
+For example:
+
+```bash
+./build/clover_workbench_disasm game.sfc \
+  --address 00:8000 --count 64 --e 1 --m 1 --x 1 --db 00
+
+./build/clover_workbench_disasm game.sfc \
+  --address C0:8000 --count 64 --e 0 --m 0 --x 0 --jsonl
+```
+
+The command requires an explicit CPU-bus start address. Width context defaults
+to unknown, so omitting `--e`, `--m`, and `--x` cannot silently impose an
+eight- or sixteen-bit interpretation.
 
 ## Stage 2: First persistent Workbench slice
 

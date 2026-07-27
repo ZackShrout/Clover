@@ -65,6 +65,15 @@ add_library(clover_media_identity STATIC
 )
 target_include_directories(clover_media_identity PUBLIC src)
 
+add_library(clover_analysis STATIC
+    src/clover/analysis/snes/Decoder.cpp
+    src/clover/analysis/snes/Formatter.cpp
+    src/clover/analysis/snes/HardwareSymbols.cpp
+    src/clover/analysis/snes/Instruction.cpp
+    src/clover/analysis/snes/StaticListing.cpp
+)
+target_include_directories(clover_analysis PUBLIC src)
+
 add_library(clover_snes_checkpoint STATIC
     src/clover/frontend/SnesCheckpoint.cpp
 )
@@ -77,6 +86,17 @@ target_link_libraries(clover PRIVATE clover_core clover_snes_checkpoint)
 if(WIN32 AND CLOVER_PACKAGE_DISTRIBUTION)
     set_target_properties(clover PROPERTIES OUTPUT_NAME clover-cli)
 endif()
+
+add_executable(clover_workbench_disasm
+    src/clover/frontend/EmulatorCore.cpp
+    src/clover/frontend/SnesEmulatorCore.cpp
+    src/workbench_disasm_main.cpp
+)
+target_include_directories(clover_workbench_disasm PRIVATE src)
+target_link_libraries(clover_workbench_disasm PRIVATE
+    clover_analysis
+    clover_snes_checkpoint
+)
 
 if(CLOVER_BUILD_SDL_FRONTEND)
     find_package(SDL3 CONFIG REQUIRED)
@@ -237,6 +257,12 @@ target_link_libraries(clover_analysis_boundary_test PRIVATE
     clover_snes_checkpoint
 )
 
+add_executable(clover_decoder_test
+    tests/DecoderTest.cpp
+)
+target_include_directories(clover_decoder_test PRIVATE src)
+target_link_libraries(clover_decoder_test PRIVATE clover_analysis clover_core)
+
 add_executable(clover_machine_state_test
     tests/MachineStateTest.cpp
 )
@@ -315,6 +341,7 @@ if(MSVC)
         clover_save_ram_test
         clover_frontend_capability_test
         clover_analysis_boundary_test
+        clover_decoder_test
         clover_machine_state_test
         clover_checkpoint_test
         clover_local_rom_regression_test
@@ -336,6 +363,7 @@ add_test(NAME clover_hardware_profile_test COMMAND clover_hardware_profile_test)
 add_test(NAME clover_save_ram_test COMMAND clover_save_ram_test)
 add_test(NAME clover_frontend_capability_test COMMAND clover_frontend_capability_test)
 add_test(NAME clover_analysis_boundary_test COMMAND clover_analysis_boundary_test)
+add_test(NAME clover_decoder_test COMMAND clover_decoder_test)
 add_test(NAME clover_machine_state_test COMMAND clover_machine_state_test)
 add_test(NAME clover_checkpoint_test COMMAND clover_checkpoint_test)
 add_test(NAME clover_checkpoint_replay_test COMMAND clover_checkpoint_replay_test)

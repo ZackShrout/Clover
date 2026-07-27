@@ -102,6 +102,23 @@ ctest --test-dir build --output-on-failure
 
 The default build is headless and does not require SDL3.
 
+## Workbench Disassembler
+
+The first read-only Clover Workbench listing tool is part of the default
+headless build:
+
+```bash
+./build/clover_workbench_disasm "/path/to/game.sfc" \
+  --address 00:8000 --count 64 --e 1 --m 1 --x 1 --db 00
+```
+
+Use `--jsonl` for machine-readable output. `E`, `M`, and `X` default to unknown;
+if an immediate instruction depends on unresolved width state, the listing
+reports both possible encodings and stops rather than guessing the following
+instruction boundary. Optional `--d` and `--db` arguments supply direct-page
+and data-bank context. Static ROM reads pass through the same side-effect-free
+CPU-address translation boundary used by the debugger substrate.
+
 ## SDL Desktop App
 
 The checked-in `SDL Release` CMake preset builds the optimized `clover_sdl`

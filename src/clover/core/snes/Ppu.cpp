@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 
 namespace
 {
@@ -58,12 +59,12 @@ namespace
 
     [[nodiscard]] const presentation_lut_t& presentation_lut() noexcept
     {
-        static const presentation_lut_t table = []() noexcept
+        static const std::unique_ptr<presentation_lut_t> table = []() noexcept
         {
-            presentation_lut_t lut{};
-            for (uint32_t brightness{ 0 }; brightness < lut.colors.size(); ++brightness)
+            auto lut{ std::make_unique<presentation_lut_t>() };
+            for (uint32_t brightness{ 0 }; brightness < lut->colors.size(); ++brightness)
             {
-                for (uint32_t color{ 0 }; color < lut.colors[brightness].size(); ++color)
+                for (uint32_t color{ 0 }; color < lut->colors[brightness].size(); ++color)
                 {
                     const uint8_t red5{ static_cast<uint8_t>(color & 0x001fu) };
                     const uint8_t green5{ static_cast<uint8_t>((color >> 5u) & 0x001fu) };
@@ -75,7 +76,7 @@ namespace
                     const uint8_t blue8{
                         static_cast<uint8_t>(present_channel(static_cast<uint8_t>(brightness), blue5) >> 8u)
                     };
-                    lut.colors[brightness][color] = 0xff000000u
+                    lut->colors[brightness][color] = 0xff000000u
                         | (static_cast<uint32_t>(red8) << 16u)
                         | (static_cast<uint32_t>(green8) << 8u)
                         | blue8;
@@ -83,7 +84,7 @@ namespace
             }
             return lut;
         }();
-        return table;
+        return *table;
     }
 
     [[nodiscard]] uint32_t snes_color_to_rgba8(uint16_t color, uint8_t brightness) noexcept

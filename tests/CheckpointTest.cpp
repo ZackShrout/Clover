@@ -93,38 +93,38 @@ int main()
 {
     using namespace clover;
 
-    core::console_t console{};
+    const auto console{ std::make_unique<core::console_t>() };
     const std::vector<std::byte> rom{ make_lorom() };
-    if (!console.load_cartridge(rom))
+    if (!console->load_cartridge(rom))
         return fail("load_media");
-    console.power_on();
-    console.run_frame();
-    console.write_u8(0x7e1234u, 0xa5u);
+    console->power_on();
+    console->run_frame();
+    console->write_u8(0x7e1234u, 0xa5u);
 
     std::vector<std::byte> checkpoint{};
-    if (frontend::capture_snes_checkpoint(console, checkpoint)
+    if (frontend::capture_snes_checkpoint(*console, checkpoint)
             != checkpoint_result_t::success
         || checkpoint.size() <= 128u)
     {
         return fail("capture");
     }
     auto expected_state{ std::make_unique<core::console_causal_state_t>() };
-    if (console.capture_causal_state(*expected_state)
+    if (console->capture_causal_state(*expected_state)
         != core::console_checkpoint_result_t::success)
     {
         return fail("capture_expected_state");
     }
 
-    console.run_frame();
-    console.write_u8(0x7e1234u, 0x5au);
-    if (frontend::restore_snes_checkpoint(console, checkpoint)
+    console->run_frame();
+    console->write_u8(0x7e1234u, 0x5au);
+    if (frontend::restore_snes_checkpoint(*console, checkpoint)
             != checkpoint_result_t::success
-        || !unchanged(console, checkpoint))
+        || !unchanged(*console, checkpoint))
     {
         return fail("round_trip");
     }
     auto actual_state{ std::make_unique<core::console_causal_state_t>() };
-    if (console.capture_causal_state(*actual_state)
+    if (console->capture_causal_state(*actual_state)
             != core::console_checkpoint_result_t::success
         || *actual_state != *expected_state)
     {
@@ -133,16 +133,16 @@ int main()
 
     auto invalid{ checkpoint };
     invalid[0] = std::byte{ 0 };
-    if (frontend::restore_snes_checkpoint(console, invalid)
+    if (frontend::restore_snes_checkpoint(*console, invalid)
             != checkpoint_result_t::invalid_magic
-        || !unchanged(console, checkpoint))
+        || !unchanged(*console, checkpoint))
     {
         return fail("magic_atomic");
     }
 
     invalid = checkpoint;
     write_u16(invalid, 8u, 2u);
-    if (frontend::restore_snes_checkpoint(console, invalid)
+    if (frontend::restore_snes_checkpoint(*console, invalid)
             != checkpoint_result_t::unsupported_format_version)
     {
         return fail("format_version");
@@ -150,7 +150,7 @@ int main()
 
     invalid = checkpoint;
     write_u32(invalid, 84u, 2u);
-    if (frontend::restore_snes_checkpoint(console, invalid)
+    if (frontend::restore_snes_checkpoint(*console, invalid)
             != checkpoint_result_t::unsupported_subsystem_version)
     {
         return fail("subsystem_version");
@@ -158,16 +158,16 @@ int main()
 
     invalid = checkpoint;
     invalid.back() ^= std::byte{ 0x01u };
-    if (frontend::restore_snes_checkpoint(console, invalid)
+    if (frontend::restore_snes_checkpoint(*console, invalid)
             != checkpoint_result_t::checksum_mismatch
-        || !unchanged(console, checkpoint))
+        || !unchanged(*console, checkpoint))
     {
         return fail("checksum_atomic");
     }
 
     invalid = checkpoint;
     invalid.pop_back();
-    if (frontend::restore_snes_checkpoint(console, invalid)
+    if (frontend::restore_snes_checkpoint(*console, invalid)
             != checkpoint_result_t::truncated)
     {
         return fail("truncated");
@@ -175,7 +175,7 @@ int main()
 
     invalid = checkpoint;
     invalid.push_back(std::byte{ 0 });
-    if (frontend::restore_snes_checkpoint(console, invalid)
+    if (frontend::restore_snes_checkpoint(*console, invalid)
             != checkpoint_result_t::trailing_data)
     {
         return fail("trailing_data");
@@ -184,7 +184,7 @@ int main()
     invalid = checkpoint;
     write_u64(invalid, 112u, frontend::checkpoint_decode_limits_t::
         k_default_max_payload_bytes + 1u);
-    if (frontend::restore_snes_checkpoint(console, invalid)
+    if (frontend::restore_snes_checkpoint(*console, invalid)
             != checkpoint_result_t::payload_too_large)
     {
         return fail("payload_bound");
@@ -193,18 +193,18 @@ int main()
     invalid = checkpoint;
     invalid[128u] = std::byte{ 2u };
     refresh_checksum(invalid);
-    if (frontend::restore_snes_checkpoint(console, invalid)
+    if (frontend::restore_snes_checkpoint(*console, invalid)
             != checkpoint_result_t::malformed_payload
-        || !unchanged(console, checkpoint))
+        || !unchanged(*console, checkpoint))
     {
         return fail("bounded_decode_atomic");
     }
 
     invalid = checkpoint;
     invalid[60u] ^= std::byte{ 1u };
-    if (frontend::restore_snes_checkpoint(console, invalid)
+    if (frontend::restore_snes_checkpoint(*console, invalid)
             != checkpoint_result_t::hardware_mismatch
-        || !unchanged(console, checkpoint))
+        || !unchanged(*console, checkpoint))
     {
         return fail("hardware_envelope_atomic");
     }
@@ -212,40 +212,40 @@ int main()
     invalid = checkpoint;
     invalid[132u] ^= std::byte{ 1u }; // scheduler master clock in payload
     refresh_checksum(invalid);
-    if (frontend::restore_snes_checkpoint(console, invalid)
+    if (frontend::restore_snes_checkpoint(*console, invalid)
             != checkpoint_result_t::core_restore_failed
-        || !unchanged(console, checkpoint))
+        || !unchanged(*console, checkpoint))
     {
         return fail("core_transaction_atomic");
     }
 
-    core::console_t other_media_console{};
+    const auto other_media_console{ std::make_unique<core::console_t>() };
     const std::vector<std::byte> other_rom{ make_lorom(0x5au) };
-    if (!other_media_console.load_cartridge(other_rom))
+    if (!other_media_console->load_cartridge(other_rom))
         return fail("load_other_media");
-    other_media_console.power_on();
-    if (frontend::restore_snes_checkpoint(other_media_console, checkpoint)
+    other_media_console->power_on();
+    if (frontend::restore_snes_checkpoint(*other_media_console, checkpoint)
             != checkpoint_result_t::media_mismatch)
     {
         return fail("canonical_media_hash");
     }
 
-    core::console_t cx4_console{};
+    const auto cx4_console{ std::make_unique<core::console_t>() };
     const std::vector<std::byte> cx4_rom{ make_lorom(0u, 0xf3u) };
-    if (!cx4_console.load_cartridge(cx4_rom))
+    if (!cx4_console->load_cartridge(cx4_rom))
         return fail("cx4_load");
-    cx4_console.power_on();
-    cx4_console.write_u8(0x006123u, 0x42u);
+    cx4_console->power_on();
+    cx4_console->write_u8(0x006123u, 0x42u);
     std::vector<std::byte> cx4_checkpoint{};
-    if (frontend::capture_snes_checkpoint(cx4_console, cx4_checkpoint)
+    if (frontend::capture_snes_checkpoint(*cx4_console, cx4_checkpoint)
             != checkpoint_result_t::success)
     {
         return fail("cx4_capture");
     }
-    cx4_console.write_u8(0x006123u, 0x24u);
-    if (frontend::restore_snes_checkpoint(cx4_console, cx4_checkpoint)
+    cx4_console->write_u8(0x006123u, 0x24u);
+    if (frontend::restore_snes_checkpoint(*cx4_console, cx4_checkpoint)
             != checkpoint_result_t::success
-        || cx4_console.read_u8(0x006123u) != 0x42u)
+        || cx4_console->read_u8(0x006123u) != 0x42u)
     {
         return fail("cx4_round_trip");
     }

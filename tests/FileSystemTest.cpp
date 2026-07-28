@@ -13,6 +13,13 @@
 
 int main()
 {
+    if (clover::utils::path_to_file_url(
+            clover::utils::path_from_utf8("/tmp/Clover logs"))
+        != "file:///tmp/Clover%20logs")
+    {
+        return 10;
+    }
+
     const std::filesystem::path directory{
         std::filesystem::temp_directory_path()
             / std::filesystem::path{ u8"clover-file-system-tést" }

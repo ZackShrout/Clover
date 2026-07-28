@@ -41,6 +41,7 @@ namespace clover::platform
         [[nodiscard]] bool consume_import_rom_request() noexcept;
         [[nodiscard]] bool consume_open_library_request() noexcept;
         [[nodiscard]] bool consume_open_temporary_rom_request() noexcept;
+        [[nodiscard]] bool consume_open_diagnostics_request() noexcept;
         [[nodiscard]] bool consume_quit_request() noexcept;
         [[nodiscard]] bool consume_pause_request() noexcept;
         [[nodiscard]] bool consume_frame_advance_request() noexcept;
@@ -55,8 +56,10 @@ namespace clover::platform
         [[nodiscard]] int audio_queued_bytes_before_put() const noexcept;
         [[nodiscard]] int audio_queued_bytes_after_put() const noexcept;
         [[nodiscard]] bool audio_started() const noexcept;
-        [[nodiscard]] uint64_t audio_empty_queue_observations() const noexcept;
-        [[nodiscard]] uint64_t audio_starvation_requests() const noexcept;
+        [[nodiscard]] uint64_t audio_underruns() const noexcept;
+        [[nodiscard]] uint64_t audio_rebuffers() const noexcept;
+        [[nodiscard]] uint64_t audio_feed_requests() const noexcept;
+        [[nodiscard]] std::string diagnostic_environment() const;
 
     private:
         static void SDLCALL audio_stream_get_callback(void* userdata,
@@ -90,6 +93,7 @@ namespace clover::platform
         bool _import_rom_requested{ false };
         bool _open_library_requested{ false };
         bool _open_temporary_rom_requested{ false };
+        bool _open_diagnostics_requested{ false };
         bool _quit_requested{ false };
         bool _pause_requested{ false };
         bool _frame_advance_requested{ false };
@@ -109,8 +113,10 @@ namespace clover::platform
         uint8_t _pressed_menu_item{ 0 };
         int _audio_queued_bytes_before_put{ -1 };
         int _audio_queued_bytes_after_put{ -1 };
-        uint64_t _audio_empty_queue_observations{ 0 };
-        std::atomic<uint64_t> _audio_starvation_requests{ 0 };
+        uint64_t _audio_underruns{ 0 };
+        uint64_t _audio_rebuffers{ 0 };
+        std::atomic<uint64_t> _audio_feed_requests{ 0 };
+        std::atomic<bool> _audio_rebuffer_requested{ false };
     };
 
     struct sdl_app_shell_t
@@ -121,7 +127,5 @@ namespace clover::platform
     private:
         [[nodiscard]] static bool load_persistent_memory(frontend::emulator_core_t& core,
                                                          const std::filesystem::path& save_path) noexcept;
-        [[nodiscard]] static bool flush_persistent_memory(frontend::emulator_core_t& core,
-                                                          const std::filesystem::path& save_path) noexcept;
     };
 }

@@ -19,6 +19,7 @@ namespace clover::utils
     // Windows and must not be used for those APIs.
     [[nodiscard]] std::string path_to_utf8(const std::filesystem::path& path);
     [[nodiscard]] std::filesystem::path path_from_utf8(std::string_view path);
+    [[nodiscard]] std::string path_to_file_url(const std::filesystem::path& path);
 
     [[nodiscard]] std::vector<std::byte> read_binary_file(
         const std::filesystem::path& path

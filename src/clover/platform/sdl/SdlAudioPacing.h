@@ -47,4 +47,9 @@ namespace clover::platform::sdl_audio_pacing
                 / 1'000'000'000ll
         );
     }
+
+    [[nodiscard]] constexpr bool queue_is_empty(int queued_bytes) noexcept
+    {
+        return queued_bytes == 0;
+    }
 }

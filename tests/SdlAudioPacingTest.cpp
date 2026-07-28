@@ -21,6 +21,9 @@ int main()
     static_assert(adjustment_ns(-1, sample_rate, channels) == 0);
     static_assert(adjustment_ns(target_bytes, 0u, channels) == 0);
     static_assert(adjustment_ns(target_bytes, sample_rate, 0u) == 0);
+    static_assert(queue_is_empty(0));
+    static_assert(!queue_is_empty(-1));
+    static_assert(!queue_is_empty(target_bytes));
 
     // A modest queue error produces a proportional correction instead of
     // abruptly changing the emulation cadence.

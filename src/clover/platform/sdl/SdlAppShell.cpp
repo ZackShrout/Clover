@@ -13,16 +13,21 @@
 
 #include <algorithm>
 #include <charconv>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iomanip>
 #include <iterator>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <thread>
 
 namespace clover::platform
 {
@@ -46,8 +51,11 @@ namespace clover::platform
         constexpr SDL_FRect k_open_temporary_rom_menu_item{
             0.f, k_menu_bar_height + 56.f, k_file_menu_width, 28.f
         };
-        constexpr SDL_FRect k_quit_menu_item{
+        constexpr SDL_FRect k_open_diagnostics_menu_item{
             0.f, k_menu_bar_height + 84.f, k_file_menu_width, 28.f
+        };
+        constexpr SDL_FRect k_quit_menu_item{
+            0.f, k_menu_bar_height + 112.f, k_file_menu_width, 28.f
         };
         constexpr float k_emulation_menu_width{ 176.f };
         constexpr SDL_FRect k_pause_menu_item{
@@ -86,6 +94,7 @@ namespace clover::platform
         constexpr uint8_t k_menu_hit_reset{ 10u };
         constexpr uint8_t k_menu_hit_speed_base{ 11u };
         constexpr uint8_t k_menu_hit_video_base{ 32u };
+        constexpr uint8_t k_menu_hit_diagnostics{ 64u };
 
         [[nodiscard]] bool contains(const SDL_FRect& rect, float x, float y) noexcept
         {
@@ -111,6 +120,8 @@ namespace clover::platform
                     return k_menu_hit_library;
                 if (contains(k_open_temporary_rom_menu_item, x, y))
                     return k_menu_hit_temporary;
+                if (contains(k_open_diagnostics_menu_item, x, y))
+                    return k_menu_hit_diagnostics;
                 if (contains(k_quit_menu_item, x, y))
                     return k_menu_hit_quit;
             }
@@ -188,6 +199,195 @@ namespace clover::platform
             }
             return ~result;
         }
+
+        struct save_write_result_t
+        {
+            bool succeeded{ false };
+            std::string error{};
+        };
+
+        class async_save_writer_t
+        {
+        public:
+            [[nodiscard]] bool poll(frontend::emulator_core_t& core) noexcept
+            {
+                if (!_write.valid()
+                    || _write.wait_for(std::chrono::seconds{ 0 }) != std::future_status::ready)
+                {
+                    return true;
+                }
+                return finish(core);
+            }
+
+            [[nodiscard]] bool schedule(frontend::emulator_core_t& core,
+                                        const std::filesystem::path& save_path) noexcept
+            {
+                if (!poll(core))
+                    return false;
+                if (_write.valid()
+                    || core.persistent_memory().empty()
+                    || !core.persistent_memory_dirty())
+                {
+                    return true;
+                }
+
+                _snapshot.assign(core.persistent_memory().begin(),
+                                 core.persistent_memory().end());
+                const std::vector<std::byte> write_data{ _snapshot };
+                _save_path = save_path;
+                try
+                {
+                    _write = std::async(
+                        std::launch::async,
+                        [save_path, write_data]() noexcept
+                        {
+                            save_write_result_t result{};
+                            result.succeeded = utils::write_binary_file_atomic(
+                                save_path,
+                                write_data,
+                                result.error
+                            );
+                            return result;
+                        }
+                    );
+                }
+                catch (const std::exception& exception)
+                {
+                    std::fprintf(stderr,
+                                 "Unable to start save RAM write: %s\n",
+                                 exception.what());
+                    _snapshot.clear();
+                    _save_path.clear();
+                    return false;
+                }
+                return true;
+            }
+
+            [[nodiscard]] bool flush(frontend::emulator_core_t& core,
+                                     const std::filesystem::path& save_path) noexcept
+            {
+                if (_write.valid() && !finish(core))
+                    return false;
+                if (!schedule(core, save_path))
+                    return false;
+                return !_write.valid() || finish(core);
+            }
+
+        private:
+            [[nodiscard]] bool finish(frontend::emulator_core_t& core) noexcept
+            {
+                save_write_result_t result{};
+                try
+                {
+                    result = _write.get();
+                }
+                catch (const std::exception& exception)
+                {
+                    result.error = exception.what();
+                }
+
+                if (!result.succeeded)
+                {
+                    std::fprintf(stderr, "Unable to save RAM: %s\n", result.error.c_str());
+                    _snapshot.clear();
+                    _save_path.clear();
+                    return false;
+                }
+
+                const std::span<const std::byte> current{ core.persistent_memory() };
+                if (current.size() == _snapshot.size()
+                    && std::equal(current.begin(), current.end(), _snapshot.begin()))
+                {
+                    core.mark_persistent_memory_clean();
+                }
+                std::printf("Saved save RAM: %s (%zu bytes)\n",
+                            _save_path.string().c_str(),
+                            _snapshot.size());
+                _snapshot.clear();
+                _save_path.clear();
+                return true;
+            }
+
+            std::future<save_write_result_t> _write{};
+            std::vector<std::byte> _snapshot{};
+            std::filesystem::path _save_path{};
+        };
+
+        class diagnostic_log_writer_t
+        {
+        public:
+            explicit diagnostic_log_writer_t(std::filesystem::path path)
+                : _path{ std::move(path) },
+                  _thread{ [this] { write_loop(); } }
+            {
+            }
+
+            diagnostic_log_writer_t(const diagnostic_log_writer_t&) = delete;
+            diagnostic_log_writer_t& operator=(const diagnostic_log_writer_t&) = delete;
+
+            ~diagnostic_log_writer_t()
+            {
+                finish();
+            }
+
+            void submit(std::string contents)
+            {
+                {
+                    const std::scoped_lock lock{ _mutex };
+                    _pending = std::move(contents);
+                    _has_pending = true;
+                }
+                _condition.notify_one();
+            }
+
+            void finish() noexcept
+            {
+                {
+                    const std::scoped_lock lock{ _mutex };
+                    _stopping = true;
+                }
+                _condition.notify_one();
+                if (_thread.joinable())
+                    _thread.join();
+            }
+
+        private:
+            void write_loop() noexcept
+            {
+                for (;;)
+                {
+                    std::string contents{};
+                    {
+                        std::unique_lock lock{ _mutex };
+                        _condition.wait(lock, [this] { return _has_pending || _stopping; });
+                        if (!_has_pending && _stopping)
+                            return;
+                        contents = std::move(_pending);
+                        _has_pending = false;
+                    }
+
+                    std::string error{};
+                    const std::span<const char> characters{ contents };
+                    if (!utils::write_binary_file_atomic(
+                            _path,
+                            std::as_bytes(characters),
+                            error))
+                    {
+                        std::fprintf(stderr,
+                                     "Unable to write diagnostics log: %s\n",
+                                     error.c_str());
+                    }
+                }
+            }
+
+            std::filesystem::path _path{};
+            std::mutex _mutex{};
+            std::condition_variable _condition{};
+            std::string _pending{};
+            bool _has_pending{ false };
+            bool _stopping{ false };
+            std::thread _thread{};
+        };
 
         void write_u16_le(std::ostream& output, uint16_t value)
         {
@@ -514,8 +714,10 @@ namespace clover::platform
         _audio_started = false;
         _audio_queued_bytes_before_put = -1;
         _audio_queued_bytes_after_put = -1;
-        _audio_empty_queue_observations = 0;
-        _audio_starvation_requests.store(0u, std::memory_order_relaxed);
+        _audio_underruns = 0;
+        _audio_rebuffers = 0;
+        _audio_feed_requests.store(0u, std::memory_order_relaxed);
+        _audio_rebuffer_requested.store(false, std::memory_order_relaxed);
         _window = window;
         _display = display;
         _renderer = SDL_CreateRenderer(window, nullptr);
@@ -586,8 +788,33 @@ namespace clover::platform
                                                       this);
             if (_audio_stream == nullptr)
                 std::fprintf(stderr, "Audio disabled: %s\n", SDL_GetError());
+            else
+            {
+                const SDL_AudioDeviceID device{ SDL_GetAudioStreamDevice(_audio_stream) };
+                SDL_AudioSpec device_spec{};
+                int device_sample_frames{ 0 };
+                static_cast<void>(SDL_GetAudioDeviceFormat(device,
+                                                           &device_spec,
+                                                           &device_sample_frames));
+                std::printf("Clover SDL audio device: driver=%s device=%s "
+                            "format=0x%x channels=%d rate=%d sample_frames=%d\n",
+                            SDL_GetCurrentAudioDriver() != nullptr
+                                ? SDL_GetCurrentAudioDriver()
+                                : "unknown",
+                            SDL_GetAudioDeviceName(device) != nullptr
+                                ? SDL_GetAudioDeviceName(device)
+                                : "unknown",
+                            static_cast<unsigned int>(device_spec.format),
+                            static_cast<int>(device_spec.channels),
+                            device_spec.freq,
+                            device_sample_frames);
+            }
         }
 
+        std::printf("Clover SDL video: renderer=%s\n",
+                    SDL_GetRendererName(_renderer) != nullptr
+                        ? SDL_GetRendererName(_renderer)
+                        : "unknown");
         open_first_available_gamepad();
         refresh_gamepad_state();
         return true;
@@ -763,6 +990,10 @@ namespace clover::platform
                         break;
                     case k_menu_hit_temporary:
                         _open_temporary_rom_requested = true;
+                        _open_menu = 0u;
+                        break;
+                    case k_menu_hit_diagnostics:
+                        _open_diagnostics_requested = true;
                         _open_menu = 0u;
                         break;
                     case k_menu_hit_quit:
@@ -958,22 +1189,25 @@ namespace clover::platform
 
         if (_open_menu == k_file_menu)
         {
-            static constexpr std::array<const char*, 4> labels{
+            static constexpr std::array<const char*, 5> labels{
                 "Import ROM to Library...",
                 "Open ROM Library...",
                 "Open ROM Temporarily...",
+                "Open Diagnostics Folder",
                 "Quit"
             };
-            static constexpr std::array<SDL_FRect, 4> items{
+            static constexpr std::array<SDL_FRect, 5> items{
                 k_import_rom_menu_item,
                 k_open_library_menu_item,
                 k_open_temporary_rom_menu_item,
+                k_open_diagnostics_menu_item,
                 k_quit_menu_item
             };
-            static constexpr std::array<uint8_t, 4> hits{
+            static constexpr std::array<uint8_t, 5> hits{
                 k_menu_hit_import,
                 k_menu_hit_library,
                 k_menu_hit_temporary,
+                k_menu_hit_diagnostics,
                 k_menu_hit_quit
             };
             for (size_t index{ 0 }; index < items.size(); ++index)
@@ -1059,8 +1293,19 @@ namespace clover::platform
             return;
 
         _audio_queued_bytes_before_put = SDL_GetAudioStreamQueued(_audio_stream);
-        if (_audio_started && _audio_queued_bytes_before_put == 0)
-            ++_audio_empty_queue_observations;
+        const bool device_needs_more_audio{
+            _audio_rebuffer_requested.exchange(false, std::memory_order_relaxed)
+        };
+        if (_audio_started
+            && (device_needs_more_audio
+                || sdl_audio_pacing::queue_is_empty(_audio_queued_bytes_before_put)))
+        {
+            static_cast<void>(SDL_PauseAudioDevice(SDL_GetAudioStreamDevice(_audio_stream)));
+            _audio_started = false;
+            ++_audio_rebuffers;
+            if (sdl_audio_pacing::queue_is_empty(_audio_queued_bytes_before_put))
+                ++_audio_underruns;
+        }
 
         const int byte_count{
             static_cast<int>(audio.interleaved_samples.size_bytes())
@@ -1091,7 +1336,8 @@ namespace clover::platform
         if (additional_amount <= 0 || userdata == nullptr)
             return;
         auto& presentation{ *static_cast<sdl_presentation_t*>(userdata) };
-        presentation._audio_starvation_requests.fetch_add(1u, std::memory_order_relaxed);
+        presentation._audio_feed_requests.fetch_add(1u, std::memory_order_relaxed);
+        presentation._audio_rebuffer_requested.store(true, std::memory_order_relaxed);
     }
 
     void sdl_presentation_t::reset_audio() noexcept
@@ -1104,6 +1350,7 @@ namespace clover::platform
         _audio_started = false;
         _audio_queued_bytes_before_put = -1;
         _audio_queued_bytes_after_put = -1;
+        _audio_rebuffer_requested.store(false, std::memory_order_relaxed);
     }
 
     const frontend::gamepad_state_t& sdl_presentation_t::gamepad_state(size_t port) const noexcept
@@ -1143,6 +1390,13 @@ namespace clover::platform
     {
         const bool requested{ _open_temporary_rom_requested };
         _open_temporary_rom_requested = false;
+        return requested;
+    }
+
+    bool sdl_presentation_t::consume_open_diagnostics_request() noexcept
+    {
+        const bool requested{ _open_diagnostics_requested };
+        _open_diagnostics_requested = false;
         return requested;
     }
 
@@ -1247,14 +1501,52 @@ namespace clover::platform
         return _audio_started;
     }
 
-    uint64_t sdl_presentation_t::audio_empty_queue_observations() const noexcept
+    uint64_t sdl_presentation_t::audio_underruns() const noexcept
     {
-        return _audio_empty_queue_observations;
+        return _audio_underruns;
     }
 
-    uint64_t sdl_presentation_t::audio_starvation_requests() const noexcept
+    uint64_t sdl_presentation_t::audio_rebuffers() const noexcept
     {
-        return _audio_starvation_requests.load(std::memory_order_relaxed);
+        return _audio_rebuffers;
+    }
+
+    uint64_t sdl_presentation_t::audio_feed_requests() const noexcept
+    {
+        return _audio_feed_requests.load(std::memory_order_relaxed);
+    }
+
+    std::string sdl_presentation_t::diagnostic_environment() const
+    {
+        std::ostringstream output{};
+        output << "video_renderer="
+               << (_renderer != nullptr && SDL_GetRendererName(_renderer) != nullptr
+                       ? SDL_GetRendererName(_renderer)
+                       : "unavailable")
+               << '\n'
+               << "audio_driver="
+               << (SDL_GetCurrentAudioDriver() != nullptr
+                       ? SDL_GetCurrentAudioDriver()
+                       : "unavailable")
+               << '\n';
+        if (_audio_stream != nullptr)
+        {
+            const SDL_AudioDeviceID device{ SDL_GetAudioStreamDevice(_audio_stream) };
+            SDL_AudioSpec spec{};
+            int sample_frames{ 0 };
+            static_cast<void>(SDL_GetAudioDeviceFormat(device, &spec, &sample_frames));
+            output << "audio_device="
+                   << (SDL_GetAudioDeviceName(device) != nullptr
+                           ? SDL_GetAudioDeviceName(device)
+                           : "unavailable")
+                   << '\n'
+                   << "audio_device_format=0x" << std::hex
+                   << static_cast<unsigned int>(spec.format) << std::dec << '\n'
+                   << "audio_device_channels=" << static_cast<int>(spec.channels) << '\n'
+                   << "audio_device_rate_hz=" << spec.freq << '\n'
+                   << "audio_device_sample_frames=" << sample_frames << '\n';
+        }
+        return output.str();
     }
 
     bool sdl_presentation_t::key_pressed(SDL_Scancode scancode) const noexcept
@@ -1553,6 +1845,16 @@ namespace clover::platform
         else
             presentation.present_test_pattern();
 
+        const std::filesystem::path diagnostic_log_path{
+            data_root / "logs" / "clover-latest.log"
+        };
+        diagnostic_log_writer_t diagnostic_log{ diagnostic_log_path };
+        const std::string diagnostic_environment{
+            presentation.diagnostic_environment()
+        };
+        std::printf("Clover diagnostics log: %s\n",
+                    utils::path_to_utf8(diagnostic_log_path).c_str());
+
         capture_session_t capture{};
         if (!command_line.capture_path.empty()
             && !capture.initialize(std::filesystem::path{ command_line.capture_path },
@@ -1588,6 +1890,54 @@ namespace clover::platform
         uint64_t audio_discontinuities{ 0 };
         size_t max_audio_sample_values_per_frame{ 0 };
         int32_t audio_peak{ 0 };
+        uint64_t max_core_run_ns{ 0 };
+        uint64_t max_present_ns{ 0 };
+        uint64_t skipped_presentations{ 0 };
+        int minimum_audio_queue_bytes{ -1 };
+        int maximum_audio_queue_bytes{ -1 };
+        async_save_writer_t save_writer{};
+        uint64_t next_diagnostic_log_ns{ run_start_ns };
+        const auto diagnostic_snapshot{
+            [&](bool final) -> std::string
+            {
+                const uint64_t now_ns{ SDL_GetTicksNS() };
+                const double elapsed{
+                    static_cast<double>(now_ns - run_start_ns)
+                        / static_cast<double>(k_nanoseconds_per_second)
+                };
+                std::ostringstream output{};
+                output << "Clover diagnostics\n"
+                       << "status=" << (final ? "final" : "running") << '\n'
+                       << "version=" << CLOVER_VERSION << '\n'
+                       << "compiler=" << CLOVER_BUILD_COMPILER << '\n'
+                       << "platform_toolset=" << CLOVER_BUILD_PLATFORM_TOOLSET << '\n'
+                       << "application_data=" << utils::path_to_utf8(data_root) << '\n'
+                       << "rom=" << (media_loaded
+                               ? utils::path_to_utf8(rom_path.filename())
+                               : "none")
+                       << '\n'
+                       << diagnostic_environment
+                       << "frames=" << frames_run << '\n'
+                       << "elapsed_seconds=" << std::fixed << std::setprecision(3)
+                       << elapsed << '\n'
+                       << "effective_fps="
+                       << (elapsed > 0.0 ? static_cast<double>(frames_run) / elapsed : 0.0)
+                       << '\n'
+                       << "target_fps=" << display.nominal_refresh_hz << '\n'
+                       << "max_core_ms="
+                       << static_cast<double>(max_core_run_ns) / 1'000'000.0 << '\n'
+                       << "max_present_ms="
+                       << static_cast<double>(max_present_ns) / 1'000'000.0 << '\n'
+                       << "skipped_presentations=" << skipped_presentations << '\n'
+                       << "audio_queue_min_bytes=" << minimum_audio_queue_bytes << '\n'
+                       << "audio_queue_max_bytes=" << maximum_audio_queue_bytes << '\n'
+                       << "audio_underruns=" << presentation.audio_underruns() << '\n'
+                       << "audio_rebuffers=" << presentation.audio_rebuffers() << '\n'
+                       << "audio_feed_requests=" << presentation.audio_feed_requests() << '\n'
+                       << "audio_discontinuities=" << audio_discontinuities << '\n';
+                return output.str();
+            }
+        };
         bool paused{ false };
         bool frame_advance_pending{ false };
         size_t speed_selection{ 1u };
@@ -1601,7 +1951,14 @@ namespace clover::platform
         std::vector<rom_library_entry_t> library_entries{};
         while (running && (frame_limit == 0u || frames_run < frame_limit))
         {
+            if (media_loaded)
+                static_cast<void>(save_writer.poll(*core));
             const uint64_t frame_start_ns{ SDL_GetTicksNS() };
+            if (frame_start_ns >= next_diagnostic_log_ns)
+            {
+                diagnostic_log.submit(diagnostic_snapshot(false));
+                next_diagnostic_log_ns = frame_start_ns + 5u * k_nanoseconds_per_second;
+            }
             const uint64_t host_interval_ns{ frame_start_ns - previous_frame_start_ns };
             previous_frame_start_ns = frame_start_ns;
             SDL_Event event{};
@@ -1656,6 +2013,16 @@ namespace clover::platform
             const bool open_temporary_rom_requested{
                 presentation.consume_open_temporary_rom_request()
             };
+            if (presentation.consume_open_diagnostics_request())
+            {
+                const std::string url{
+                    utils::path_to_file_url(diagnostic_log_path.parent_path())
+                };
+                if (!SDL_OpenURL(url.c_str()))
+                    std::fprintf(stderr,
+                                 "Unable to open diagnostics folder: %s\n",
+                                 SDL_GetError());
+            }
             if (presentation.consume_quit_request())
             {
                 running = false;
@@ -1739,7 +2106,7 @@ namespace clover::platform
                     }
                     else
                     {
-                        static_cast<void>(flush_persistent_memory(*core, save_path));
+                        static_cast<void>(save_writer.flush(*core, save_path));
                         core->reset();
                         presentation.reset_audio();
                         next_frame_deadline_ns = SDL_GetTicksNS();
@@ -1885,7 +2252,9 @@ namespace clover::platform
                                      "Keeping current ROM because its replacement save could not be loaded\n");
                         replacement.reset();
                     }
-                    if (replacement && media_loaded && !flush_persistent_memory(*core, save_path))
+                    if (replacement
+                        && media_loaded
+                        && !save_writer.flush(*core, save_path))
                     {
                         std::fprintf(stderr,
                                      "Keeping current ROM because its save RAM could not be written\n");
@@ -1997,15 +2366,46 @@ namespace clover::platform
                     batch_index + 1u == batch_size
                         || (frame_limit != 0u && frames_run >= frame_limit)
                 };
-                uint64_t present_end_ns{ core_run_end_ns };
                 uint64_t audio_queue_end_ns{ core_run_end_ns };
+                uint64_t present_end_ns{ core_run_end_ns };
                 if (batch_complete)
                 {
-                    presentation.present(core->video_frame());
-                    present_end_ns = SDL_GetTicksNS();
                     if (!paused && speed_selection == 1u)
                         presentation.queue_audio(audio);
                     audio_queue_end_ns = SDL_GetTicksNS();
+
+                    const bool presentation_is_late{
+                        !advancing_paused_frame
+                            && speed_selection == 1u
+                            && core_run_end_ns > next_frame_deadline_ns
+                            && core_run_end_ns - next_frame_deadline_ns
+                                > target_frame_duration_ns * 2u
+                    };
+                    if (presentation_is_late)
+                    {
+                        ++skipped_presentations;
+                        present_end_ns = audio_queue_end_ns;
+                    }
+                    else
+                    {
+                        presentation.present(core->video_frame());
+                        present_end_ns = SDL_GetTicksNS();
+                    }
+                }
+                max_core_run_ns = std::max(max_core_run_ns,
+                                           core_run_end_ns - core_run_start_ns);
+                max_present_ns = std::max(max_present_ns,
+                                          present_end_ns - audio_queue_end_ns);
+                const int queued_audio_bytes{
+                    presentation.audio_queued_bytes_after_put()
+                };
+                if (queued_audio_bytes >= 0)
+                {
+                    minimum_audio_queue_bytes = minimum_audio_queue_bytes < 0
+                        ? queued_audio_bytes
+                        : std::min(minimum_audio_queue_bytes, queued_audio_bytes);
+                    maximum_audio_queue_bytes = std::max(maximum_audio_queue_bytes,
+                                                         queued_audio_bytes);
                 }
                 if (capture.active())
                 {
@@ -2020,8 +2420,8 @@ namespace clover::platform
                                          presentation.audio_queued_bytes_after_put(),
                                          presentation.audio_started(),
                                          core_run_end_ns - core_run_start_ns,
-                                         present_end_ns - core_run_end_ns,
-                                         audio_queue_end_ns - present_end_ns);
+                                         present_end_ns - audio_queue_end_ns,
+                                         audio_queue_end_ns - core_run_end_ns);
                 }
                 audio_sample_values += audio.interleaved_samples.size();
                 audio_discontinuities += audio.discontinuity ? 1u : 0u;
@@ -2037,7 +2437,7 @@ namespace clover::platform
                     audio_peak = std::max(audio_peak, magnitude);
                 }
                 if ((frames_run % 60u) == 0u)
-                    static_cast<void>(flush_persistent_memory(*core, save_path));
+                    static_cast<void>(save_writer.schedule(*core, save_path));
             }
 
             if (advancing_paused_frame)
@@ -2094,13 +2494,26 @@ namespace clover::platform
                     static_cast<unsigned long long>(
                         audio_sample_values / std::max<uint8_t>(core->audio_frame().channels, 1u)),
                     audio_peak);
+        std::printf("Clover SDL timing: max_core_ms=%.3f max_present_ms=%.3f "
+                    "skipped_presentations=%llu\n",
+                    static_cast<double>(max_core_run_ns) / 1'000'000.0,
+                    static_cast<double>(max_present_ns) / 1'000'000.0,
+                    static_cast<unsigned long long>(skipped_presentations));
         std::printf("Clover SDL audio: max_values_per_frame=%zu discontinuities=%llu "
-                    "empty_queue_observations=%llu starvation_requests=%llu\n",
+                    "queue_min_bytes=%d queue_max_bytes=%d underruns=%llu rebuffers=%llu "
+                    "feed_requests=%llu\n",
                     max_audio_sample_values_per_frame,
                     static_cast<unsigned long long>(audio_discontinuities),
-                    static_cast<unsigned long long>(presentation.audio_empty_queue_observations()),
-                    static_cast<unsigned long long>(presentation.audio_starvation_requests()));
-        const bool save_flushed{ !media_loaded || flush_persistent_memory(*core, save_path) };
+                    minimum_audio_queue_bytes,
+                    maximum_audio_queue_bytes,
+                    static_cast<unsigned long long>(presentation.audio_underruns()),
+                    static_cast<unsigned long long>(presentation.audio_rebuffers()),
+                    static_cast<unsigned long long>(presentation.audio_feed_requests()));
+        const bool save_flushed{
+            !media_loaded || save_writer.flush(*core, save_path)
+        };
+        diagnostic_log.submit(diagnostic_snapshot(true));
+        diagnostic_log.finish();
         capture.finalize();
         presentation.shutdown();
         SDL_DestroyWindow(window);
@@ -2146,24 +2559,4 @@ namespace clover::platform
         return true;
     }
 
-    bool sdl_app_shell_t::flush_persistent_memory(frontend::emulator_core_t& core,
-                                                   const std::filesystem::path& save_path) noexcept
-    {
-        const std::span<const std::byte> memory{ core.persistent_memory() };
-        if (memory.empty() || !core.persistent_memory_dirty())
-            return true;
-
-        std::string error{};
-        if (!utils::write_binary_file_atomic(save_path, memory, error))
-        {
-            std::fprintf(stderr, "Unable to save RAM: %s\n", error.c_str());
-            return false;
-        }
-
-        core.mark_persistent_memory_clean();
-        std::printf("Saved save RAM: %s (%zu bytes)\n",
-                    save_path.string().c_str(),
-                    memory.size());
-        return true;
-    }
 }

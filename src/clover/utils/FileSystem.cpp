@@ -38,6 +38,37 @@ namespace clover::utils
         return std::filesystem::path{ encoded };
     }
 
+    std::string path_to_file_url(const std::filesystem::path& path)
+    {
+        const std::string encoded_path{ path_to_utf8(path) };
+        std::string result{ "file://" };
+        if (encoded_path.empty() || encoded_path.front() != '/')
+            result.push_back('/');
+
+        static constexpr char hex[]{ "0123456789ABCDEF" };
+        for (const unsigned char character : encoded_path)
+        {
+            const bool unreserved{
+                (character >= 'a' && character <= 'z')
+                    || (character >= 'A' && character <= 'Z')
+                    || (character >= '0' && character <= '9')
+                    || character == '-' || character == '.' || character == '_'
+                    || character == '~' || character == '/' || character == ':'
+            };
+            if (unreserved)
+            {
+                result.push_back(static_cast<char>(character));
+            }
+            else
+            {
+                result.push_back('%');
+                result.push_back(hex[character >> 4u]);
+                result.push_back(hex[character & 0x0fu]);
+            }
+        }
+        return result;
+    }
+
     std::vector<std::byte> read_binary_file(const std::filesystem::path& path) noexcept
     {
         std::ifstream input{ path, std::ios::binary };

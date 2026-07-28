@@ -43,9 +43,46 @@ function Resolve-DiagnosticLog {
     return $null
 }
 
+function Resolve-VisualStudioClangCl {
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} `
+        "Microsoft Visual Studio\Installer\vswhere.exe"
+    if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) {
+        throw "Visual Studio Installer's vswhere.exe was not found at $vswhere."
+    }
+
+    $installationPath = (& $vswhere -latest -products * `
+        -version "[17.0,18.0)" `
+        -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+                  Microsoft.VisualStudio.Component.VC.Llvm.Clang `
+        -property installationPath | Select-Object -First 1)
+    if ([string]::IsNullOrWhiteSpace($installationPath)) {
+        throw "Visual Studio 2022 with MSVC and bundled clang-cl was not found."
+    }
+
+    $clangCl = Join-Path $installationPath.Trim() `
+        "VC\Tools\Llvm\x64\bin\clang-cl.exe"
+    if (-not (Test-Path -LiteralPath $clangCl -PathType Leaf)) {
+        throw "Visual Studio's bundled clang-cl was not found at $clangCl."
+    }
+
+    $banner = (& $clangCl --version 2>&1) -join "`n"
+    if ($LASTEXITCODE -ne 0 -or $banner -notmatch "clang version 19\.1\.5(?:\s|$)") {
+        throw "Visual Studio's bundled clang-cl 19.1.5 is required.`n$banner"
+    }
+    return $clangCl
+}
+
 $scriptRoot = Split-Path -Parent $PSCommandPath
 $repoRoot = Split-Path -Parent $scriptRoot
 $resolvedRom = (Resolve-Path -LiteralPath $RomPath).Path
+$clangCl = Resolve-VisualStudioClangCl
+
+if ($env:VCToolsVersion -notlike "14.44.*") {
+    throw "MSVC toolset 14.44 is required; found $env:VCToolsVersion. Run this from Developer PowerShell for VS 2022 configured with -vcvars_ver=14.44."
+}
+
+Write-Host "Using compiler: $clangCl"
+Write-Host ((& $clangCl --version 2>&1 | Select-Object -First 1) -join "")
 
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $desktop = [Environment]::GetFolderPath([Environment+SpecialFolder]::Desktop)
@@ -66,7 +103,11 @@ if (-not $SkipBuild) {
     Write-Host "Configuring the optimized clang-cl profiling build..."
     Push-Location $repoRoot
     try {
-        & cmake --preset windows-clangcl-profile
+        # --fresh discards any compiler path cached by a previous failed
+        # configure. The explicit path prevents a system LLVM installation
+        # earlier on PATH from replacing Visual Studio's pinned clang-cl.
+        & cmake --fresh --preset windows-clangcl-profile `
+            "-DCMAKE_CXX_COMPILER=$clangCl"
         if ($LASTEXITCODE -ne 0) {
             throw "CMake configure failed with exit code $LASTEXITCODE."
         }
@@ -200,7 +241,8 @@ try {
         Write-ManifestValue $manifest "battery_charge_percent" "not_reported"
     }
 
-    Write-ManifestValue $manifest "clang_cl" ((& clang-cl --version 2>&1 | Select-Object -First 1 | Out-String).Trim())
+    Write-ManifestValue $manifest "clang_cl_path" $clangCl
+    Write-ManifestValue $manifest "clang_cl" ((& $clangCl --version 2>&1 | Select-Object -First 1 | Out-String).Trim())
     Write-ManifestValue $manifest "cmake" ((& cmake --version 2>&1 | Select-Object -First 1 | Out-String).Trim())
 }
 finally {

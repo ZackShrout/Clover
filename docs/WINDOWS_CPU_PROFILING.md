@@ -31,14 +31,17 @@ exits automatically at the frame limit.
 
 The first run:
 
-1. configures and builds `windows-clangcl-profile`, which retains Release
-   optimization and adds native PDB information;
-2. downloads the current official Microsoft PerfView executable when it is not
+1. locates and verifies Visual Studio's bundled clang-cl 19.1.5, then performs
+   a fresh `windows-clangcl-profile` configure so another LLVM installation
+   cannot be retained by CMake;
+2. builds the profile target with Release optimization and native PDB
+   information;
+3. downloads the current official Microsoft PerfView executable when it is not
    already cached;
-3. verifies its Microsoft Authenticode signature;
-4. requests administrator permission required by ETW;
-5. records 1 ms CPU samples and merged native call stacks;
-6. writes a timestamped ZIP under `Desktop\CloverProfiles`.
+4. verifies its Microsoft Authenticode signature;
+5. requests administrator permission required by ETW;
+6. records 1 ms CPU samples and merged native call stacks;
+7. writes a timestamped ZIP under `Desktop\CloverProfiles`.
 
 The ZIP contains the merged `clover-cpu.etl.zip` trace, its exact `Clover.exe`
 and `Clover.pdb`, PerfView's collection log, Clover's before/after diagnostics,

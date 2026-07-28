@@ -7,6 +7,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(CLOVER_BUILD_SDL_FRONTEND "Build the SDL3 desktop frontend." OFF)
 option(CLOVER_PACKAGE_DISTRIBUTION "Build an OS-native distributable application." OFF)
+option(CLOVER_ENABLE_PROFILING_SYMBOLS
+    "Keep optimized Windows code and emit native symbols for sampling profiles."
+    OFF)
 set(CLOVER_EXPECTED_CXX_COMPILER_ID "" CACHE STRING
     "Required C++ compiler ID for reproducible distribution builds.")
 set(CLOVER_EXPECTED_CXX_COMPILER_VERSION "" CACHE STRING
@@ -55,6 +58,18 @@ endif()
 set(CLOVER_BUILD_REVISION "local")
 if(DEFINED ENV{GITHUB_SHA} AND NOT "$ENV{GITHUB_SHA}" STREQUAL "")
     set(CLOVER_BUILD_REVISION "$ENV{GITHUB_SHA}")
+endif()
+
+if(CLOVER_ENABLE_PROFILING_SYMBOLS)
+    if(NOT MSVC)
+        message(FATAL_ERROR
+            "CLOVER_ENABLE_PROFILING_SYMBOLS currently supports MSVC-compatible "
+            "Windows toolchains only.")
+    endif()
+    # /Zi and /Zo preserve optimized-code line/function information. Link a full
+    # PDB without changing the Release optimization level used by the beta build.
+    add_compile_options("/Zi" "/Zo")
+    add_link_options("/DEBUG:FULL" "/INCREMENTAL:NO")
 endif()
 
 find_package(unofficial-sqlite3 CONFIG QUIET)

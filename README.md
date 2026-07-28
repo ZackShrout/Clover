@@ -190,6 +190,11 @@ The release workflow applies the same clang-cl Release configuration on pushes
 to `main` and `v*` tags. A tag publishes the resulting ZIP and NSIS installer
 as a GitHub Release; a branch push retains them as workflow artifacts.
 
+For native CPU hotspot collection on a Windows development machine, use the
+automated [Windows CPU profiling workflow](docs/WINDOWS_CPU_PROFILING.md). It
+keeps Release optimization, adds PDB symbols, and produces a portable PerfView
+trace bundle.
+
 The ROM argument is optional. With no argument, Clover displays its frontend
 test pattern; choose **File → Import ROM to Library…** when ready. The pattern
 immediately clears when media loads, before the game produces its first visible frame.

@@ -38,6 +38,7 @@ tmp/
 tmp-*/
 clover-dumps/
 clover-dumps-*/
+clover-profile-*/
 bsnes-*/
 reference-*/
 bulk-*/

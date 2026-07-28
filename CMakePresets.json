@@ -75,6 +75,16 @@
           "toolchain": "Visual Studio"
         }
       }
+    },
+    {
+      "name": "windows-clangcl-profile",
+      "displayName": "Windows clang-cl Profile",
+      "description": "Release-equivalent clang-cl build with native sampling symbols",
+      "inherits": "windows-clangcl-release",
+      "binaryDir": "${sourceDir}/cmake-build-windows-clangcl-profile",
+      "cacheVariables": {
+        "CLOVER_ENABLE_PROFILING_SYMBOLS": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -108,6 +118,15 @@
       "displayName": "Build and Test Windows clang-cl Release",
       "configurePreset": "windows-clangcl-release",
       "configuration": "Release"
+    },
+    {
+      "name": "windows-clangcl-profile",
+      "displayName": "Build Windows clang-cl Profile",
+      "configurePreset": "windows-clangcl-profile",
+      "configuration": "Release",
+      "targets": [
+        "clover_sdl"
+      ]
     }
   ],
   "testPresets": [

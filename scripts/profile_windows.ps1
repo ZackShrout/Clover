@@ -202,7 +202,7 @@ $perfViewArguments = @(
 Write-Host ""
 Write-Host "Starting the profile. Windows may request administrator permission."
 Write-Host "Play the same representative section until Clover exits automatically."
-Write-Host "Requested frame count: $Frames (about $([math]::Round($Frames / 60.0, 1)) minutes at full speed)."
+Write-Host "Requested frame count: $Frames (about $([math]::Round($Frames / 3600.0, 1)) minutes at full speed)."
 Write-Host ""
 
 Push-Location $buildDirectory
@@ -217,8 +217,32 @@ finally {
 }
 
 $traceArchive = "$tracePath.zip"
-if (-not (Test-Path -LiteralPath $traceArchive -PathType Leaf)) {
-    throw "PerfView completed without creating $traceArchive."
+$waitSeconds = [Math]::Max(
+    300,
+    [Math]::Ceiling($Frames / 20.0) + 180
+)
+$collectionDeadline = [DateTime]::UtcNow.AddSeconds($waitSeconds)
+$reportedBackgroundCollection = $false
+while (-not (Test-Path -LiteralPath $traceArchive -PathType Leaf)) {
+    if (-not $reportedBackgroundCollection) {
+        Write-Host "PerfView elevated its collector; waiting for the trace archive..."
+        $reportedBackgroundCollection = $true
+    }
+    if ([DateTime]::UtcNow -ge $collectionDeadline) {
+        $directoryContents = (
+            Get-ChildItem -LiteralPath $outputDirectory -ErrorAction SilentlyContinue |
+                Select-Object -ExpandProperty Name
+        ) -join ", "
+        $logTail = ""
+        if (Test-Path -LiteralPath $perfViewLog -PathType Leaf) {
+            $logTail = (
+                Get-Content -LiteralPath $perfViewLog -Tail 30 |
+                    Out-String
+            ).Trim()
+        }
+        throw "Timed out after $waitSeconds seconds waiting for $traceArchive. Files present: $directoryContents`nPerfView log tail:`n$logTail"
+    }
+    Start-Sleep -Seconds 1
 }
 
 Copy-Item -LiteralPath $cloverExe -Destination $outputDirectory

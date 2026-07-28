@@ -42,7 +42,8 @@ The first run:
    already cached;
 5. verifies its Microsoft Authenticode signature;
 6. requests administrator permission required by ETW;
-7. records 1 ms CPU samples and merged native call stacks;
+7. waits for the elevated PerfView collector while it records 1 ms CPU samples
+   and merges the native call stacks;
 8. writes a timestamped ZIP under `Desktop\CloverProfiles`.
 
 The ZIP contains the merged `clover-cpu.etl.zip` trace, its exact `Clover.exe`

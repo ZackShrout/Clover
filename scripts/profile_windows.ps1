@@ -43,7 +43,7 @@ function Resolve-DiagnosticLog {
     return $null
 }
 
-function Resolve-VisualStudioClangCl {
+function Initialize-VisualStudioToolchain {
     $vswhere = Join-Path ${env:ProgramFiles(x86)} `
         "Microsoft Visual Studio\Installer\vswhere.exe"
     if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) {
@@ -58,8 +58,36 @@ function Resolve-VisualStudioClangCl {
     if ([string]::IsNullOrWhiteSpace($installationPath)) {
         throw "Visual Studio 2022 with MSVC and bundled clang-cl was not found."
     }
+    $installationPath = $installationPath.Trim()
 
-    $clangCl = Join-Path $installationPath.Trim() `
+    $developerCommand = Join-Path $installationPath "Common7\Tools\VsDevCmd.bat"
+    if (-not (Test-Path -LiteralPath $developerCommand -PathType Leaf)) {
+        throw "Visual Studio's VsDevCmd.bat was not found at $developerCommand."
+    }
+
+    # A Developer PowerShell can retain an older default toolset even after
+    # 14.44 is installed. Import the exact environment used by release CI into
+    # this process rather than relying on the shell's initial selection.
+    $environmentLines = & $env:COMSPEC /s /c `
+        "`"$developerCommand`" -no_logo -arch=x64 -host_arch=x64 -vcvars_ver=14.44 && set"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Visual Studio could not initialize MSVC toolset 14.44."
+    }
+    foreach ($line in $environmentLines) {
+        if ($line -match "^([^=]+)=(.*)$") {
+            [Environment]::SetEnvironmentVariable(
+                $matches[1],
+                $matches[2],
+                [EnvironmentVariableTarget]::Process
+            )
+        }
+    }
+
+    if ($env:VCToolsVersion -notlike "14.44.*") {
+        throw "MSVC toolset 14.44 is required; Visual Studio initialized $env:VCToolsVersion. Confirm that 'MSVC v143 - VS 2022 C++ x64/x86 build tools (v14.44-17.14)' is installed."
+    }
+
+    $clangCl = Join-Path $installationPath `
         "VC\Tools\Llvm\x64\bin\clang-cl.exe"
     if (-not (Test-Path -LiteralPath $clangCl -PathType Leaf)) {
         throw "Visual Studio's bundled clang-cl was not found at $clangCl."
@@ -75,14 +103,11 @@ function Resolve-VisualStudioClangCl {
 $scriptRoot = Split-Path -Parent $PSCommandPath
 $repoRoot = Split-Path -Parent $scriptRoot
 $resolvedRom = (Resolve-Path -LiteralPath $RomPath).Path
-$clangCl = Resolve-VisualStudioClangCl
-
-if ($env:VCToolsVersion -notlike "14.44.*") {
-    throw "MSVC toolset 14.44 is required; found $env:VCToolsVersion. Run this from Developer PowerShell for VS 2022 configured with -vcvars_ver=14.44."
-}
+$clangCl = Initialize-VisualStudioToolchain
 
 Write-Host "Using compiler: $clangCl"
 Write-Host ((& $clangCl --version 2>&1 | Select-Object -First 1) -join "")
+Write-Host "Using MSVC tools: $env:VCToolsVersion"
 
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $desktop = [Environment]::GetFolderPath([Environment+SpecialFolder]::Desktop)

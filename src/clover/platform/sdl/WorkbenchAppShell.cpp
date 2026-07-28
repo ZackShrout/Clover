@@ -309,6 +309,9 @@ namespace clover::platform
 {
     int workbench_app_shell_t::run(int argc, char** argv)
     {
+        std::printf("Clover Workbench build: compiler=%s platform_toolset=%s\n",
+                    CLOVER_BUILD_COMPILER,
+                    CLOVER_BUILD_PLATFORM_TOOLSET);
         const command_line_t command{ parse_arguments(argc, argv) };
         if (!command.valid)
         {

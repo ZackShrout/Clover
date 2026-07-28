@@ -7,6 +7,47 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(CLOVER_BUILD_SDL_FRONTEND "Build the SDL3 desktop frontend." OFF)
 option(CLOVER_PACKAGE_DISTRIBUTION "Build an OS-native distributable application." OFF)
+set(CLOVER_EXPECTED_CXX_COMPILER_ID "" CACHE STRING
+    "Required C++ compiler ID for reproducible distribution builds.")
+set(CLOVER_EXPECTED_CXX_COMPILER_VERSION "" CACHE STRING
+    "Required C++ compiler version for reproducible distribution builds.")
+set(CLOVER_EXPECTED_MSVC_TOOLSET_PREFIX "" CACHE STRING
+    "Required VCToolsVersion prefix for reproducible Windows distribution builds.")
+
+if(CLOVER_PACKAGE_DISTRIBUTION)
+    if(CLOVER_EXPECTED_CXX_COMPILER_ID
+        AND NOT CMAKE_CXX_COMPILER_ID STREQUAL CLOVER_EXPECTED_CXX_COMPILER_ID)
+        message(FATAL_ERROR
+            "Distribution build requires ${CLOVER_EXPECTED_CXX_COMPILER_ID}; "
+            "found ${CMAKE_CXX_COMPILER_ID}.")
+    endif()
+    if(CLOVER_EXPECTED_CXX_COMPILER_VERSION
+        AND NOT CMAKE_CXX_COMPILER_VERSION VERSION_EQUAL
+            CLOVER_EXPECTED_CXX_COMPILER_VERSION)
+        message(FATAL_ERROR
+            "Distribution build requires compiler version "
+            "${CLOVER_EXPECTED_CXX_COMPILER_VERSION}; "
+            "found ${CMAKE_CXX_COMPILER_VERSION}.")
+    endif()
+    if(WIN32 AND CLOVER_EXPECTED_MSVC_TOOLSET_PREFIX)
+        string(FIND "$ENV{VCToolsVersion}"
+            "${CLOVER_EXPECTED_MSVC_TOOLSET_PREFIX}" CLOVER_TOOLSET_PREFIX_POSITION)
+        if(NOT CLOVER_TOOLSET_PREFIX_POSITION EQUAL 0)
+            message(FATAL_ERROR
+                "Distribution build requires MSVC tools "
+                "${CLOVER_EXPECTED_MSVC_TOOLSET_PREFIX}x; "
+                "found $ENV{VCToolsVersion}.")
+        endif()
+    endif()
+endif()
+
+set(CLOVER_BUILD_COMPILER
+    "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
+if(DEFINED ENV{VCToolsVersion} AND NOT "$ENV{VCToolsVersion}" STREQUAL "")
+    set(CLOVER_BUILD_PLATFORM_TOOLSET "$ENV{VCToolsVersion}")
+else()
+    set(CLOVER_BUILD_PLATFORM_TOOLSET "native")
+endif()
 
 find_package(unofficial-sqlite3 CONFIG QUIET)
 if(TARGET unofficial::sqlite3::sqlite3)
@@ -178,7 +219,11 @@ if(CLOVER_BUILD_SDL_FRONTEND)
         clover_utils
         SDL3::SDL3
     )
-    target_compile_definitions(clover_sdl PRIVATE CLOVER_VERSION="${PROJECT_VERSION}")
+    target_compile_definitions(clover_sdl PRIVATE
+        CLOVER_VERSION="${PROJECT_VERSION}"
+        CLOVER_BUILD_COMPILER="${CLOVER_BUILD_COMPILER}"
+        CLOVER_BUILD_PLATFORM_TOOLSET="${CLOVER_BUILD_PLATFORM_TOOLSET}"
+    )
     if(MSVC)
         target_link_options(clover_sdl PRIVATE "/STACK:16777216")
     endif()
@@ -199,7 +244,10 @@ if(CLOVER_BUILD_SDL_FRONTEND)
         SDL3::SDL3
     )
     target_compile_definitions(
-        clover_workbench PRIVATE CLOVER_VERSION="${PROJECT_VERSION}"
+        clover_workbench PRIVATE
+        CLOVER_VERSION="${PROJECT_VERSION}"
+        CLOVER_BUILD_COMPILER="${CLOVER_BUILD_COMPILER}"
+        CLOVER_BUILD_PLATFORM_TOOLSET="${CLOVER_BUILD_PLATFORM_TOOLSET}"
     )
     if(MSVC)
         target_link_options(clover_workbench PRIVATE "/STACK:16777216")

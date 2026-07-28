@@ -63,6 +63,9 @@
       "toolchainFile": "${sourceDir}/.vcpkg/scripts/buildsystems/vcpkg.cmake",
       "cacheVariables": {
         "CMAKE_CXX_COMPILER": "clang-cl.exe",
+        "CLOVER_EXPECTED_CXX_COMPILER_ID": "Clang",
+        "CLOVER_EXPECTED_CXX_COMPILER_VERSION": "19.1.5",
+        "CLOVER_EXPECTED_MSVC_TOOLSET_PREFIX": "14.44.",
         "CLOVER_BUILD_SDL_FRONTEND": "ON",
         "CLOVER_PACKAGE_DISTRIBUTION": "ON",
         "VCPKG_TARGET_TRIPLET": "x64-windows-static"

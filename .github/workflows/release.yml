@@ -17,7 +17,7 @@ env:
 jobs:
   windows:
     name: Windows x64
-    runs-on: windows-2025
+    runs-on: windows-2022
     steps:
       - name: Check out Clover
         uses: actions/checkout@v6
@@ -43,44 +43,59 @@ jobs:
           }
           "CLOVER_ARTIFACT_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Configure Visual Studio environment
+      - name: Configure pinned Visual Studio environment
         shell: pwsh
         run: |
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $installationPath = & $vswhere -latest -products * `
+            -version "[17.0,18.0)" `
             -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+                      Microsoft.VisualStudio.Component.VC.Llvm.Clang `
             -property installationPath
           if (-not $installationPath) {
-            throw "No Visual Studio installation with the C++ toolchain was found."
+            throw "Visual Studio 2022 with MSVC and bundled clang-cl was not found."
           }
           $developerCommand = Join-Path $installationPath "Common7\Tools\VsDevCmd.bat"
-          cmd /s /c "`"$developerCommand`" -no_logo -arch=x64 -host_arch=x64 && set" |
+          cmd /s /c "`"$developerCommand`" -no_logo -arch=x64 -host_arch=x64 -vcvars_ver=14.44 && set" |
             ForEach-Object {
               if ($_ -match "^([^=]+)=(.*)$") {
                 "$($matches[1])=$($matches[2])" |
                   Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
               }
             }
+          $clangCl = Join-Path $installationPath "VC\Tools\Llvm\x64\bin\clang-cl.exe"
+          if (-not (Test-Path $clangCl)) {
+            throw "Visual Studio's bundled clang-cl was not found at $clangCl."
+          }
+          "CLOVER_CLANG_CL=$clangCl" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Require clang-cl 19 or newer
+      - name: Verify pinned Windows toolchain
         shell: pwsh
         run: |
-          $banner = (& clang-cl.exe --version 2>&1) -join "`n"
-          if ($banner -notmatch "clang version (\d+)") {
-            throw "Unable to determine the clang-cl compiler version."
+          $banner = (& $env:CLOVER_CLANG_CL --version 2>&1) -join "`n"
+          if ($banner -notmatch "clang version 19\.1\.5(?:\s|$)") {
+            throw "clang-cl 19.1.5 is required.`n$banner"
           }
-          $compilerVersion = [int]$matches[1]
-          if ($compilerVersion -lt 19) {
-            throw "clang-cl 19 or newer is required; found $compilerVersion."
+          if ($env:VCToolsVersion -notlike "14.44.*") {
+            throw "MSVC toolset 14.44 is required; found $env:VCToolsVersion."
+          }
+          if (-not $env:VisualStudioVersion.StartsWith("17.")) {
+            throw "Visual Studio 2022 is required; found $env:VisualStudioVersion."
           }
           Write-Host $banner
+          Write-Host "Visual Studio $env:VisualStudioVersion"
+          Write-Host "MSVC tools $env:VCToolsVersion"
 
       - name: Configure
         shell: pwsh
         run: |
           cmake -S . -B build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_CXX_COMPILER=clang-cl.exe `
+            -DCMAKE_CXX_COMPILER="$env:CLOVER_CLANG_CL" `
+            -DCLOVER_EXPECTED_CXX_COMPILER_ID=Clang `
+            -DCLOVER_EXPECTED_CXX_COMPILER_VERSION=19.1.5 `
+            -DCLOVER_EXPECTED_MSVC_TOOLSET_PREFIX=14.44. `
             -DCLOVER_BUILD_SDL_FRONTEND=ON `
             -DCLOVER_PACKAGE_DISTRIBUTION=ON `
             -DCMAKE_TOOLCHAIN_FILE="$env:GITHUB_WORKSPACE/.vcpkg/scripts/buildsystems/vcpkg.cmake" `
@@ -88,6 +103,29 @@ jobs:
 
       - name: Build
         run: cmake --build build --config Release
+
+      - name: Verify Windows binary toolchain fingerprints
+        shell: pwsh
+        run: |
+          $binaryPath = Join-Path $env:GITHUB_WORKSPACE "build\Clover.exe"
+          if (-not (Test-Path $binaryPath)) {
+            throw "Packaged Clover executable was not found at $binaryPath."
+          }
+          $binaryText = [Text.Encoding]::ASCII.GetString(
+            [IO.File]::ReadAllBytes($binaryPath)
+          )
+          $requiredMarkers = @(
+            "Clover build: compiler=%s platform_toolset=%s",
+            "Clang 19.1.5",
+            "14.44.",
+            "COMPILER=msvc-1944"
+          )
+          foreach ($marker in $requiredMarkers) {
+            if (-not $binaryText.Contains($marker)) {
+              throw "Clover.exe is missing required toolchain marker: $marker"
+            }
+          }
+          Write-Host "Clover.exe matches Clang 19.1.5, MSVC 14.44, and SDL msvc-1944."
 
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure

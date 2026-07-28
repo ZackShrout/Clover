@@ -1429,6 +1429,9 @@ namespace clover::platform
             return 1;
         }
 
+        std::printf("Clover build: compiler=%s platform_toolset=%s\n",
+                    CLOVER_BUILD_COMPILER,
+                    CLOVER_BUILD_PLATFORM_TOOLSET);
         static_cast<void>(SDL_SetAppMetadata("Clover", CLOVER_VERSION, "com.bunnysoft.clover"));
         if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD))
         {

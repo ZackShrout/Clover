@@ -99,8 +99,11 @@ application metadata uses the CMake project version.
 
 ## Dependency and license policy
 
-`vcpkg.json` pins Clover's dependency names and GitHub's runner toolchain
-resolves SDL3 and SQLite for each target. Distributable packages include:
+`vcpkg.json` pins Clover's dependency names, and the release workflow pins the
+vcpkg revision used to resolve SDL3 and SQLite. Windows releases additionally
+require Visual Studio 2022's clang-cl 19.1.5 and the MSVC 14.44 platform
+toolset; configuration and binary-fingerprint checks stop the build if the
+hosted runner drifts from that combination. Distributable packages include:
 
 - `THIRD_PARTY_NOTICES.md`
 - `LICENSES/LGPL-2.1.txt`

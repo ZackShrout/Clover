@@ -152,7 +152,8 @@ cmake --build --preset sdl-release
 
 On Windows, install Visual Studio 2022 with the **Desktop development with
 C++** workload, **C++ Clang tools for Windows**, and the MSVC 14.44.35207
-toolset. Windows distribution builds use clang-cl 19 or newer because the
+toolset. Windows distribution builds use the Visual Studio 2022 bundled
+clang-cl 19.1.5 with the MSVC 14.44 platform toolset because the
 tested MSVC configurations exhibited optimized-build correctness and real-time
 audio performance problems. Bootstrap the vcpkg revision pinned by
 `vcpkg.json` from a Visual Studio Developer PowerShell:
@@ -177,8 +178,9 @@ directory directly, so no CLion environment variables are required. If the
 build directory was previously configured for MSVC, reset its CMake cache
 before loading this preset.
 
-The configure log must identify `Clang 19` or newer with an MSVC-like command
-line. During dependency installation, vcpkg may separately report `cl.exe`
+The configure log must identify `Clang 19.1.5` with an MSVC-like command line
+and `VCToolsVersion` must begin with `14.44.`. During dependency installation,
+vcpkg may separately report `cl.exe`
 while detecting the ABI of the `x64-windows-static` triplet; this does not mean
 Clover is being compiled with MSVC.
 

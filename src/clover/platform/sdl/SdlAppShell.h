@@ -57,8 +57,9 @@ namespace clover::platform
         [[nodiscard]] int audio_queued_bytes_after_put() const noexcept;
         [[nodiscard]] bool audio_started() const noexcept;
         [[nodiscard]] uint64_t audio_underruns() const noexcept;
-        [[nodiscard]] uint64_t audio_rebuffers() const noexcept;
         [[nodiscard]] uint64_t audio_feed_requests() const noexcept;
+        [[nodiscard]] uint64_t audio_feed_requested_bytes() const noexcept;
+        [[nodiscard]] uint64_t audio_feed_maximum_request_bytes() const noexcept;
         [[nodiscard]] std::string diagnostic_environment() const;
 
     private:
@@ -87,6 +88,8 @@ namespace clover::platform
         std::vector<uint32_t> _test_pattern{};
         std::array<frontend::gamepad_state_t, 2> _inputs{};
         std::array<bool, SDL_SCANCODE_COUNT> _key_states{};
+        uint32_t _audio_input_sample_rate_hz{ 0 };
+        uint8_t _audio_input_channels{ 0 };
         bool _audio_started{ false };
         bool _capture_marker_requested{ false };
         bool _reset_requested{ false };
@@ -114,9 +117,9 @@ namespace clover::platform
         int _audio_queued_bytes_before_put{ -1 };
         int _audio_queued_bytes_after_put{ -1 };
         uint64_t _audio_underruns{ 0 };
-        uint64_t _audio_rebuffers{ 0 };
         std::atomic<uint64_t> _audio_feed_requests{ 0 };
-        std::atomic<bool> _audio_rebuffer_requested{ false };
+        std::atomic<uint64_t> _audio_feed_requested_bytes{ 0 };
+        std::atomic<uint64_t> _audio_feed_maximum_request_bytes{ 0 };
     };
 
     struct sdl_app_shell_t

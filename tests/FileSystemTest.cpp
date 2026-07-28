@@ -3,6 +3,7 @@
 //
 
 #include "clover/utils/FileSystem.h"
+#include "clover/utils/SystemInfo.h"
 
 #include <algorithm>
 #include <array>
@@ -13,6 +14,9 @@
 
 int main()
 {
+    if (clover::utils::cpu_brand().empty())
+        return 11;
+
     if (clover::utils::path_to_file_url(
             clover::utils::path_from_utf8("/tmp/Clover logs"))
         != "file:///tmp/Clover%20logs")

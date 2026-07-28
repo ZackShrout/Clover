@@ -48,6 +48,14 @@ if(DEFINED ENV{VCToolsVersion} AND NOT "$ENV{VCToolsVersion}" STREQUAL "")
 else()
     set(CLOVER_BUILD_PLATFORM_TOOLSET "native")
 endif()
+set(CLOVER_RUNTIME_VERSION "${PROJECT_VERSION}")
+if(DEFINED ENV{CLOVER_ARTIFACT_VERSION} AND NOT "$ENV{CLOVER_ARTIFACT_VERSION}" STREQUAL "")
+    set(CLOVER_RUNTIME_VERSION "$ENV{CLOVER_ARTIFACT_VERSION}")
+endif()
+set(CLOVER_BUILD_REVISION "local")
+if(DEFINED ENV{GITHUB_SHA} AND NOT "$ENV{GITHUB_SHA}" STREQUAL "")
+    set(CLOVER_BUILD_REVISION "$ENV{GITHUB_SHA}")
+endif()
 
 find_package(unofficial-sqlite3 CONFIG QUIET)
 if(TARGET unofficial::sqlite3::sqlite3)
@@ -102,6 +110,7 @@ set(CLOVER_APP_SOURCES
 
 add_library(clover_utils STATIC
     src/clover/utils/FileSystem.cpp
+    src/clover/utils/SystemInfo.cpp
 )
 target_include_directories(clover_utils PUBLIC src)
 
@@ -220,7 +229,8 @@ if(CLOVER_BUILD_SDL_FRONTEND)
         SDL3::SDL3
     )
     target_compile_definitions(clover_sdl PRIVATE
-        CLOVER_VERSION="${PROJECT_VERSION}"
+        CLOVER_VERSION="${CLOVER_RUNTIME_VERSION}"
+        CLOVER_BUILD_REVISION="${CLOVER_BUILD_REVISION}"
         CLOVER_BUILD_COMPILER="${CLOVER_BUILD_COMPILER}"
         CLOVER_BUILD_PLATFORM_TOOLSET="${CLOVER_BUILD_PLATFORM_TOOLSET}"
     )
@@ -245,7 +255,8 @@ if(CLOVER_BUILD_SDL_FRONTEND)
     )
     target_compile_definitions(
         clover_workbench PRIVATE
-        CLOVER_VERSION="${PROJECT_VERSION}"
+        CLOVER_VERSION="${CLOVER_RUNTIME_VERSION}"
+        CLOVER_BUILD_REVISION="${CLOVER_BUILD_REVISION}"
         CLOVER_BUILD_COMPILER="${CLOVER_BUILD_COMPILER}"
         CLOVER_BUILD_PLATFORM_TOOLSET="${CLOVER_BUILD_PLATFORM_TOOLSET}"
     )

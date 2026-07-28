@@ -239,6 +239,7 @@ The SDL menu bar provides:
 - **File → Import ROM to Library…** copies, deduplicates, indexes, and opens a ROM
 - **File → Open ROM Library…** (`Cmd+O` or `Ctrl+O`) opens an imported game
 - **File → Open ROM Temporarily…** opens without importing
+- **File → Open Diagnostics Folder** reveals the rolling `clover-latest.log`
 - **File → Quit** (`Cmd+Q` or `Ctrl+Q`) exits after flushing dirty save RAM
 - **Emulation → Pause** (`Space`) stops host-driven frame advancement
 - **Emulation → Frame Advance** (`.`) pauses and advances exactly one frame
@@ -246,6 +247,12 @@ The SDL menu bar provides:
 - **Emulation → Speed** selects 0.5×, 1×, 2×, 4×, or unlimited host pacing
 - **Video** exposes the active core's optional presentation planes; SNES provides
   BG1–BG4 and Objects
+
+The diagnostics log is replaced asynchronously every five seconds. It records
+build provenance, CPU and power information, display/audio devices, active
+emulation speed, timing averages and stall distributions, scheduler behavior,
+audio-queue watermarks, SDL feed requests, and inactive menu/pause time. File
+I/O occurs on a background thread rather than the emulation timing path.
 
 Reset models the console reset button and preserves cartridge save RAM. Reset
 and ROM switching, pause/frame advance, speed changes, and video-plane overrides

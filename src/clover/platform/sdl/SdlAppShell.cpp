@@ -8,6 +8,7 @@
 #include "clover/platform/RomLibrary.h"
 #include "clover/platform/sdl/SdlAudioPacing.h"
 #include "clover/utils/FileSystem.h"
+#include "clover/utils/SystemInfo.h"
 
 #include <SDL3/SDL.h>
 
@@ -205,6 +206,110 @@ namespace clover::platform
             bool succeeded{ false };
             std::string error{};
         };
+
+        struct duration_stats_t
+        {
+            void observe(uint64_t duration_ns) noexcept
+            {
+                ++count;
+                total_ns += duration_ns;
+                maximum_ns = std::max(maximum_ns, duration_ns);
+                above_1_ms += duration_ns > 1'000'000u ? 1u : 0u;
+                above_5_ms += duration_ns > 5'000'000u ? 1u : 0u;
+                above_10_ms += duration_ns > 10'000'000u ? 1u : 0u;
+                above_16_ms += duration_ns > 16'666'667u ? 1u : 0u;
+                above_33_ms += duration_ns > 33'333'333u ? 1u : 0u;
+                above_50_ms += duration_ns > 50'000'000u ? 1u : 0u;
+            }
+
+            uint64_t count{ 0 };
+            uint64_t total_ns{ 0 };
+            uint64_t maximum_ns{ 0 };
+            uint64_t above_1_ms{ 0 };
+            uint64_t above_5_ms{ 0 };
+            uint64_t above_10_ms{ 0 };
+            uint64_t above_16_ms{ 0 };
+            uint64_t above_33_ms{ 0 };
+            uint64_t above_50_ms{ 0 };
+        };
+
+        struct integer_stats_t
+        {
+            void observe(int value) noexcept
+            {
+                if (value < 0)
+                    return;
+                ++count;
+                total += static_cast<uint64_t>(value);
+                minimum = minimum < 0 ? value : std::min(minimum, value);
+                maximum = std::max(maximum, value);
+            }
+
+            uint64_t count{ 0 };
+            uint64_t total{ 0 };
+            int minimum{ -1 };
+            int maximum{ -1 };
+        };
+
+        void append_duration_stats(std::ostream& output,
+                                   std::string_view prefix,
+                                   const duration_stats_t& stats)
+        {
+            const double average_ms{
+                stats.count == 0u
+                    ? 0.0
+                    : static_cast<double>(stats.total_ns)
+                        / static_cast<double>(stats.count)
+                        / 1'000'000.0
+            };
+            output << prefix << "_count=" << stats.count << '\n'
+                   << prefix << "_total_ms="
+                   << static_cast<double>(stats.total_ns) / 1'000'000.0 << '\n'
+                   << prefix << "_average_ms=" << average_ms << '\n'
+                   << prefix << "_maximum_ms="
+                   << static_cast<double>(stats.maximum_ns) / 1'000'000.0 << '\n'
+                   << prefix << "_above_1ms=" << stats.above_1_ms << '\n'
+                   << prefix << "_above_5ms=" << stats.above_5_ms << '\n'
+                   << prefix << "_above_10ms=" << stats.above_10_ms << '\n'
+                   << prefix << "_above_16ms=" << stats.above_16_ms << '\n'
+                   << prefix << "_above_33ms=" << stats.above_33_ms << '\n'
+                   << prefix << "_above_50ms=" << stats.above_50_ms << '\n';
+        }
+
+        void append_integer_stats(std::ostream& output,
+                                  std::string_view prefix,
+                                  const integer_stats_t& stats)
+        {
+            const double average{
+                stats.count == 0u
+                    ? 0.0
+                    : static_cast<double>(stats.total) / static_cast<double>(stats.count)
+            };
+            output << prefix << "_samples=" << stats.count << '\n'
+                   << prefix << "_minimum=" << stats.minimum << '\n'
+                   << prefix << "_average=" << average << '\n'
+                   << prefix << "_maximum=" << stats.maximum << '\n';
+        }
+
+        [[nodiscard]] const char* power_state_name(SDL_PowerState state) noexcept
+        {
+            switch (state)
+            {
+            case SDL_POWERSTATE_ERROR:
+                return "error";
+            case SDL_POWERSTATE_UNKNOWN:
+                return "unknown";
+            case SDL_POWERSTATE_ON_BATTERY:
+                return "on_battery";
+            case SDL_POWERSTATE_NO_BATTERY:
+                return "no_battery";
+            case SDL_POWERSTATE_CHARGING:
+                return "charging";
+            case SDL_POWERSTATE_CHARGED:
+                return "charged";
+            }
+            return "unknown";
+        }
 
         class async_save_writer_t
         {
@@ -715,11 +820,13 @@ namespace clover::platform
         _audio_queued_bytes_before_put = -1;
         _audio_queued_bytes_after_put = -1;
         _audio_underruns = 0;
-        _audio_rebuffers = 0;
         _audio_feed_requests.store(0u, std::memory_order_relaxed);
-        _audio_rebuffer_requested.store(false, std::memory_order_relaxed);
+        _audio_feed_requested_bytes.store(0u, std::memory_order_relaxed);
+        _audio_feed_maximum_request_bytes.store(0u, std::memory_order_relaxed);
         _window = window;
         _display = display;
+        _audio_input_sample_rate_hz = audio_format.sample_rate_hz;
+        _audio_input_channels = audio_format.channels;
         _renderer = SDL_CreateRenderer(window, nullptr);
         if (_renderer == nullptr)
             return false;
@@ -841,6 +948,8 @@ namespace clover::platform
         }
 
         _audio_started = false;
+        _audio_input_sample_rate_hz = 0u;
+        _audio_input_channels = 0u;
         _display = {};
         _test_pattern.clear();
         _window = nullptr;
@@ -1293,19 +1402,9 @@ namespace clover::platform
             return;
 
         _audio_queued_bytes_before_put = SDL_GetAudioStreamQueued(_audio_stream);
-        const bool device_needs_more_audio{
-            _audio_rebuffer_requested.exchange(false, std::memory_order_relaxed)
-        };
         if (_audio_started
-            && (device_needs_more_audio
-                || sdl_audio_pacing::queue_is_empty(_audio_queued_bytes_before_put)))
-        {
-            static_cast<void>(SDL_PauseAudioDevice(SDL_GetAudioStreamDevice(_audio_stream)));
-            _audio_started = false;
-            ++_audio_rebuffers;
-            if (sdl_audio_pacing::queue_is_empty(_audio_queued_bytes_before_put))
-                ++_audio_underruns;
-        }
+            && sdl_audio_pacing::queue_is_empty(_audio_queued_bytes_before_put))
+            ++_audio_underruns;
 
         const int byte_count{
             static_cast<int>(audio.interleaved_samples.size_bytes())
@@ -1337,7 +1436,20 @@ namespace clover::platform
             return;
         auto& presentation{ *static_cast<sdl_presentation_t*>(userdata) };
         presentation._audio_feed_requests.fetch_add(1u, std::memory_order_relaxed);
-        presentation._audio_rebuffer_requested.store(true, std::memory_order_relaxed);
+        presentation._audio_feed_requested_bytes.fetch_add(
+            static_cast<uint64_t>(additional_amount),
+            std::memory_order_relaxed
+        );
+        uint64_t maximum{
+            presentation._audio_feed_maximum_request_bytes.load(std::memory_order_relaxed)
+        };
+        while (maximum < static_cast<uint64_t>(additional_amount)
+               && !presentation._audio_feed_maximum_request_bytes.compare_exchange_weak(
+                   maximum,
+                   static_cast<uint64_t>(additional_amount),
+                   std::memory_order_relaxed))
+        {
+        }
     }
 
     void sdl_presentation_t::reset_audio() noexcept
@@ -1350,7 +1462,6 @@ namespace clover::platform
         _audio_started = false;
         _audio_queued_bytes_before_put = -1;
         _audio_queued_bytes_after_put = -1;
-        _audio_rebuffer_requested.store(false, std::memory_order_relaxed);
     }
 
     const frontend::gamepad_state_t& sdl_presentation_t::gamepad_state(size_t port) const noexcept
@@ -1506,29 +1617,75 @@ namespace clover::platform
         return _audio_underruns;
     }
 
-    uint64_t sdl_presentation_t::audio_rebuffers() const noexcept
-    {
-        return _audio_rebuffers;
-    }
-
     uint64_t sdl_presentation_t::audio_feed_requests() const noexcept
     {
         return _audio_feed_requests.load(std::memory_order_relaxed);
     }
 
+    uint64_t sdl_presentation_t::audio_feed_requested_bytes() const noexcept
+    {
+        return _audio_feed_requested_bytes.load(std::memory_order_relaxed);
+    }
+
+    uint64_t sdl_presentation_t::audio_feed_maximum_request_bytes() const noexcept
+    {
+        return _audio_feed_maximum_request_bytes.load(std::memory_order_relaxed);
+    }
+
     std::string sdl_presentation_t::diagnostic_environment() const
     {
         std::ostringstream output{};
-        output << "video_renderer="
+        int power_seconds{ -1 };
+        int power_percent{ -1 };
+        const SDL_PowerState power_state{
+            SDL_GetPowerInfo(&power_seconds, &power_percent)
+        };
+        output << "platform=" << SDL_GetPlatform() << '\n'
+               << "sdl_revision=" << SDL_GetRevision() << '\n'
+               << "cpu_brand=" << utils::cpu_brand() << '\n'
+               << "logical_cpu_cores=" << SDL_GetNumLogicalCPUCores() << '\n'
+               << "system_ram_mib=" << SDL_GetSystemRAM() << '\n'
+               << "cpu_cache_line_bytes=" << SDL_GetCPUCacheLineSize() << '\n'
+               << "cpu_has_sse2=" << (SDL_HasSSE2() ? 1 : 0) << '\n'
+               << "cpu_has_avx=" << (SDL_HasAVX() ? 1 : 0) << '\n'
+               << "cpu_has_avx2=" << (SDL_HasAVX2() ? 1 : 0) << '\n'
+               << "power_state=" << power_state_name(power_state) << '\n'
+               << "power_percent=" << power_percent << '\n'
+               << "power_seconds=" << power_seconds << '\n'
+               << "video_renderer="
                << (_renderer != nullptr && SDL_GetRendererName(_renderer) != nullptr
                        ? SDL_GetRendererName(_renderer)
                        : "unavailable")
                << '\n'
+               << "window_display_scale="
+               << (_window != nullptr ? SDL_GetWindowDisplayScale(_window) : 0.f) << '\n'
                << "audio_driver="
                << (SDL_GetCurrentAudioDriver() != nullptr
                        ? SDL_GetCurrentAudioDriver()
                        : "unavailable")
-               << '\n';
+               << '\n'
+               << "audio_input_channels=" << static_cast<int>(_audio_input_channels) << '\n'
+               << "audio_input_rate_hz=" << _audio_input_sample_rate_hz << '\n';
+        if (_window != nullptr)
+        {
+            const SDL_DisplayID display_id{ SDL_GetDisplayForWindow(_window) };
+            if (const SDL_DisplayMode* const mode{ SDL_GetCurrentDisplayMode(display_id) })
+            {
+                output << "display_width=" << mode->w << '\n'
+                       << "display_height=" << mode->h << '\n'
+                       << "display_refresh_hz=" << mode->refresh_rate << '\n';
+            }
+        }
+        if (_renderer != nullptr)
+        {
+            int output_width{ 0 };
+            int output_height{ 0 };
+            static_cast<void>(SDL_GetCurrentRenderOutputSize(_renderer,
+                                                             &output_width,
+                                                             &output_height));
+            output << "renderer_output_width=" << output_width << '\n'
+                   << "renderer_output_height=" << output_height << '\n';
+        }
         if (_audio_stream != nullptr)
         {
             const SDL_AudioDeviceID device{ SDL_GetAudioStreamDevice(_audio_stream) };
@@ -1890,11 +2047,27 @@ namespace clover::platform
         uint64_t audio_discontinuities{ 0 };
         size_t max_audio_sample_values_per_frame{ 0 };
         int32_t audio_peak{ 0 };
-        uint64_t max_core_run_ns{ 0 };
-        uint64_t max_present_ns{ 0 };
+        duration_stats_t core_run_stats{};
+        duration_stats_t audio_queue_stats{};
+        duration_stats_t presentation_stats{};
+        duration_stats_t active_loop_stats{};
+        duration_stats_t event_processing_stats{};
+        duration_stats_t scheduler_sleep_stats{};
+        duration_stats_t scheduler_oversleep_stats{};
+        duration_stats_t scheduler_lateness_stats{};
+        duration_stats_t save_schedule_stats{};
+        duration_stats_t save_flush_stats{};
+        duration_stats_t diagnostics_submit_stats{};
+        duration_stats_t dialog_idle_stats{};
+        duration_stats_t library_idle_stats{};
+        duration_stats_t no_media_idle_stats{};
+        duration_stats_t paused_idle_stats{};
+        integer_stats_t audio_queue_before_stats{};
+        integer_stats_t audio_queue_after_stats{};
         uint64_t skipped_presentations{ 0 };
-        int minimum_audio_queue_bytes{ -1 };
-        int maximum_audio_queue_bytes{ -1 };
+        uint64_t completed_presentations{ 0 };
+        uint64_t scheduler_deadline_resets{ 0 };
+        uint64_t normal_speed_frames{ 0 };
         async_save_writer_t save_writer{};
         uint64_t next_diagnostic_log_ns{ run_start_ns };
         const auto diagnostic_snapshot{
@@ -1905,10 +2078,22 @@ namespace clover::platform
                     static_cast<double>(now_ns - run_start_ns)
                         / static_cast<double>(k_nanoseconds_per_second)
                 };
+                const double active_seconds{
+                    static_cast<double>(active_loop_stats.total_ns)
+                        / static_cast<double>(k_nanoseconds_per_second)
+                };
+                int power_seconds{ -1 };
+                int power_percent{ -1 };
+                const SDL_PowerState power_state{
+                    SDL_GetPowerInfo(&power_seconds, &power_percent)
+                };
                 std::ostringstream output{};
+                output << std::fixed << std::setprecision(3);
                 output << "Clover diagnostics\n"
                        << "status=" << (final ? "final" : "running") << '\n'
+                       << "diagnostics_schema=2\n"
                        << "version=" << CLOVER_VERSION << '\n'
+                       << "build_revision=" << CLOVER_BUILD_REVISION << '\n'
                        << "compiler=" << CLOVER_BUILD_COMPILER << '\n'
                        << "platform_toolset=" << CLOVER_BUILD_PLATFORM_TOOLSET << '\n'
                        << "application_data=" << utils::path_to_utf8(data_root) << '\n'
@@ -1917,23 +2102,51 @@ namespace clover::platform
                                : "none")
                        << '\n'
                        << diagnostic_environment
+                       << "current_power_state=" << power_state_name(power_state) << '\n'
+                       << "current_power_percent=" << power_percent << '\n'
+                       << "current_power_seconds=" << power_seconds << '\n'
                        << "frames=" << frames_run << '\n'
-                       << "elapsed_seconds=" << std::fixed << std::setprecision(3)
-                       << elapsed << '\n'
+                       << "normal_speed_frames=" << normal_speed_frames << '\n'
+                       << "elapsed_seconds=" << elapsed << '\n'
+                       << "active_emulation_seconds=" << active_seconds << '\n'
                        << "effective_fps="
                        << (elapsed > 0.0 ? static_cast<double>(frames_run) / elapsed : 0.0)
                        << '\n'
+                       << "active_emulation_fps="
+                       << (active_seconds > 0.0
+                               ? static_cast<double>(frames_run) / active_seconds
+                               : 0.0)
+                       << '\n'
                        << "target_fps=" << display.nominal_refresh_hz << '\n'
-                       << "max_core_ms="
-                       << static_cast<double>(max_core_run_ns) / 1'000'000.0 << '\n'
-                       << "max_present_ms="
-                       << static_cast<double>(max_present_ns) / 1'000'000.0 << '\n'
+                       << "completed_presentations=" << completed_presentations << '\n'
                        << "skipped_presentations=" << skipped_presentations << '\n'
-                       << "audio_queue_min_bytes=" << minimum_audio_queue_bytes << '\n'
-                       << "audio_queue_max_bytes=" << maximum_audio_queue_bytes << '\n'
+                       << "scheduler_deadline_resets=" << scheduler_deadline_resets << '\n';
+                append_duration_stats(output, "core_run", core_run_stats);
+                append_duration_stats(output, "audio_queue_call", audio_queue_stats);
+                append_duration_stats(output, "presentation", presentation_stats);
+                append_duration_stats(output, "active_loop", active_loop_stats);
+                append_duration_stats(output, "event_processing", event_processing_stats);
+                append_duration_stats(output, "scheduler_sleep", scheduler_sleep_stats);
+                append_duration_stats(output, "scheduler_oversleep", scheduler_oversleep_stats);
+                append_duration_stats(output, "scheduler_lateness", scheduler_lateness_stats);
+                append_duration_stats(output, "save_schedule", save_schedule_stats);
+                append_duration_stats(output, "save_flush", save_flush_stats);
+                append_duration_stats(output, "diagnostics_submit", diagnostics_submit_stats);
+                append_duration_stats(output, "dialog_idle", dialog_idle_stats);
+                append_duration_stats(output, "library_idle", library_idle_stats);
+                append_duration_stats(output, "no_media_idle", no_media_idle_stats);
+                append_duration_stats(output, "paused_idle", paused_idle_stats);
+                append_integer_stats(output, "audio_queue_before_bytes",
+                                     audio_queue_before_stats);
+                append_integer_stats(output, "audio_queue_after_bytes",
+                                     audio_queue_after_stats);
+                output
                        << "audio_underruns=" << presentation.audio_underruns() << '\n'
-                       << "audio_rebuffers=" << presentation.audio_rebuffers() << '\n'
                        << "audio_feed_requests=" << presentation.audio_feed_requests() << '\n'
+                       << "audio_feed_requested_bytes="
+                       << presentation.audio_feed_requested_bytes() << '\n'
+                       << "audio_feed_maximum_request_bytes="
+                       << presentation.audio_feed_maximum_request_bytes() << '\n'
                        << "audio_discontinuities=" << audio_discontinuities << '\n';
                 return output.str();
             }
@@ -1956,9 +2169,12 @@ namespace clover::platform
             const uint64_t frame_start_ns{ SDL_GetTicksNS() };
             if (frame_start_ns >= next_diagnostic_log_ns)
             {
+                const uint64_t submit_start_ns{ SDL_GetTicksNS() };
                 diagnostic_log.submit(diagnostic_snapshot(false));
+                diagnostics_submit_stats.observe(SDL_GetTicksNS() - submit_start_ns);
                 next_diagnostic_log_ns = frame_start_ns + 5u * k_nanoseconds_per_second;
             }
+            const uint64_t event_processing_start_ns{ SDL_GetTicksNS() };
             const uint64_t host_interval_ns{ frame_start_ns - previous_frame_start_ns };
             previous_frame_start_ns = frame_start_ns;
             SDL_Event event{};
@@ -1996,6 +2212,7 @@ namespace clover::platform
                 }
                 presentation.handle_event(event);
             }
+            event_processing_stats.observe(SDL_GetTicksNS() - event_processing_start_ns);
             if (!running)
                 break;
 
@@ -2307,6 +2524,7 @@ namespace clover::platform
             if (rom_dialog_active)
             {
                 SDL_Delay(10u);
+                dialog_idle_stats.observe(SDL_GetTicksNS() - frame_start_ns);
                 next_frame_deadline_ns = SDL_GetTicksNS();
                 previous_frame_start_ns = next_frame_deadline_ns;
                 continue;
@@ -2319,6 +2537,7 @@ namespace clover::platform
                 else
                     presentation.present_test_pattern();
                 SDL_Delay(10u);
+                library_idle_stats.observe(SDL_GetTicksNS() - frame_start_ns);
                 next_frame_deadline_ns = SDL_GetTicksNS();
                 previous_frame_start_ns = next_frame_deadline_ns;
                 continue;
@@ -2328,6 +2547,7 @@ namespace clover::platform
             {
                 presentation.present_test_pattern();
                 SDL_Delay(10u);
+                no_media_idle_stats.observe(SDL_GetTicksNS() - frame_start_ns);
                 next_frame_deadline_ns = SDL_GetTicksNS();
                 previous_frame_start_ns = next_frame_deadline_ns;
                 continue;
@@ -2337,12 +2557,14 @@ namespace clover::platform
             {
                 presentation.present(core->video_frame());
                 SDL_Delay(10u);
+                paused_idle_stats.observe(SDL_GetTicksNS() - frame_start_ns);
                 next_frame_deadline_ns = SDL_GetTicksNS();
                 previous_frame_start_ns = next_frame_deadline_ns;
                 continue;
             }
 
             const bool advancing_paused_frame{ paused && frame_advance_pending };
+            const uint64_t active_loop_start_ns{ frame_start_ns };
             frame_advance_pending = false;
             const frontend::gamepad_state_t gamepad_state{ presentation.gamepad_state(0u) };
             const frontend::gamepad_state_t gamepad_state_2{ presentation.gamepad_state(1u) };
@@ -2361,6 +2583,8 @@ namespace clover::platform
                 core->run_frame();
                 const uint64_t core_run_end_ns{ SDL_GetTicksNS() };
                 ++frames_run;
+                if (!paused && speed_selection == 1u)
+                    ++normal_speed_frames;
                 const frontend::audio_frame_view_t audio{ core->audio_frame() };
                 const bool batch_complete{
                     batch_index + 1u == batch_size
@@ -2390,22 +2614,22 @@ namespace clover::platform
                     {
                         presentation.present(core->video_frame());
                         present_end_ns = SDL_GetTicksNS();
+                        ++completed_presentations;
                     }
                 }
-                max_core_run_ns = std::max(max_core_run_ns,
-                                           core_run_end_ns - core_run_start_ns);
-                max_present_ns = std::max(max_present_ns,
-                                          present_end_ns - audio_queue_end_ns);
-                const int queued_audio_bytes{
-                    presentation.audio_queued_bytes_after_put()
-                };
-                if (queued_audio_bytes >= 0)
+                core_run_stats.observe(core_run_end_ns - core_run_start_ns);
+                if (batch_complete && !paused && speed_selection == 1u)
+                    audio_queue_stats.observe(audio_queue_end_ns - core_run_end_ns);
+                if (batch_complete && present_end_ns > audio_queue_end_ns)
+                    presentation_stats.observe(present_end_ns - audio_queue_end_ns);
+                if (batch_complete && !paused && speed_selection == 1u)
                 {
-                    minimum_audio_queue_bytes = minimum_audio_queue_bytes < 0
-                        ? queued_audio_bytes
-                        : std::min(minimum_audio_queue_bytes, queued_audio_bytes);
-                    maximum_audio_queue_bytes = std::max(maximum_audio_queue_bytes,
-                                                         queued_audio_bytes);
+                    audio_queue_before_stats.observe(
+                        presentation.audio_queued_bytes_before_put()
+                    );
+                    audio_queue_after_stats.observe(
+                        presentation.audio_queued_bytes_after_put()
+                    );
                 }
                 if (capture.active())
                 {
@@ -2437,11 +2661,16 @@ namespace clover::platform
                     audio_peak = std::max(audio_peak, magnitude);
                 }
                 if ((frames_run % 60u) == 0u)
+                {
+                    const uint64_t save_start_ns{ SDL_GetTicksNS() };
                     static_cast<void>(save_writer.schedule(*core, save_path));
+                    save_schedule_stats.observe(SDL_GetTicksNS() - save_start_ns);
+                }
             }
 
             if (advancing_paused_frame)
             {
+                active_loop_stats.observe(SDL_GetTicksNS() - active_loop_start_ns);
                 next_frame_deadline_ns = SDL_GetTicksNS();
                 previous_frame_start_ns = next_frame_deadline_ns;
                 continue;
@@ -2450,6 +2679,7 @@ namespace clover::platform
             static constexpr std::array<double, 4> speed_multipliers{ 0.5, 1.0, 2.0, 4.0 };
             if (speed_selection >= speed_multipliers.size())
             {
+                active_loop_stats.observe(SDL_GetTicksNS() - active_loop_start_ns);
                 next_frame_deadline_ns = SDL_GetTicksNS();
                 continue;
             }
@@ -2473,9 +2703,27 @@ namespace clover::platform
             next_frame_deadline_ns += paced_batch_duration_ns;
             const uint64_t current_ticks_ns{ SDL_GetTicksNS() };
             if (next_frame_deadline_ns > current_ticks_ns)
-                SDL_DelayPrecise(next_frame_deadline_ns - current_ticks_ns);
-            else if (current_ticks_ns - next_frame_deadline_ns > paced_batch_duration_ns * 3u)
-                next_frame_deadline_ns = current_ticks_ns;
+            {
+                const uint64_t requested_sleep_ns{
+                    next_frame_deadline_ns - current_ticks_ns
+                };
+                SDL_DelayPrecise(requested_sleep_ns);
+                const uint64_t actual_sleep_ns{ SDL_GetTicksNS() - current_ticks_ns };
+                scheduler_sleep_stats.observe(actual_sleep_ns);
+                if (actual_sleep_ns > requested_sleep_ns)
+                    scheduler_oversleep_stats.observe(actual_sleep_ns - requested_sleep_ns);
+            }
+            else
+            {
+                const uint64_t lateness_ns{ current_ticks_ns - next_frame_deadline_ns };
+                scheduler_lateness_stats.observe(lateness_ns);
+                if (lateness_ns > paced_batch_duration_ns * 3u)
+                {
+                    next_frame_deadline_ns = current_ticks_ns;
+                    ++scheduler_deadline_resets;
+                }
+            }
+            active_loop_stats.observe(SDL_GetTicksNS() - active_loop_start_ns);
         }
 
         const double elapsed_seconds{
@@ -2496,23 +2744,26 @@ namespace clover::platform
                     audio_peak);
         std::printf("Clover SDL timing: max_core_ms=%.3f max_present_ms=%.3f "
                     "skipped_presentations=%llu\n",
-                    static_cast<double>(max_core_run_ns) / 1'000'000.0,
-                    static_cast<double>(max_present_ns) / 1'000'000.0,
+                    static_cast<double>(core_run_stats.maximum_ns) / 1'000'000.0,
+                    static_cast<double>(presentation_stats.maximum_ns) / 1'000'000.0,
                     static_cast<unsigned long long>(skipped_presentations));
         std::printf("Clover SDL audio: max_values_per_frame=%zu discontinuities=%llu "
-                    "queue_min_bytes=%d queue_max_bytes=%d underruns=%llu rebuffers=%llu "
+                    "queue_min_bytes=%d queue_max_bytes=%d underruns=%llu "
                     "feed_requests=%llu\n",
                     max_audio_sample_values_per_frame,
                     static_cast<unsigned long long>(audio_discontinuities),
-                    minimum_audio_queue_bytes,
-                    maximum_audio_queue_bytes,
+                    audio_queue_after_stats.minimum,
+                    audio_queue_after_stats.maximum,
                     static_cast<unsigned long long>(presentation.audio_underruns()),
-                    static_cast<unsigned long long>(presentation.audio_rebuffers()),
                     static_cast<unsigned long long>(presentation.audio_feed_requests()));
+        const uint64_t save_flush_start_ns{ SDL_GetTicksNS() };
         const bool save_flushed{
             !media_loaded || save_writer.flush(*core, save_path)
         };
+        save_flush_stats.observe(SDL_GetTicksNS() - save_flush_start_ns);
+        const uint64_t final_submit_start_ns{ SDL_GetTicksNS() };
         diagnostic_log.submit(diagnostic_snapshot(true));
+        diagnostics_submit_stats.observe(SDL_GetTicksNS() - final_submit_start_ns);
         diagnostic_log.finish();
         capture.finalize();
         presentation.shutdown();

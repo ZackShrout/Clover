@@ -41,3 +41,6 @@ clover-dumps-*/
 bsnes-*/
 reference-*/
 bulk-*/
+
+# Project-local dependency manager
+.vcpkg/

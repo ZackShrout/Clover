@@ -8,7 +8,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(CLOVER_BUILD_SDL_FRONTEND "Build the SDL3 desktop frontend." OFF)
 option(CLOVER_PACKAGE_DISTRIBUTION "Build an OS-native distributable application." OFF)
 
-find_package(SQLite3 REQUIRED)
+find_package(unofficial-sqlite3 CONFIG QUIET)
+if(TARGET unofficial::sqlite3::sqlite3)
+    add_library(SQLite::SQLite3 ALIAS unofficial::sqlite3::sqlite3)
+else()
+    find_package(SQLite3 REQUIRED)
+endif()
 
 if(MSVC AND CLOVER_PACKAGE_DISTRIBUTION)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

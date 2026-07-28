@@ -1,5 +1,10 @@
 {
-  "version": 2,
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
   "configurePresets": [
     {
       "name": "sdl-release",
@@ -10,6 +15,62 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CLOVER_BUILD_SDL_FRONTEND": "ON"
+      }
+    },
+    {
+      "name": "windows-msvc",
+      "hidden": true,
+      "generator": "Ninja Multi-Config",
+      "binaryDir": "${sourceDir}/cmake-build-windows-msvc",
+      "toolchainFile": "${sourceDir}/.vcpkg/scripts/buildsystems/vcpkg.cmake",
+      "environment": {
+        "VCToolsVersion": "14.44.35207"
+      },
+      "cacheVariables": {
+        "CLOVER_BUILD_SDL_FRONTEND": "ON",
+        "CLOVER_PACKAGE_DISTRIBUTION": "ON",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static"
+      }
+    },
+    {
+      "name": "windows-msvc-debug",
+      "displayName": "Windows MSVC Debug",
+      "description": "Debug Clover desktop applications with MSVC and vcpkg",
+      "inherits": "windows-msvc",
+      "vendor": {
+        "jetbrains.com/clion": {
+          "toolchain": "Visual Studio"
+        }
+      }
+    },
+    {
+      "name": "windows-msvc-release",
+      "displayName": "Windows MSVC Release",
+      "description": "Optimized distributable Clover desktop applications with MSVC and vcpkg",
+      "inherits": "windows-msvc",
+      "vendor": {
+        "jetbrains.com/clion": {
+          "toolchain": "Visual Studio"
+        }
+      }
+    },
+    {
+      "name": "windows-clangcl-release",
+      "displayName": "Windows clang-cl Release",
+      "description": "Optimized distributable Clover desktop applications with clang-cl and vcpkg",
+      "generator": "Ninja Multi-Config",
+      "binaryDir": "${sourceDir}/cmake-build-windows-clangcl",
+      "toolchainFile": "${sourceDir}/.vcpkg/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "clang-cl.exe",
+        "CLOVER_BUILD_SDL_FRONTEND": "ON",
+        "CLOVER_PACKAGE_DISTRIBUTION": "ON",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static"
+      },
+      "vendor": {
+        "jetbrains.com/clion": {
+          "toolchain": "Visual Studio"
+        }
       }
     }
   ],
@@ -22,6 +83,57 @@
         "clover_sdl",
         "clover_workbench"
       ]
+    },
+    {
+      "name": "windows-msvc-debug",
+      "displayName": "Build and Test Windows MSVC Debug",
+      "configurePreset": "windows-msvc-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "windows-msvc-release",
+      "displayName": "Build Windows MSVC Release",
+      "configurePreset": "windows-msvc-release",
+      "configuration": "Release",
+      "targets": [
+        "clover_sdl",
+        "clover_workbench"
+      ]
+    },
+    {
+      "name": "windows-clangcl-release",
+      "displayName": "Build and Test Windows clang-cl Release",
+      "configurePreset": "windows-clangcl-release",
+      "configuration": "Release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "windows-msvc-debug",
+      "displayName": "Test Windows MSVC Debug",
+      "configurePreset": "windows-msvc-debug",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "windows-msvc-release",
+      "displayName": "Test Windows MSVC Release",
+      "configurePreset": "windows-msvc-release",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "windows-clangcl-release",
+      "displayName": "Test Windows clang-cl Release",
+      "configurePreset": "windows-clangcl-release",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
     }
   ]
 }

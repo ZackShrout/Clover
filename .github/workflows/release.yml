@@ -43,7 +43,7 @@ jobs:
           }
           "CLOVER_ARTIFACT_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Configure MSVC environment
+      - name: Configure Visual Studio environment
         shell: pwsh
         run: |
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -62,12 +62,25 @@ jobs:
               }
             }
 
+      - name: Require clang-cl 19 or newer
+        shell: pwsh
+        run: |
+          $banner = (& clang-cl.exe --version 2>&1) -join "`n"
+          if ($banner -notmatch "clang version (\d+)") {
+            throw "Unable to determine the clang-cl compiler version."
+          }
+          $compilerVersion = [int]$matches[1]
+          if ($compilerVersion -lt 19) {
+            throw "clang-cl 19 or newer is required; found $compilerVersion."
+          }
+          Write-Host $banner
+
       - name: Configure
         shell: pwsh
         run: |
           cmake -S . -B build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_CXX_COMPILER=cl.exe `
+            -DCMAKE_CXX_COMPILER=clang-cl.exe `
             -DCLOVER_BUILD_SDL_FRONTEND=ON `
             -DCLOVER_PACKAGE_DISTRIBUTION=ON `
             -DCMAKE_TOOLCHAIN_FILE="$env:GITHUB_WORKSPACE/.vcpkg/scripts/buildsystems/vcpkg.cmake" `

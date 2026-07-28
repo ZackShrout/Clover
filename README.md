@@ -148,6 +148,46 @@ cmake --build --preset sdl-release
 ./cmake-build-sdl-release/clover_workbench "/path/to/game.sfc"
 ```
 
+### Windows
+
+On Windows, install Visual Studio 2022 with the **Desktop development with
+C++** workload, **C++ Clang tools for Windows**, and the MSVC 14.44.35207
+toolset. Windows distribution builds use clang-cl 19 or newer because the
+tested MSVC configurations exhibited optimized-build correctness and real-time
+audio performance problems. Bootstrap the vcpkg revision pinned by
+`vcpkg.json` from a Visual Studio Developer PowerShell:
+
+```powershell
+git clone https://github.com/microsoft/vcpkg.git .vcpkg
+git -C .vcpkg checkout 40f3c709db80acf154ac4b17a1f83c564ebd022e
+.\.vcpkg\bootstrap-vcpkg.bat -disableMetrics
+
+cmake --preset windows-clangcl-release
+cmake --build --preset windows-clangcl-release
+ctest --preset windows-clangcl-release
+.\cmake-build-windows-clangcl\Release\Clover.exe
+```
+
+In CLion, configure a Visual Studio toolchain under **Settings | Build,
+Execution, Deployment | Toolchains** and enter `-vcvars_ver=14.44` in its
+**Version** field. Enable the imported **Windows clang-cl Release** configure
+and build preset pair under **Settings | Build, Execution, Deployment |
+CMake**. The preset uses Ninja Multi-Config and the project-local `.vcpkg`
+directory directly, so no CLion environment variables are required. If the
+build directory was previously configured for MSVC, reset its CMake cache
+before loading this preset.
+
+The configure log must identify `Clang 19` or newer with an MSVC-like command
+line. During dependency installation, vcpkg may separately report `cl.exe`
+while detecting the ABI of the `x64-windows-static` triplet; this does not mean
+Clover is being compiled with MSVC.
+
+The `windows-msvc-debug` and `windows-msvc-release` presets remain available
+for diagnostics and compiler comparisons, but are not used for distribution.
+The release workflow applies the same clang-cl Release configuration on pushes
+to `main` and `v*` tags. A tag publishes the resulting ZIP and NSIS installer
+as a GitHub Release; a branch push retains them as workflow artifacts.
+
 The ROM argument is optional. With no argument, Clover displays its frontend
 test pattern; choose **File → Import ROM to Library…** when ready. The pattern
 immediately clears when media loads, before the game produces its first visible frame.

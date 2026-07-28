@@ -1084,7 +1084,11 @@ namespace clover::core
 
             evaluate_background_tiles(background_index);
             fetch_background_tile_rows(background_index);
-            synthesize_background_layer_candidate(background_index);
+            // Non-Mode 7 backgrounds are rendered from the live fetch/shifter
+            // state in resolve_cycle_background_pixel_candidate().  Building
+            // the legacy full-scanline candidates here duplicates that work;
+            // resolve_pixel_layers() overwrites the samples as it consumes the
+            // cycle pipeline.
         }
     }
 

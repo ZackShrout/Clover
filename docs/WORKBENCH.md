@@ -42,6 +42,11 @@ Use `--project-root <path>` to override the platform application-data location.
 | Q / Shift+Q | Bind a 16-color CPU-bus palette / the live 256-color CGRAM palette |
 | V / Shift+V | Open or cycle palette assets / return to disassembly |
 | Arrow keys in palette view | Select a palette color |
+| 2 / 4 / 8 | Bind CPU-bus tiles in the selected SNES planar format |
+| Shift+2 / Shift+4 / Shift+8 | Bind live VRAM tiles in that format |
+| G / Shift+G | Open or cycle tile assets / return to disassembly |
+| Arrow keys in tile view | Select a tile |
+| Shift+arrow keys in tile view | Select a pixel within the tile |
 | Up / Down | Select an instruction |
 | Enter | Follow a statically known direct target |
 | Page Up / Page Down | Move the linear listing |
@@ -131,6 +136,20 @@ saved palettes; `Shift+V` returns to disassembly. Arrow keys select a swatch,
 and the inspector shows its index, raw BGR555 word, RGB channels, source, and
 any alignment, availability, truncation, or bounds conflict.
 
+## Tile-graphics inspection
+
+Tile assets persist a stable name, source, tile count, native SNES planar
+format, and an optional palette/base-color link. Stage 5.3 decodes 2bpp, 4bpp,
+and 8bpp 8x8 tiles through the same side-effect-free byte-reader boundary.
+
+Press `2`, `4`, or `8` to bind 64 tiles at the aligned selected CPU-bus
+address; hold Shift to bind 256 tiles from live VRAM. `G` opens the 16-column
+tile grid or cycles saved tile assets, and `Shift+G` returns to disassembly.
+Arrow keys select a tile. Shift+arrow keys select one of its pixels, whose
+decoded color index and linked palette are shown in the inspector. Live VRAM
+inspection reads the PPU-owned 64 KiB array directly and never touches the
+stateful `$2139/$213A` ports.
+
 ## Project storage
 
 Each project is keyed by the canonical media identity shared with the ROM
@@ -159,9 +178,10 @@ stored separately from regenerable analysis generations. They survive
 reanalysis and are validated before a transaction commits; invalid references
 or overlapping objects leave the prior model intact.
 
-Schema v6 also stores palette assets. CPU-bus palette bindings participate in
-code/data conflict analysis, while device-space CGRAM palettes remain durable
-asset facts. Invalid definitions never replace the previously stored asset.
+Schema v7 stores palette and tile-graphics assets. CPU-bus asset bindings
+participate in code/data conflict analysis, while device-space CGRAM and VRAM
+assets remain durable facts. Tile assets retain their palette link and base
+color. Invalid definitions never replace the previously stored asset.
 
 Analysis generations record analyzer and decoder versions plus a deterministic
 input fingerprint. Instructions, blocks, many-to-many function ownership,

@@ -307,6 +307,47 @@ int main()
     }
     error.clear();
 
+    const analysis::tile_asset_t vram_tiles{
+        .stable_id = "tiles.vram",
+        .name = "Live VRAM tiles",
+        .location = { "snes.vram", 0u },
+        .tile_count = 8u,
+        .format = analysis::tile_format_t::snes_4bpp,
+        .palette_id = "palette.cgram",
+        .palette_base = 0u
+    };
+    const analysis::tile_asset_t actor_tiles{
+        .stable_id = "tiles.actor",
+        .name = "Actor tiles",
+        .location = { "snes.cpu-bus", 0x7e1200u },
+        .tile_count = 4u,
+        .format = analysis::tile_format_t::snes_2bpp,
+        .palette_id = "palette.actor",
+        .palette_base = 0u
+    };
+    if (!project.set_tile_asset(vram_tiles, error)
+        || !project.set_tile_asset(actor_tiles, error))
+    {
+        return fail("write_tile_assets", error);
+    }
+    const auto initial_tiles{ project.tile_assets(error) };
+    if (!error.empty() || initial_tiles.size() != 2u
+        || initial_tiles.front().asset.palette_id != "palette.actor"
+        || initial_tiles.back().asset.palette_id != "palette.cgram")
+    {
+        return fail("tile_asset_round_trip", error);
+    }
+    error.clear();
+    analysis::tile_asset_t misaligned_tiles{ actor_tiles };
+    misaligned_tiles.stable_id = "tiles.invalid";
+    misaligned_tiles.location.address += 1u;
+    if (project.set_tile_asset(misaligned_tiles, error)
+        || error.empty() || project.tile_assets(error).size() != 2u)
+    {
+        return fail("invalid_tile_asset_rejected_atomically", error);
+    }
+    error.clear();
+
     if (project.set_typed_object(
             {
                 .stable_id = "object.overlap",
@@ -334,7 +375,7 @@ int main()
         || !has_layer(initial_labels, fact_layer_t::derived)
         || initial_comments.size() != 1u
         || initial_bookmarks.size() != 1u
-        || initial_classifications.size() != 4u
+        || initial_classifications.size() != 5u
         || initial_symbols.size() < 90u
         || initial_symbols.front().layer != fact_layer_t::imported)
     {
@@ -387,10 +428,11 @@ int main()
     if (project.labels(error).size() != 2u
         || project.comments(error).size() != 1u
         || project.bookmarks(error).size() != 1u
-        || project.classifications(error).size() != 4u
+        || project.classifications(error).size() != 5u
         || project.data_types(error).size() != 9u
         || project.typed_objects(error).size() != 2u
         || project.palettes(error).size() != 2u
+        || project.tile_assets(error).size() != 2u
         || project.debug_breakpoints(error).size() != 1u
         || project.debug_watchpoints(error).size() != 1u
         || project.debug_watchpoints(error).front().access
@@ -412,10 +454,11 @@ int main()
         || regenerated_labels.size() != 1u
         || regenerated_labels.front().layer != fact_layer_t::user
         || project.comments(error).size() != 1u
-        || project.classifications(error).size() != 4u
+        || project.classifications(error).size() != 5u
         || project.data_types(error).size() != 9u
         || project.typed_objects(error).size() != 2u
         || project.palettes(error).size() != 2u
+        || project.tile_assets(error).size() != 2u
         || project.symbols(error).size() != initial_symbols.size()
         || project.analysis_generation(error) != 1u)
     {
@@ -574,6 +617,7 @@ int main()
     if (sqlite3_open(expected_path_utf8.c_str(), &migration_database) != SQLITE_OK)
         return fail("open_migration_fixture");
     const char* downgrade_sql{
+        "DROP TABLE tile_assets;"
         "DROP TABLE palette_assets;"
         "DROP TABLE typed_data_objects;"
         "DROP TABLE typed_data_values;"
@@ -662,7 +706,7 @@ int main()
 
     std::printf(
         "Workbench project tests passed: identity, migrations, facts, "
-        "typed data, palettes, invalidation, symbols, debugger points, "
+        "typed data, palettes, tiles, invalidation, symbols, debugger points, "
         "and navigation\n"
     );
     return 0;

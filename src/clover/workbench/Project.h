@@ -7,6 +7,7 @@
 
 #include "clover/analysis/Palette.h"
 #include "clover/analysis/ProgramModel.h"
+#include "clover/analysis/TileGraphics.h"
 #include "clover/analysis/TypedData.h"
 #include "clover/frontend/EmulatorCore.h"
 
@@ -23,7 +24,7 @@ struct sqlite3;
 
 namespace clover::workbench
 {
-    inline constexpr uint32_t k_project_schema_version{ 6u };
+    inline constexpr uint32_t k_project_schema_version{ 7u };
     inline constexpr std::string_view k_analyzer_version{ "clover-analyzer-2" };
     inline constexpr std::string_view k_decoder_version{ "wdc65c816-decoder-1" };
 
@@ -111,6 +112,13 @@ namespace clover::workbench
     struct project_palette_t
     {
         analysis::palette_asset_t asset{};
+        fact_layer_t layer{ fact_layer_t::user };
+        std::string source{};
+    };
+
+    struct project_tile_asset_t
+    {
+        analysis::tile_asset_t asset{};
         fact_layer_t layer{ fact_layer_t::user };
         std::string source{};
     };
@@ -222,6 +230,17 @@ namespace clover::workbench
             std::string& error
         );
         [[nodiscard]] std::vector<project_palette_t> palettes(
+            std::string& error
+        ) const;
+        [[nodiscard]] bool set_tile_asset(
+            const analysis::tile_asset_t& asset,
+            std::string& error
+        );
+        [[nodiscard]] bool remove_tile_asset(
+            std::string_view stable_id,
+            std::string& error
+        );
+        [[nodiscard]] std::vector<project_tile_asset_t> tile_assets(
             std::string& error
         ) const;
 

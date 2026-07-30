@@ -146,6 +146,11 @@ CGRAM address space. `Q` binds a 16-color CPU-bus palette, `Shift+Q` binds all
 shows raw BGR555 and expanded RGB values without touching stateful PPU read
 latches.
 
+Stage 5.3 adds persistent SNES 2bpp, 4bpp, and 8bpp tile assets with palette
+links and a live, read-only 64 KiB VRAM address space. `2`, `4`, or `8` binds
+tiles at the selected CPU address; hold Shift to bind live VRAM. `G` opens or
+cycles the tile grid, and Shift+arrow keys inspect individual pixels.
+
 ## SDL Desktop App
 
 The checked-in `SDL Release` CMake preset builds the optimized `clover_sdl`

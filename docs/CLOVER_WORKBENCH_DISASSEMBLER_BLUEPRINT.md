@@ -60,12 +60,13 @@ The disassembler is the first major view into that system, but it is only one vi
 
 This document is a product north star and architectural direction. Section 28
 also serves as the authoritative delivery ledger. As of July 30, 2026, Stages
-0 through 4 and the Stage 5.1-5.2 typed-data and palette foundations are
-complete: Clover has the inspection and checkpoint substrate, the structured
-decoder, the persistent Workbench, live debugger integration, the hybrid
-analyzer, durable typed definitions and object bindings, and persistent
-palette inspection. Descriptions outside Section 28 define the target
-experience unless they explicitly describe the current implementation.
+0 through 4 and the Stage 5.1-5.3 typed-data, palette, and tile-graphics
+foundations are complete: Clover has the inspection and checkpoint substrate,
+the structured decoder, the persistent Workbench, live debugger integration,
+the hybrid analyzer, durable typed definitions and object bindings, and
+persistent palette and tile inspection. Descriptions outside Section 28 define
+the target experience unless they explicitly describe the current
+implementation.
 
 The capabilities described here fall into four planning horizons:
 
@@ -3286,7 +3287,7 @@ rather than a listing.
 
 ## Stage 5: Typed data and assets
 
-**Status: in progress; typed-data and palette foundations complete.**
+**Status: in progress; typed-data, palette, and tile-graphics foundations complete.**
 
 ### Stage 5.1: Typed-data foundation
 
@@ -3348,11 +3349,35 @@ and bounds. `clover_workbench_palette_integration_test` executes a real CPU
 upload through `$2121/$2122` and follows it through side-effect-free CGRAM
 inspection to the decoded RGB value.
 
+### Stage 5.3: Tile-graphics assets and inspection
+
+Add a system-neutral tile asset whose stable identity binds a name, planar
+format, tile count, source address space, and optional palette plus base-color
+link. The first formats are native SNES 2bpp, 4bpp, and 8bpp 8x8 tiles.
+Decoding reconstructs color indexes from the SNES bitplane layout and reports
+invalid definitions, misalignment, overflow, unavailable bytes, truncation,
+and VRAM bounds explicitly.
+
+Expose the PPU's 64 KiB VRAM array as a read-only debug address space. Direct
+inspection neither touches `$2139/$213A` nor changes the VRAM read latch or
+increment state. Persist tile assets in schema v7; CPU-bus sources create data
+classifications, while VRAM sources remain device-space facts. The Workbench
+binds CPU or live-VRAM tiles in each supported bit depth, renders a 16-column
+palette-linked tile grid, and inspects selected tile pixels.
+
+**Implementation status:** complete on July 30, 2026.
+`clover_tile_graphics_test` covers all three planar formats, alignment,
+palette capacity, and VRAM bounds. The project test covers migration, durable
+palette links, data classification, and atomic invalid-definition rejection.
+`clover_analysis_boundary_test` guards read-only VRAM inspection and bounds.
+`clover_workbench_tile_graphics_integration_test` executes a real CPU upload
+through `$2115-$2119` and follows it through side-effect-free VRAM inspection
+to decoded planar pixels.
+
 ### Remaining Stage 5 work
 
 Implement:
 
-- graphics viewers;
 - tile-map viewers;
 - OAM inspection;
 - DMA source tracking;

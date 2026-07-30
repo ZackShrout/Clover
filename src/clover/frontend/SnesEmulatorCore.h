@@ -22,6 +22,7 @@ namespace clover::frontend
         inline constexpr address_space_id_t k_canonical_media_space{ 3u };
         inline constexpr address_space_id_t k_apu_ram_space{ 4u };
         inline constexpr address_space_id_t k_cgram_space{ 5u };
+        inline constexpr address_space_id_t k_vram_space{ 6u };
     }
 
     [[nodiscard]] uint16_t snes_joypad_state(const gamepad_state_t& state) noexcept;
@@ -124,7 +125,7 @@ namespace clover::frontend
                 processor_architecture_t::sony_spc700
             }
         };
-        std::array<address_space_descriptor_t, 5> _address_spaces{
+        std::array<address_space_descriptor_t, 6> _address_spaces{
             address_space_descriptor_t{
                 snes_debug::k_cpu_bus_space,
                 "snes.cpu-bus",
@@ -164,6 +165,14 @@ namespace clover::frontend
                 address_space_kind_t::memory,
                 9u,
                 512u
+            },
+            address_space_descriptor_t{
+                snes_debug::k_vram_space,
+                "snes.vram",
+                "PPU VRAM",
+                address_space_kind_t::memory,
+                16u,
+                65536u
             }
         };
         std::array<processor_register_descriptor_t, 10> _main_cpu_registers{

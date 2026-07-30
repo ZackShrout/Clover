@@ -60,12 +60,12 @@ The disassembler is the first major view into that system, but it is only one vi
 
 This document is a product north star and architectural direction. Section 28
 also serves as the authoritative delivery ledger. As of July 30, 2026, Stages
-0 through 4 and the Stage 5.1 typed-data foundation are complete: Clover has
-the inspection and checkpoint substrate, the structured decoder, the
-persistent Workbench, live debugger integration, the hybrid analyzer, and
-durable typed definitions and object bindings. Descriptions outside Section 28
-define the target experience unless they explicitly describe the current
-implementation.
+0 through 4 and the Stage 5.1-5.2 typed-data and palette foundations are
+complete: Clover has the inspection and checkpoint substrate, the structured
+decoder, the persistent Workbench, live debugger integration, the hybrid
+analyzer, durable typed definitions and object bindings, and persistent
+palette inspection. Descriptions outside Section 28 define the target
+experience unless they explicitly describe the current implementation.
 
 The capabilities described here fall into four planning horizons:
 
@@ -3286,7 +3286,7 @@ rather than a listing.
 
 ## Stage 5: Typed data and assets
 
-**Status: in progress; typed-data foundation complete.**
+**Status: in progress; typed-data and palette foundations complete.**
 
 ### Stage 5.1: Typed-data foundation
 
@@ -3320,12 +3320,39 @@ bytes, and pointer targets. `clover_workbench_project_test` covers migration,
 full definition/object round trips, reanalysis survival, and atomic rejection
 of overlapping bindings.
 
+### Stage 5.2: Palette assets and inspection
+
+Add a system-neutral palette asset whose stable identity binds a name, format,
+color count, and address-space source. The first system format is SNES
+little-endian BGR555. Decoding retains the raw 15-bit value, individual
+five-bit channels, expanded eight-bit RGB, and explicit conflicts for invalid,
+misaligned, unavailable, truncated, or out-of-range sources.
+
+Expose live SNES CGRAM as a 512-byte read-only debug address space. Inspection
+reads the PPU-owned array directly without touching `$213B` latches, changing
+PPU state, or enabling legacy write traces. ROM, WRAM, canonical-media, and
+CGRAM palettes all consume the same injected side-effect-free byte reader.
+
+Persist palette assets in the per-media project. CPU-bus-backed palettes create
+an authoritative data classification; live CGRAM palettes remain device-space
+facts. The Workbench provides quick 16-color CPU palette and full-CGRAM
+bindings, a navigable 16-column swatch view, raw and RGB color inspection, and
+explicit decode conflict display.
+
+**Implementation status:** complete on July 30, 2026. Schema v6 stores palette
+assets transactionally. `clover_palette_test` covers BGR555 conversion,
+alignment, truncation, and CGRAM bounds. The project test covers durable
+palette definitions, data classification, migration, and rejected invalid
+assets. `clover_analysis_boundary_test` guards the read-only CGRAM descriptor
+and bounds. `clover_workbench_palette_integration_test` executes a real CPU
+upload through `$2121/$2122` and follows it through side-effect-free CGRAM
+inspection to the decoded RGB value.
+
 ### Remaining Stage 5 work
 
 Implement:
 
 - graphics viewers;
-- palette viewers;
 - tile-map viewers;
 - OAM inspection;
 - DMA source tracking;

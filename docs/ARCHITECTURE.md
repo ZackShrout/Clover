@@ -113,8 +113,8 @@ the Stage 4 hybrid analyzer, and the SQLite-backed project service.
 Workbench persistence itself lives under `src/clover/workbench/`, is UI
 independent, and is included in the default headless build for testing.
 
-`clover_analysis` owns the system-neutral `ProgramModel`, typed-data model and
-decoder, and the SNES analyzer.
+`clover_analysis` owns the system-neutral `ProgramModel`, typed-data and
+palette models and decoders, and the SNES analyzer.
 The analyzer consumes immutable bytes, explicit decode contexts, user
 classifications, and bounded runtime edges. It emits stable instructions,
 basic blocks, many-to-many function ownership, typed control-flow edges,
@@ -131,6 +131,14 @@ service persists user/imported definitions and address-space object bindings
 in schema v5. Binding an object also creates an authoritative data
 classification, connecting Stage 5 interpretation back to Stage 4 conflict
 analysis without teaching the hardware core about types.
+
+Palette decoding follows the same boundary. A palette asset names a format,
+color count, and source in an explicit address space; the first format is SNES
+BGR555. The SNES debug target exposes PPU CGRAM as 512 read-only bytes backed
+directly by the PPU-owned color array. This avoids stateful `$213B` reads and
+keeps device inspection out of the generic palette decoder. Schema v6 persists
+palette assets, and CPU-bus-backed assets also become user data
+classifications so they participate in hybrid-analysis conflicts.
 
 The project schema publishes a complete program model as one analysis
 generation transaction. A candidate is built outside SQLite; the prior

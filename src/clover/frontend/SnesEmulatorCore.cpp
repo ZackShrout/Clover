@@ -300,6 +300,33 @@ namespace clover::frontend
             };
         }
 
+        if (address.space == snes_debug::k_cgram_space)
+        {
+            if (!in_range(512u))
+            {
+                return {
+                    .status = memory_inspection_status_t::out_of_range
+                };
+            }
+            const auto& cgram{ _console.ppu_cgram() };
+            for (size_t index{}; index < destination.size(); ++index)
+            {
+                const uint64_t byte_address{ address.value + index };
+                const uint16_t color{
+                    cgram[static_cast<size_t>(byte_address / 2u)]
+                };
+                destination[index] = static_cast<std::byte>(
+                    (byte_address & 1u) == 0u
+                        ? color & 0x00ffu
+                        : (color >> 8u) & 0x007fu
+                );
+            }
+            return {
+                .status = memory_inspection_status_t::complete,
+                .bytes_read = destination.size()
+            };
+        }
+
         if (address.space == snes_debug::k_cpu_bus_space)
         {
             if (!in_range(0x01000000u))

@@ -8,6 +8,7 @@
 #include "clover/analysis/snes/Formatter.h"
 #include "clover/analysis/snes/HybridAnalyzer.h"
 #include "clover/analysis/snes/StaticListing.h"
+#include "clover/analysis/Palette.h"
 #include "clover/analysis/TypedData.h"
 #include "clover/frontend/EmulatorCore.h"
 #include "clover/frontend/SnesEmulatorCore.h"
@@ -27,6 +28,7 @@
 #include <iomanip>
 #include <memory>
 #include <optional>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -532,6 +534,7 @@ namespace clover::platform
         std::vector<workbench::symbol_t> symbols{};
         std::vector<workbench::project_data_type_t> data_types{};
         std::vector<workbench::project_typed_object_t> typed_objects{};
+        std::vector<workbench::project_palette_t> palettes{};
         analysis::program_model_t analysis_model{};
         if (const auto stored{ project.current_analysis(error) };
             stored.has_value())
@@ -543,6 +546,9 @@ namespace clover::platform
         bool refresh_listing{ true };
         bool refresh_facts{ true };
         bool running{ true };
+        bool palette_view{ false };
+        size_t palette_index{ 0u };
+        uint16_t selected_color{ 0u };
         edit_kind_t edit_kind{ edit_kind_t::none };
         std::string edit_buffer{};
         std::string status{
@@ -572,6 +578,42 @@ namespace clover::platform
                 status = error;
             }
         };
+        const auto inspect_byte = [target](
+            const analysis::address_t& address
+        ) -> std::optional<uint8_t>
+        {
+            const std::span<const frontend::address_space_descriptor_t> spaces{
+                target->address_spaces()
+            };
+            const auto space{
+                std::find_if(
+                    spaces.begin(),
+                    spaces.end(),
+                    [&address](
+                        const frontend::address_space_descriptor_t& descriptor
+                    )
+                    {
+                        return descriptor.stable_id == address.address_space;
+                    }
+                )
+            };
+            if (space == spaces.end())
+                return std::nullopt;
+            std::byte byte{};
+            const frontend::memory_inspection_result_t result{
+                target->inspect_memory(
+                    { space->id, address.address },
+                    std::span<std::byte>{ &byte, 1u }
+                )
+            };
+            if (result.status
+                    != frontend::memory_inspection_status_t::complete
+                || result.bytes_read != 1u)
+            {
+                return std::nullopt;
+            }
+            return std::to_integer<uint8_t>(byte);
+        };
         const auto decode_typed = [&](const analysis::typed_object_t& object)
         {
             std::vector<analysis::data_type_t> definitions{};
@@ -581,26 +623,12 @@ namespace clover::platform
             return analysis::decode_typed_object(
                 definitions,
                 object,
-                [&source](
-                    const analysis::address_t& address
-                ) -> std::optional<uint8_t>
-                {
-                    if (address.address_space != k_cpu_address_space
-                        || address.address > 0x00ffffffu)
-                    {
-                        return std::nullopt;
-                    }
-                    const analysis::snes::inspected_byte_t inspection{
-                        source.inspect(static_cast<uint32_t>(address.address))
-                    };
-                    if (inspection.status
-                        != analysis::snes::byte_inspection_status_t::available)
-                    {
-                        return std::nullopt;
-                    }
-                    return inspection.value;
-                }
+                inspect_byte
             );
+        };
+        const auto decode_palette = [&](const analysis::palette_asset_t& asset)
+        {
+            return analysis::decode_palette(asset, inspect_byte);
         };
         const auto run_analysis = [&]()
         {
@@ -752,6 +780,26 @@ namespace clover::platform
                 symbols = project.symbols(error);
                 data_types = project.data_types(error);
                 typed_objects = project.typed_objects(error);
+                palettes = project.palettes(error);
+                if (palettes.empty())
+                {
+                    palette_view = false;
+                    palette_index = 0u;
+                    selected_color = 0u;
+                }
+                else
+                {
+                    palette_index = std::min(
+                        palette_index,
+                        palettes.size() - 1u
+                    );
+                    selected_color = std::min<uint16_t>(
+                        selected_color,
+                        static_cast<uint16_t>(
+                            palettes[palette_index].asset.color_count - 1u
+                        )
+                    );
+                }
                 if (!error.empty())
                     status = error;
                 refresh_facts = false;
@@ -944,9 +992,98 @@ namespace clover::platform
                     }
                     status = error.empty() ? "Navigation: forward" : error;
                 }
-                else if (event.key.scancode == SDL_SCANCODE_UP && selected > 0u)
+                else if (event.key.scancode == SDL_SCANCODE_V)
+                {
+                    if ((event.key.mod & SDL_KMOD_SHIFT) != 0)
+                    {
+                        palette_view = false;
+                        status = "Disassembly view";
+                    }
+                    else if (palettes.empty())
+                    {
+                        status = "No palette assets yet (Q / Shift+Q)";
+                    }
+                    else
+                    {
+                        if (palette_view)
+                            palette_index = (palette_index + 1u) % palettes.size();
+                        else
+                            palette_view = true;
+                        selected_color = 0u;
+                        status = "Palette "
+                            + palettes[palette_index].asset.name;
+                    }
+                }
+                else if (event.key.scancode == SDL_SCANCODE_Q)
+                {
+                    const bool live_cgram{
+                        (event.key.mod & SDL_KMOD_SHIFT) != 0
+                    };
+                    const uint32_t address{ selected_address() };
+                    const analysis::palette_asset_t asset{
+                        .stable_id = live_cgram
+                            ? "palette@snes.cgram:000"
+                            : "palette@" + formatted_address(address),
+                        .name = live_cgram
+                            ? "Live CGRAM"
+                            : "Palette " + formatted_address(address),
+                        .location = live_cgram
+                            ? analysis::address_t{ "snes.cgram", 0u }
+                            : analysis::address_t{
+                                std::string{ k_cpu_address_space },
+                                address
+                            },
+                        .color_count = static_cast<uint16_t>(
+                            live_cgram ? 256u : 16u
+                        )
+                    };
+                    error.clear();
+                    const bool saved{ project.set_palette(asset, error) };
+                    status = saved
+                        ? (live_cgram
+                            ? "Bound live 256-color CGRAM palette"
+                            : "Bound 16-color CPU-bus palette")
+                        : error;
+                    refresh_facts = saved;
+                }
+                else if (palette_view
+                         && event.key.scancode == SDL_SCANCODE_LEFT
+                         && selected_color > 0u)
+                {
+                    --selected_color;
+                }
+                else if (palette_view
+                         && event.key.scancode == SDL_SCANCODE_RIGHT
+                         && !palettes.empty()
+                         && selected_color + 1u
+                            < palettes[palette_index].asset.color_count)
+                {
+                    ++selected_color;
+                }
+                else if (palette_view
+                         && event.key.scancode == SDL_SCANCODE_UP
+                         && selected_color >= 16u)
+                {
+                    selected_color = static_cast<uint16_t>(
+                        selected_color - 16u
+                    );
+                }
+                else if (palette_view
+                         && event.key.scancode == SDL_SCANCODE_DOWN
+                         && !palettes.empty()
+                         && selected_color + 16u
+                            < palettes[palette_index].asset.color_count)
+                {
+                    selected_color = static_cast<uint16_t>(
+                        selected_color + 16u
+                    );
+                }
+                else if (!palette_view
+                         && event.key.scancode == SDL_SCANCODE_UP
+                         && selected > 0u)
                     --selected;
-                else if (event.key.scancode == SDL_SCANCODE_DOWN
+                else if (!palette_view
+                         && event.key.scancode == SDL_SCANCODE_DOWN
                          && selected + 1u < listing.instructions.size())
                     ++selected;
                 else if (event.key.scancode == SDL_SCANCODE_PAGEUP)
@@ -1366,7 +1503,13 @@ namespace clover::platform
                 "Types " + std::to_string(data_types.size())
                     + "  Typed objects " + std::to_string(typed_objects.size())
             );
-            float fact_y{ 176.f };
+            draw_text(
+                sdl.renderer,
+                left.x + 10.f,
+                164.f,
+                "Palettes " + std::to_string(palettes.size())
+            );
+            float fact_y{ 192.f };
             for (auto iterator{ bookmarks.rbegin() };
                  iterator != bookmarks.rend() && fact_y < left.y + left.h - 24.f;
                  ++iterator)
@@ -1383,90 +1526,186 @@ namespace clover::platform
             if (bookmarks.empty())
                 draw_text(sdl.renderer, left.x + 10.f, fact_y, "No bookmarks yet (B)");
 
-            draw_text(
-                sdl.renderer,
-                center.x + 10.f,
-                48.f,
-                "LIVE DISASSEMBLY  "
-                    + std::string{
-                        debugger.run_state()
-                                == workbench::debugger_run_state_t::running
-                            ? "RUNNING"
-                            : "PAUSED"
-                    }
-            );
-            float row_y{ 72.f };
-            for (size_t index{ 0 }; index < listing.instructions.size(); ++index)
+            std::optional<analysis::decoded_palette_t> displayed_palette{};
+            if (palette_view && palette_index < palettes.size())
             {
-                const auto& instruction{ listing.instructions[index] };
-                if (index == selected)
-                {
-                    const SDL_FRect selection{
-                        center.x + 5.f,
-                        row_y - 3.f,
-                        center.w - 10.f,
-                        15.f
-                    };
-                    static_cast<void>(SDL_SetRenderDrawColor(
-                        sdl.renderer, 47, 76, 118, 255
-                    ));
-                    static_cast<void>(SDL_RenderFillRect(sdl.renderer, &selection));
-                    static_cast<void>(SDL_SetRenderDrawColor(
-                        sdl.renderer, 238, 244, 255, 255
-                    ));
-                }
-                const bool is_current{
-                    live_state.instruction_address.value == instruction.address
-                };
-                const bool has_breakpoint{
-                    std::any_of(
-                        debugger.breakpoints().begin(),
-                        debugger.breakpoints().end(),
-                        [&instruction](const workbench::breakpoint_t& breakpoint)
-                        {
-                            return breakpoint.enabled
-                                && breakpoint.address.value == instruction.address;
-                        }
-                    )
-                };
-                const bool has_coverage{
-                    fact_at(analysis_model.coverage, instruction.address)
-                        != nullptr
-                };
-                const bool has_typed_object{
-                    typed_object_at(
-                        typed_objects,
-                        data_types,
-                        instruction.address
-                    ) != nullptr
-                };
-                const std::string marker{
-                    is_current
-                        ? "> "
-                        : (has_breakpoint
-                            ? "B "
-                            : (has_typed_object
-                                ? "T "
-                                : (has_coverage
-                                    ? "+ "
-                                    : (fact_at(
-                                        classifications,
-                                        instruction.address
-                                    ) != nullptr
-                                    ? "* "
-                                    : "  "))))
-                };
+                displayed_palette = decode_palette(
+                    palettes[palette_index].asset
+                );
                 draw_text(
                     sdl.renderer,
                     center.x + 10.f,
-                    row_y,
-                    marker + formatted_address(instruction.address) + "  "
-                        + formatted_bytes(instruction) + "  "
-                        + analysis::snes::format_instruction(instruction)
+                    48.f,
+                    "PALETTE  " + displayed_palette->asset.name
                 );
-                row_y += 16.f;
-                if (row_y >= center.y + center.h - 12.f)
-                    break;
+                if (!displayed_palette->colors.empty())
+                {
+                    const float swatch_size{
+                        std::max(
+                            8.f,
+                            std::min(
+                                28.f,
+                                (center.w - 52.f) / 16.f - 4.f
+                            )
+                        )
+                    };
+                    const float grid_width{
+                        16.f * swatch_size + 15.f * 4.f
+                    };
+                    const float grid_x{
+                        center.x + std::max(
+                            12.f,
+                            (center.w - grid_width) / 2.f
+                        )
+                    };
+                    for (const analysis::palette_color_t& color
+                         : displayed_palette->colors)
+                    {
+                        const uint16_t column{
+                            static_cast<uint16_t>(color.index % 16u)
+                        };
+                        const uint16_t row{
+                            static_cast<uint16_t>(color.index / 16u)
+                        };
+                        const SDL_FRect swatch{
+                            grid_x
+                                + static_cast<float>(column)
+                                    * (swatch_size + 4.f),
+                            78.f
+                                + static_cast<float>(row)
+                                    * (swatch_size + 4.f),
+                            swatch_size,
+                            swatch_size
+                        };
+                        static_cast<void>(SDL_SetRenderDrawColor(
+                            sdl.renderer,
+                            color.red8,
+                            color.green8,
+                            color.blue8,
+                            255u
+                        ));
+                        static_cast<void>(
+                            SDL_RenderFillRect(sdl.renderer, &swatch)
+                        );
+                        static_cast<void>(SDL_SetRenderDrawColor(
+                            sdl.renderer,
+                            color.index == selected_color ? 255u : 72u,
+                            color.index == selected_color ? 255u : 82u,
+                            color.index == selected_color ? 255u : 98u,
+                            255u
+                        ));
+                        static_cast<void>(
+                            SDL_RenderRect(sdl.renderer, &swatch)
+                        );
+                    }
+                }
+                else
+                {
+                    draw_text(
+                        sdl.renderer,
+                        center.x + 10.f,
+                        76.f,
+                        displayed_palette->conflicts.empty()
+                            ? "Palette has no colors"
+                            : displayed_palette->conflicts.front().detail
+                    );
+                }
+            }
+            else
+            {
+                draw_text(
+                    sdl.renderer,
+                    center.x + 10.f,
+                    48.f,
+                    "LIVE DISASSEMBLY  "
+                        + std::string{
+                            debugger.run_state()
+                                    == workbench::debugger_run_state_t::running
+                                ? "RUNNING"
+                                : "PAUSED"
+                        }
+                );
+                float row_y{ 72.f };
+                for (size_t index{ 0 };
+                     index < listing.instructions.size();
+                     ++index)
+                {
+                    const auto& instruction{ listing.instructions[index] };
+                    if (index == selected)
+                    {
+                        const SDL_FRect selection{
+                            center.x + 5.f,
+                            row_y - 3.f,
+                            center.w - 10.f,
+                            15.f
+                        };
+                        static_cast<void>(SDL_SetRenderDrawColor(
+                            sdl.renderer, 47, 76, 118, 255
+                        ));
+                        static_cast<void>(
+                            SDL_RenderFillRect(sdl.renderer, &selection)
+                        );
+                        static_cast<void>(SDL_SetRenderDrawColor(
+                            sdl.renderer, 238, 244, 255, 255
+                        ));
+                    }
+                    const bool is_current{
+                        live_state.instruction_address.value
+                            == instruction.address
+                    };
+                    const bool has_breakpoint{
+                        std::any_of(
+                            debugger.breakpoints().begin(),
+                            debugger.breakpoints().end(),
+                            [&instruction](
+                                const workbench::breakpoint_t& breakpoint
+                            )
+                            {
+                                return breakpoint.enabled
+                                    && breakpoint.address.value
+                                        == instruction.address;
+                            }
+                        )
+                    };
+                    const bool has_coverage{
+                        fact_at(analysis_model.coverage, instruction.address)
+                            != nullptr
+                    };
+                    const bool has_typed_object{
+                        typed_object_at(
+                            typed_objects,
+                            data_types,
+                            instruction.address
+                        ) != nullptr
+                    };
+                    const std::string marker{
+                        is_current
+                            ? "> "
+                            : (has_breakpoint
+                                ? "B "
+                                : (has_typed_object
+                                    ? "T "
+                                    : (has_coverage
+                                        ? "+ "
+                                        : (fact_at(
+                                            classifications,
+                                            instruction.address
+                                        ) != nullptr
+                                        ? "* "
+                                        : "  "))))
+                    };
+                    draw_text(
+                        sdl.renderer,
+                        center.x + 10.f,
+                        row_y,
+                        marker + formatted_address(instruction.address) + "  "
+                            + formatted_bytes(instruction) + "  "
+                            + analysis::snes::format_instruction(instruction)
+                    );
+                    row_y += 16.f;
+                    if (row_y >= center.y + center.h - 12.f)
+                        break;
+                }
             }
 
             const uint32_t current{ selected_address() };
@@ -1515,36 +1754,111 @@ namespace clover::platform
                 );
                 inspector_y += 18.f;
             }
-            if (const auto* label{ fact_at(labels, current) }; label != nullptr)
-            {
-                draw_text(sdl.renderer, right.x + 10.f, inspector_y, "Label: " + label->text);
-                inspector_y += 18.f;
-            }
-            if (const auto* comment{ fact_at(comments, current) }; comment != nullptr)
+            if (displayed_palette.has_value())
             {
                 draw_text(
                     sdl.renderer,
                     right.x + 10.f,
                     inspector_y,
-                    "Comment: " + comment->text
+                    "Palette: " + displayed_palette->asset.name
                 );
                 inspector_y += 18.f;
-            }
-            if (const auto* classification{
-                    fact_at(classifications, current)
-                };
-                classification != nullptr)
-            {
+                std::ostringstream source_text{};
+                source_text << "Source: "
+                            << displayed_palette->asset.location.address_space
+                            << " $" << std::uppercase << std::hex
+                            << displayed_palette->asset.location.address;
                 draw_text(
                     sdl.renderer,
                     right.x + 10.f,
                     inspector_y,
-                    classification->kind == workbench::classification_kind_t::code
-                        ? "Classification: code"
-                        : "Classification: data"
+                    source_text.str()
                 );
                 inspector_y += 18.f;
+                if (selected_color < displayed_palette->colors.size())
+                {
+                    const analysis::palette_color_t& color{
+                        displayed_palette->colors[selected_color]
+                    };
+                    std::ostringstream raw_text{};
+                    raw_text << "Color " << std::dec << color.index
+                             << ": $" << std::uppercase << std::hex
+                             << std::setfill('0') << std::setw(4)
+                             << color.raw_value;
+                    draw_text(
+                        sdl.renderer,
+                        right.x + 10.f,
+                        inspector_y,
+                        raw_text.str()
+                    );
+                    inspector_y += 18.f;
+                    draw_text(
+                        sdl.renderer,
+                        right.x + 10.f,
+                        inspector_y,
+                        "RGB: "
+                            + std::to_string(color.red8) + ","
+                            + std::to_string(color.green8) + ","
+                            + std::to_string(color.blue8)
+                            + "  5-bit "
+                            + std::to_string(color.red5) + ","
+                            + std::to_string(color.green5) + ","
+                            + std::to_string(color.blue5)
+                    );
+                    inspector_y += 18.f;
+                }
+                if (!displayed_palette->conflicts.empty())
+                {
+                    draw_text(
+                        sdl.renderer,
+                        right.x + 10.f,
+                        inspector_y,
+                        "Palette conflict: "
+                            + displayed_palette->conflicts.front().detail
+                    );
+                    inspector_y += 18.f;
+                }
             }
+            if (!palette_view)
+            {
+                if (const auto* label{ fact_at(labels, current) };
+                    label != nullptr)
+                {
+                    draw_text(
+                        sdl.renderer,
+                        right.x + 10.f,
+                        inspector_y,
+                        "Label: " + label->text
+                    );
+                    inspector_y += 18.f;
+                }
+                if (const auto* comment{ fact_at(comments, current) };
+                    comment != nullptr)
+                {
+                    draw_text(
+                        sdl.renderer,
+                        right.x + 10.f,
+                        inspector_y,
+                        "Comment: " + comment->text
+                    );
+                    inspector_y += 18.f;
+                }
+                if (const auto* classification{
+                        fact_at(classifications, current)
+                    };
+                    classification != nullptr)
+                {
+                    draw_text(
+                        sdl.renderer,
+                        right.x + 10.f,
+                        inspector_y,
+                        classification->kind
+                                == workbench::classification_kind_t::code
+                            ? "Classification: code"
+                            : "Classification: data"
+                    );
+                    inspector_y += 18.f;
+                }
             if (const auto* typed{
                     typed_object_at(typed_objects, data_types, current)
                 };
@@ -1807,13 +2121,16 @@ namespace clover::platform
                 );
                 inspector_y += 18.f;
             }
+            }
             inspector_y += 12.f;
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y, "Y / SHIFT+Y byte / string");
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 16.f, "J / P    typed object / pointer");
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 32.f, "A        analyze / publish");
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 48.f, "N / K    function / conflict");
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 64.f, "X / SHIFT+X xref out / in");
-            inspector_y += 80.f;
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y, "Q / SHIFT+Q palette / CGRAM");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 16.f, "V / SHIFT+V view / close");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 32.f, "Y / SHIFT+Y byte / string");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 48.f, "J / P    typed object / pointer");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 64.f, "A        analyze / publish");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 80.f, "N / K    function / conflict");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 96.f, "X / SHIFT+X xref out / in");
+            inspector_y += 112.f;
             draw_text(sdl.renderer, right.x + 10.f, inspector_y, "F5       run / pause");
             draw_text(sdl.renderer, right.x + 10.f, inspector_y + 16.f, "F9       breakpoint");
             draw_text(sdl.renderer, right.x + 10.f, inspector_y + 32.f, "F10      step over");

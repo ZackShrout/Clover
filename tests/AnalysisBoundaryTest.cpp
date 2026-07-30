@@ -590,10 +590,12 @@ int main()
     const std::span<const frontend::address_space_descriptor_t> spaces{
         target->address_spaces()
     };
-    if (spaces.size() != 4u
+    if (spaces.size() != 5u
         || spaces[0].stable_id != std::string_view{ "snes.cpu-bus" }
         || spaces[2].stable_id != std::string_view{ "media.canonical" }
-        || spaces[2].size_bytes != 0x8000u)
+        || spaces[2].size_bytes != 0x8000u
+        || spaces[4].stable_id != std::string_view{ "snes.cgram" }
+        || spaces[4].size_bytes != 512u)
     {
         return fail("address_space_descriptors");
     }
@@ -637,6 +639,31 @@ int main()
         || mmio_result.bytes_read != 0u)
     {
         return fail("cpu_bus_mmio_rejection");
+    }
+
+    bytes.fill(std::byte{ 0xffu });
+    const frontend::memory_inspection_result_t cgram_result{
+        target->inspect_memory(
+            { frontend::snes_debug::k_cgram_space, 0u },
+            bytes
+        )
+    };
+    if (cgram_result.status != frontend::memory_inspection_status_t::complete
+        || cgram_result.bytes_read != bytes.size()
+        || (std::to_integer<uint8_t>(bytes[1]) & 0x80u) != 0u)
+    {
+        return fail("cgram_space_inspection");
+    }
+    const frontend::memory_inspection_result_t cgram_range_result{
+        target->inspect_memory(
+            { frontend::snes_debug::k_cgram_space, 511u },
+            bytes
+        )
+    };
+    if (cgram_range_result.status
+        != frontend::memory_inspection_status_t::out_of_range)
+    {
+        return fail("cgram_space_bounds");
     }
 
     const frontend::memory_inspection_result_t invalid_result{

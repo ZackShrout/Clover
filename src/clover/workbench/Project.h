@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "clover/analysis/Palette.h"
 #include "clover/analysis/ProgramModel.h"
 #include "clover/analysis/TypedData.h"
 #include "clover/frontend/EmulatorCore.h"
@@ -22,7 +23,7 @@ struct sqlite3;
 
 namespace clover::workbench
 {
-    inline constexpr uint32_t k_project_schema_version{ 5u };
+    inline constexpr uint32_t k_project_schema_version{ 6u };
     inline constexpr std::string_view k_analyzer_version{ "clover-analyzer-2" };
     inline constexpr std::string_view k_decoder_version{ "wdc65c816-decoder-1" };
 
@@ -103,6 +104,13 @@ namespace clover::workbench
     struct project_typed_object_t
     {
         analysis::typed_object_t object{};
+        fact_layer_t layer{ fact_layer_t::user };
+        std::string source{};
+    };
+
+    struct project_palette_t
+    {
+        analysis::palette_asset_t asset{};
         fact_layer_t layer{ fact_layer_t::user };
         std::string source{};
     };
@@ -203,6 +211,17 @@ namespace clover::workbench
             std::string& error
         ) const;
         [[nodiscard]] std::vector<project_typed_object_t> typed_objects(
+            std::string& error
+        ) const;
+        [[nodiscard]] bool set_palette(
+            const analysis::palette_asset_t& asset,
+            std::string& error
+        );
+        [[nodiscard]] bool remove_palette(
+            std::string_view stable_id,
+            std::string& error
+        );
+        [[nodiscard]] std::vector<project_palette_t> palettes(
             std::string& error
         ) const;
 

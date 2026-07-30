@@ -269,6 +269,44 @@ int main()
         return fail("typed_data_round_trip", error);
     }
     error.clear();
+
+    const analysis::palette_asset_t cgram_palette{
+        .stable_id = "palette.cgram",
+        .name = "Live CGRAM",
+        .location = { "snes.cgram", 0u },
+        .color_count = 256u
+    };
+    const analysis::palette_asset_t actor_palette{
+        .stable_id = "palette.actor",
+        .name = "Actor palette",
+        .location = { "snes.cpu-bus", 0x7e1100u },
+        .color_count = 16u
+    };
+    if (!project.set_palette(cgram_palette, error)
+        || !project.set_palette(actor_palette, error))
+    {
+        return fail("write_palettes", error);
+    }
+    const auto initial_palettes{ project.palettes(error) };
+    if (!error.empty() || initial_palettes.size() != 2u
+        || initial_palettes.front().asset.location.address_space
+            != "snes.cgram"
+        || initial_palettes.front().asset.color_count != 256u
+        || initial_palettes.back().asset.color_count != 16u)
+    {
+        return fail("palette_round_trip", error);
+    }
+    error.clear();
+    analysis::palette_asset_t misaligned_palette{ actor_palette };
+    misaligned_palette.stable_id = "palette.invalid";
+    misaligned_palette.location.address += 1u;
+    if (project.set_palette(misaligned_palette, error)
+        || error.empty() || project.palettes(error).size() != 2u)
+    {
+        return fail("invalid_palette_rejected_atomically", error);
+    }
+    error.clear();
+
     if (project.set_typed_object(
             {
                 .stable_id = "object.overlap",
@@ -296,7 +334,7 @@ int main()
         || !has_layer(initial_labels, fact_layer_t::derived)
         || initial_comments.size() != 1u
         || initial_bookmarks.size() != 1u
-        || initial_classifications.size() != 3u
+        || initial_classifications.size() != 4u
         || initial_symbols.size() < 90u
         || initial_symbols.front().layer != fact_layer_t::imported)
     {
@@ -349,9 +387,10 @@ int main()
     if (project.labels(error).size() != 2u
         || project.comments(error).size() != 1u
         || project.bookmarks(error).size() != 1u
-        || project.classifications(error).size() != 3u
+        || project.classifications(error).size() != 4u
         || project.data_types(error).size() != 9u
         || project.typed_objects(error).size() != 2u
+        || project.palettes(error).size() != 2u
         || project.debug_breakpoints(error).size() != 1u
         || project.debug_watchpoints(error).size() != 1u
         || project.debug_watchpoints(error).front().access
@@ -373,9 +412,10 @@ int main()
         || regenerated_labels.size() != 1u
         || regenerated_labels.front().layer != fact_layer_t::user
         || project.comments(error).size() != 1u
-        || project.classifications(error).size() != 3u
+        || project.classifications(error).size() != 4u
         || project.data_types(error).size() != 9u
         || project.typed_objects(error).size() != 2u
+        || project.palettes(error).size() != 2u
         || project.symbols(error).size() != initial_symbols.size()
         || project.analysis_generation(error) != 1u)
     {
@@ -534,6 +574,7 @@ int main()
     if (sqlite3_open(expected_path_utf8.c_str(), &migration_database) != SQLITE_OK)
         return fail("open_migration_fixture");
     const char* downgrade_sql{
+        "DROP TABLE palette_assets;"
         "DROP TABLE typed_data_objects;"
         "DROP TABLE typed_data_values;"
         "DROP TABLE typed_data_members;"
@@ -621,7 +662,8 @@ int main()
 
     std::printf(
         "Workbench project tests passed: identity, migrations, facts, "
-        "typed data, invalidation, symbols, debugger points, and navigation\n"
+        "typed data, palettes, invalidation, symbols, debugger points, "
+        "and navigation\n"
     );
     return 0;
 }

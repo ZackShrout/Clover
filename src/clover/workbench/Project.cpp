@@ -487,6 +487,18 @@ namespace
         "('clover.u24le','Unsigned long address',0,3,0,1,'clover.builtin-types.v1'),"
         "('clover.s8','Signed byte',1,1,0,1,'clover.builtin-types.v1');"
     };
+
+    constexpr const char* k_schema_v6{
+        "CREATE TABLE palette_assets("
+        "stable_id TEXT PRIMARY KEY,name TEXT NOT NULL,"
+        "address_space TEXT NOT NULL,address INTEGER NOT NULL,"
+        "color_count INTEGER NOT NULL CHECK(color_count BETWEEN 1 AND 256),"
+        "format INTEGER NOT NULL CHECK(format=0),"
+        "layer INTEGER NOT NULL CHECK(layer BETWEEN 0 AND 2),"
+        "source TEXT NOT NULL DEFAULT '');"
+        "CREATE INDEX palette_assets_location"
+        " ON palette_assets(address_space,address);"
+    };
 }
 
 namespace clover::workbench
@@ -628,8 +640,10 @@ namespace clover::workbench
             success = execute(_database, k_schema_v4, error);
         if (success && version <= 4)
             success = execute(_database, k_schema_v5, error);
+        if (success && version <= 5)
+            success = execute(_database, k_schema_v6, error);
         if (success)
-            success = execute(_database, "PRAGMA user_version=5;", error);
+            success = execute(_database, "PRAGMA user_version=6;", error);
         if (success)
             success = commit_transaction(_database, error);
         if (!success)
@@ -1698,6 +1712,189 @@ namespace clover::workbench
                 _database,
                 "DELETE FROM typed_data_objects"
                 " WHERE stable_id=? AND layer=0;",
+                error
+            )
+            && bind_text(statement.get(), 1, stable_id, error)
+            && step_done(statement.get(), error);
+    }
+
+    std::vector<project_palette_t> project_t::palettes(
+        std::string& error
+    ) const
+    {
+        std::vector<project_palette_t> result{};
+        if (_database == nullptr)
+        {
+            error = "Workbench project is not open";
+            return result;
+        }
+        statement_t statement{};
+        if (!statement.prepare(
+                _database,
+                "SELECT stable_id,name,address_space,address,color_count,"
+                "format,layer,source FROM palette_assets"
+                " ORDER BY address_space,address,stable_id;",
+                error
+            ))
+        {
+            return result;
+        }
+        int step_result{};
+        while ((step_result = sqlite3_step(statement.get())) == SQLITE_ROW)
+        {
+            result.push_back({
+                .asset = {
+                    .stable_id = column_text(statement.get(), 0),
+                    .name = column_text(statement.get(), 1),
+                    .location = {
+                        .address_space = column_text(statement.get(), 2),
+                        .address = static_cast<uint64_t>(
+                            sqlite3_column_int64(statement.get(), 3)
+                        )
+                    },
+                    .color_count = static_cast<uint16_t>(
+                        sqlite3_column_int(statement.get(), 4)
+                    ),
+                    .format = static_cast<analysis::palette_format_t>(
+                        sqlite3_column_int(statement.get(), 5)
+                    )
+                },
+                .layer = fact_layer(sqlite3_column_int(statement.get(), 6)),
+                .source = column_text(statement.get(), 7)
+            });
+        }
+        if (step_result != SQLITE_DONE)
+            error = sqlite3_errmsg(_database);
+        return result;
+    }
+
+    bool project_t::set_palette(const analysis::palette_asset_t& asset,
+                                std::string& error)
+    {
+        error.clear();
+        if (_database == nullptr || !valid_location(asset.location))
+        {
+            error = "Invalid palette asset";
+            return false;
+        }
+        const analysis::palette_validation_t validation{
+            analysis::validate_palette_asset(asset)
+        };
+        if (!validation.valid())
+        {
+            error = validation.conflicts.front().detail;
+            return false;
+        }
+        const std::vector<project_palette_t> stored{ palettes(error) };
+        if (!error.empty())
+            return false;
+        const auto existing{
+            std::find_if(
+                stored.begin(),
+                stored.end(),
+                [&asset](const project_palette_t& palette)
+                {
+                    return palette.asset.stable_id == asset.stable_id;
+                }
+            )
+        };
+        if (existing != stored.end() && existing->layer != fact_layer_t::user)
+        {
+            error = "Imported palette assets cannot be overwritten";
+            return false;
+        }
+        if (!begin_transaction(_database, error))
+            return false;
+        statement_t statement{};
+        bool success{
+            statement.prepare(
+                _database,
+                "INSERT INTO palette_assets("
+                "stable_id,name,address_space,address,color_count,format,"
+                "layer,source) VALUES(?,?,?,?,?,?,0,'')"
+                " ON CONFLICT(stable_id) DO UPDATE SET"
+                " name=excluded.name,address_space=excluded.address_space,"
+                " address=excluded.address,color_count=excluded.color_count,"
+                " format=excluded.format;",
+                error
+            )
+            && bind_text(statement.get(), 1, asset.stable_id, error)
+            && bind_text(statement.get(), 2, asset.name, error)
+            && bind_text(
+                statement.get(),
+                3,
+                asset.location.address_space,
+                error
+            )
+        };
+        if (success)
+        {
+            sqlite3_bind_int64(
+                statement.get(),
+                4,
+                static_cast<sqlite3_int64>(asset.location.address)
+            );
+            sqlite3_bind_int(statement.get(), 5, asset.color_count);
+            sqlite3_bind_int(
+                statement.get(),
+                6,
+                static_cast<int>(asset.format)
+            );
+            success = step_done(statement.get(), error);
+        }
+
+        statement_t classification{};
+        if (success && asset.location.address_space == "snes.cpu-bus")
+        {
+            success = classification.prepare(
+                _database,
+                "INSERT INTO classifications("
+                "address_space,address,length,kind,layer,source,"
+                "analysis_generation) VALUES(?,?,?,1,0,'',0)"
+                " ON CONFLICT(address_space,address,layer,source) DO UPDATE SET"
+                " length=MAX(length,excluded.length),kind=excluded.kind,"
+                " updated_at=CURRENT_TIMESTAMP;",
+                error
+            ) && bind_text(
+                classification.get(),
+                1,
+                asset.location.address_space,
+                error
+            );
+            if (success)
+            {
+                sqlite3_bind_int64(
+                    classification.get(),
+                    2,
+                    static_cast<sqlite3_int64>(asset.location.address)
+                );
+                sqlite3_bind_int64(
+                    classification.get(),
+                    3,
+                    static_cast<sqlite3_int64>(asset.color_count) * 2
+                );
+                success = step_done(classification.get(), error);
+            }
+        }
+        if (success)
+            success = commit_transaction(_database, error);
+        if (!success)
+            rollback_transaction(_database);
+        return success;
+    }
+
+    bool project_t::remove_palette(std::string_view stable_id,
+                                   std::string& error)
+    {
+        if (_database == nullptr || stable_id.empty())
+        {
+            error = "Invalid palette asset";
+            return false;
+        }
+        statement_t statement{};
+        return statement.prepare(
+                _database,
+                "DELETE FROM palette_assets WHERE stable_id=? AND layer=0;",
                 error
             )
             && bind_text(statement.get(), 1, stable_id, error)

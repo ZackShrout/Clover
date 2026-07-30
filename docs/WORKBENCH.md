@@ -39,6 +39,9 @@ Use `--project-root <path>` to override the platform application-data location.
 | Y / Shift+Y | Bind the selected address as an unsigned byte / ASCII string[16] |
 | J | Navigate to the next typed object |
 | P | Follow the first pointer decoded from the selected typed object |
+| Q / Shift+Q | Bind a 16-color CPU-bus palette / the live 256-color CGRAM palette |
+| V / Shift+V | Open or cycle palette assets / return to disassembly |
+| Arrow keys in palette view | Select a palette color |
 | Up / Down | Select an instruction |
 | Enter | Follow a statically known direct target |
 | Page Up / Page Down | Move the linear listing |
@@ -113,6 +116,21 @@ the same bytes as code. `J` cycles through bindings, while `P` follows a
 decoded pointer. The inspector reports unavailable bytes and uninspectable
 pointer targets instead of manufacturing a value.
 
+## Palette inspection
+
+Palette assets persist a stable name, source address space, color count, and
+format. Stage 5.2 supports SNES little-endian BGR555 sources in inspectable
+CPU-bus memory, WRAM, canonical media, or the live PPU CGRAM address space.
+The decoder retains the raw 15-bit word, five-bit channels, and expanded
+eight-bit RGB values.
+
+`Q` binds 16 colors at the selected CPU-bus address and classifies the 32-byte
+range as data. `Shift+Q` binds all 256 live CGRAM colors without reading the
+stateful `$213B` register. Press `V` to open the palette view or cycle among
+saved palettes; `Shift+V` returns to disassembly. Arrow keys select a swatch,
+and the inspector shows its index, raw BGR555 word, RGB channels, source, and
+any alignment, availability, truncation, or bounds conflict.
+
 ## Project storage
 
 Each project is keyed by the canonical media identity shared with the ROM
@@ -140,6 +158,10 @@ Typed definitions, members, enum/bitfield values, and object bindings are
 stored separately from regenerable analysis generations. They survive
 reanalysis and are validated before a transaction commits; invalid references
 or overlapping objects leave the prior model intact.
+
+Schema v6 also stores palette assets. CPU-bus palette bindings participate in
+code/data conflict analysis, while device-space CGRAM palettes remain durable
+asset facts. Invalid definitions never replace the previously stored asset.
 
 Analysis generations record analyzer and decoder versions plus a deterministic
 input fingerprint. Instructions, blocks, many-to-many function ownership,

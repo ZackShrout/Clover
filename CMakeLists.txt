@@ -138,6 +138,7 @@ add_library(clover_media_identity STATIC
 target_include_directories(clover_media_identity PUBLIC src)
 
 add_library(clover_analysis STATIC
+    src/clover/analysis/Palette.cpp
     src/clover/analysis/TypedData.cpp
     src/clover/analysis/snes/Decoder.cpp
     src/clover/analysis/snes/Formatter.cpp
@@ -410,6 +411,12 @@ add_executable(clover_typed_data_test
 target_include_directories(clover_typed_data_test PRIVATE src)
 target_link_libraries(clover_typed_data_test PRIVATE clover_analysis)
 
+add_executable(clover_palette_test
+    tests/PaletteTest.cpp
+)
+target_include_directories(clover_palette_test PRIVATE src)
+target_link_libraries(clover_palette_test PRIVATE clover_analysis)
+
 add_executable(clover_machine_state_test
     tests/MachineStateTest.cpp
 )
@@ -515,6 +522,21 @@ target_link_libraries(clover_workbench_analysis_integration_test PRIVATE
     clover_workbench_project
 )
 
+add_executable(clover_workbench_palette_integration_test
+    tests/WorkbenchPaletteIntegrationTest.cpp
+    src/clover/frontend/EmulatorCore.cpp
+    src/clover/frontend/SnesEmulatorCore.cpp
+)
+target_include_directories(
+    clover_workbench_palette_integration_test PRIVATE src
+)
+target_link_libraries(clover_workbench_palette_integration_test PRIVATE
+    clover_analysis
+    clover_core
+    clover_snes_checkpoint
+    clover_workbench_debugger
+)
+
 if(MSVC)
     set(CLOVER_TEST_TARGETS
         clover_smoke_test
@@ -526,6 +548,7 @@ if(MSVC)
         clover_decoder_test
         clover_hybrid_analyzer_test
         clover_typed_data_test
+        clover_palette_test
         clover_machine_state_test
         clover_checkpoint_test
         clover_local_rom_regression_test
@@ -534,6 +557,7 @@ if(MSVC)
         clover_workbench_project_test
         clover_workbench_debugger_test
         clover_workbench_analysis_integration_test
+        clover_workbench_palette_integration_test
     )
     if(TARGET clover_rom_library_test)
         list(APPEND CLOVER_TEST_TARGETS clover_rom_library_test)
@@ -553,6 +577,7 @@ add_test(NAME clover_analysis_boundary_test COMMAND clover_analysis_boundary_tes
 add_test(NAME clover_decoder_test COMMAND clover_decoder_test)
 add_test(NAME clover_hybrid_analyzer_test COMMAND clover_hybrid_analyzer_test)
 add_test(NAME clover_typed_data_test COMMAND clover_typed_data_test)
+add_test(NAME clover_palette_test COMMAND clover_palette_test)
 add_test(NAME clover_machine_state_test COMMAND clover_machine_state_test)
 add_test(NAME clover_checkpoint_test COMMAND clover_checkpoint_test)
 add_test(NAME clover_checkpoint_replay_test COMMAND clover_checkpoint_replay_test)
@@ -564,6 +589,10 @@ add_test(NAME clover_workbench_debugger_test COMMAND clover_workbench_debugger_t
 add_test(
     NAME clover_workbench_analysis_integration_test
     COMMAND clover_workbench_analysis_integration_test
+)
+add_test(
+    NAME clover_workbench_palette_integration_test
+    COMMAND clover_workbench_palette_integration_test
 )
 if(CLOVER_BUILD_SDL_FRONTEND)
     add_test(NAME clover_rom_library_test COMMAND clover_rom_library_test)

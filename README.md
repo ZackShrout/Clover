@@ -140,6 +140,12 @@ objects through side-effect-free memory inspection; `Y` binds a byte,
 `Shift+Y` binds an ASCII string, `J` navigates objects, and `P` follows a
 decoded pointer.
 
+Stage 5.2 adds persistent SNES BGR555 palette assets and a live, read-only
+CGRAM address space. `Q` binds a 16-color CPU-bus palette, `Shift+Q` binds all
+256 live CGRAM colors, and `V` opens or cycles the swatch view. The inspector
+shows raw BGR555 and expanded RGB values without touching stateful PPU read
+latches.
+
 ## SDL Desktop App
 
 The checked-in `SDL Release` CMake preset builds the optimized `clover_sdl`

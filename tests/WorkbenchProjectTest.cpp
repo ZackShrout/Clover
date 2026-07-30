@@ -157,6 +157,132 @@ int main()
         return fail("write_facts", error);
     }
 
+    const analysis::data_type_t actor_state{
+        .stable_id = "user.actor-state",
+        .name = "Actor state",
+        .kind = analysis::data_type_kind_t::enumeration,
+        .byte_size = 1u,
+        .values = {
+            { .name = "idle", .value = 0 },
+            { .name = "walking", .value = 1 }
+        }
+    };
+    const analysis::data_type_t actor_flags{
+        .stable_id = "user.actor-flags",
+        .name = "Actor flags",
+        .kind = analysis::data_type_kind_t::bitfield,
+        .byte_size = 1u,
+        .values = {
+            { .name = "visible", .value = 1 },
+            { .name = "hostile", .value = 4 }
+        }
+    };
+    const analysis::data_type_t actor_name{
+        .stable_id = "user.actor-name",
+        .name = "Actor name",
+        .kind = analysis::data_type_kind_t::string,
+        .byte_size = 8u,
+        .encoding = "ascii"
+    };
+    const analysis::data_type_t actor{
+        .stable_id = "user.actor",
+        .name = "Actor",
+        .kind = analysis::data_type_kind_t::structure,
+        .byte_size = 12u,
+        .members = {
+            {
+                .stable_id = "user.actor.hp",
+                .name = "hp",
+                .type_id = "clover.u16le",
+                .byte_offset = 0u
+            },
+            {
+                .stable_id = "user.actor.state",
+                .name = "state",
+                .type_id = "user.actor-state",
+                .byte_offset = 2u
+            },
+            {
+                .stable_id = "user.actor.flags",
+                .name = "flags",
+                .type_id = "user.actor-flags",
+                .byte_offset = 3u
+            },
+            {
+                .stable_id = "user.actor.name",
+                .name = "name",
+                .type_id = "user.actor-name",
+                .byte_offset = 4u
+            }
+        }
+    };
+    const analysis::data_type_t actor_pointer{
+        .stable_id = "user.actor-pointer",
+        .name = "Actor pointer",
+        .kind = analysis::data_type_kind_t::pointer,
+        .byte_size = 2u,
+        .element_type_id = "user.actor",
+        .pointer_address_space = "snes.cpu-bus"
+    };
+    if (!project.set_data_type(actor_state, error)
+        || !project.set_data_type(actor_flags, error)
+        || !project.set_data_type(actor_name, error)
+        || !project.set_data_type(actor, error)
+        || !project.set_data_type(actor_pointer, error)
+        || !project.set_typed_object(
+            {
+                .stable_id = "object.actor",
+                .location = { "snes.cpu-bus", 0x7e1000u },
+                .type_id = "user.actor",
+                .name = "Actor zero"
+            },
+            error
+        )
+        || !project.set_typed_object(
+            {
+                .stable_id = "object.actor-pointer",
+                .location = { "snes.cpu-bus", 0x7e1020u },
+                .type_id = "user.actor-pointer",
+                .name = "Current actor"
+            },
+            error
+        ))
+    {
+        return fail("write_typed_data", error);
+    }
+    const auto initial_types{ project.data_types(error) };
+    const auto initial_objects{ project.typed_objects(error) };
+    const auto loaded_actor{
+        std::find_if(
+            initial_types.begin(),
+            initial_types.end(),
+            [](const project_data_type_t& type)
+            {
+                return type.definition.stable_id == "user.actor";
+            }
+        )
+    };
+    if (!error.empty() || initial_types.size() != 9u
+        || initial_objects.size() != 2u || loaded_actor == initial_types.end()
+        || loaded_actor->definition.members.size() != 4u)
+    {
+        return fail("typed_data_round_trip", error);
+    }
+    error.clear();
+    if (project.set_typed_object(
+            {
+                .stable_id = "object.overlap",
+                .location = { "snes.cpu-bus", 0x7e1001u },
+                .type_id = "clover.u16le"
+            },
+            error
+        )
+        || error.empty() || project.typed_objects(error).size() != 2u)
+    {
+        return fail("typed_object_overlap_rejected_atomically", error);
+    }
+    error.clear();
+
     const std::vector<named_fact_t> initial_labels{ project.labels(error) };
     const std::vector<named_fact_t> initial_comments{ project.comments(error) };
     const std::vector<bookmark_t> initial_bookmarks{ project.bookmarks(error) };
@@ -170,7 +296,7 @@ int main()
         || !has_layer(initial_labels, fact_layer_t::derived)
         || initial_comments.size() != 1u
         || initial_bookmarks.size() != 1u
-        || initial_classifications.size() != 1u
+        || initial_classifications.size() != 3u
         || initial_symbols.size() < 90u
         || initial_symbols.front().layer != fact_layer_t::imported)
     {
@@ -223,7 +349,9 @@ int main()
     if (project.labels(error).size() != 2u
         || project.comments(error).size() != 1u
         || project.bookmarks(error).size() != 1u
-        || project.classifications(error).size() != 1u
+        || project.classifications(error).size() != 3u
+        || project.data_types(error).size() != 9u
+        || project.typed_objects(error).size() != 2u
         || project.debug_breakpoints(error).size() != 1u
         || project.debug_watchpoints(error).size() != 1u
         || project.debug_watchpoints(error).front().access
@@ -245,7 +373,9 @@ int main()
         || regenerated_labels.size() != 1u
         || regenerated_labels.front().layer != fact_layer_t::user
         || project.comments(error).size() != 1u
-        || project.classifications(error).size() != 1u
+        || project.classifications(error).size() != 3u
+        || project.data_types(error).size() != 9u
+        || project.typed_objects(error).size() != 2u
         || project.symbols(error).size() != initial_symbols.size()
         || project.analysis_generation(error) != 1u)
     {
@@ -404,6 +534,10 @@ int main()
     if (sqlite3_open(expected_path_utf8.c_str(), &migration_database) != SQLITE_OK)
         return fail("open_migration_fixture");
     const char* downgrade_sql{
+        "DROP TABLE typed_data_objects;"
+        "DROP TABLE typed_data_values;"
+        "DROP TABLE typed_data_members;"
+        "DROP TABLE typed_data_types;"
         "DROP TABLE analysis_coverage;"
         "DROP TABLE analysis_conflicts;"
         "DROP TABLE analysis_evidence;"
@@ -487,7 +621,7 @@ int main()
 
     std::printf(
         "Workbench project tests passed: identity, migrations, facts, "
-        "invalidation, symbols, debugger points, and navigation\n"
+        "typed data, invalidation, symbols, debugger points, and navigation\n"
     );
     return 0;
 }

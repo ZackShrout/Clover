@@ -6,6 +6,7 @@
 #pragma once
 
 #include "clover/analysis/ProgramModel.h"
+#include "clover/analysis/TypedData.h"
 #include "clover/frontend/EmulatorCore.h"
 
 #include <cstddef>
@@ -21,7 +22,7 @@ struct sqlite3;
 
 namespace clover::workbench
 {
-    inline constexpr uint32_t k_project_schema_version{ 4u };
+    inline constexpr uint32_t k_project_schema_version{ 5u };
     inline constexpr std::string_view k_analyzer_version{ "clover-analyzer-2" };
     inline constexpr std::string_view k_decoder_version{ "wdc65c816-decoder-1" };
 
@@ -90,6 +91,20 @@ namespace clover::workbench
         fact_layer_t layer{ fact_layer_t::imported };
         std::string source{};
         uint64_t analysis_generation{ 0 };
+    };
+
+    struct project_data_type_t
+    {
+        analysis::data_type_t definition{};
+        fact_layer_t layer{ fact_layer_t::user };
+        std::string source{};
+    };
+
+    struct project_typed_object_t
+    {
+        analysis::typed_object_t object{};
+        fact_layer_t layer{ fact_layer_t::user };
+        std::string source{};
     };
 
     struct navigation_entry_t
@@ -172,6 +187,24 @@ namespace clover::workbench
             std::string& error
         ) const;
         [[nodiscard]] std::vector<symbol_t> symbols(std::string& error) const;
+        [[nodiscard]] bool set_data_type(
+            const analysis::data_type_t& definition,
+            std::string& error
+        );
+        [[nodiscard]] bool set_typed_object(
+            const analysis::typed_object_t& object,
+            std::string& error
+        );
+        [[nodiscard]] bool remove_typed_object(
+            std::string_view stable_id,
+            std::string& error
+        );
+        [[nodiscard]] std::vector<project_data_type_t> data_types(
+            std::string& error
+        ) const;
+        [[nodiscard]] std::vector<project_typed_object_t> typed_objects(
+            std::string& error
+        ) const;
 
         [[nodiscard]] bool begin_analysis_generation(
             std::string_view analyzer_version,

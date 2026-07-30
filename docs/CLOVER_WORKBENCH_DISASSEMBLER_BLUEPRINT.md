@@ -59,11 +59,13 @@ The disassembler is the first major view into that system, but it is only one vi
 ## Document Status and Planning Horizons
 
 This document is a product north star and architectural direction. Section 28
-also serves as the authoritative delivery ledger. As of July 27, 2026, Stages
-0 through 4 are complete: Clover has the inspection and checkpoint substrate,
-the structured decoder, the persistent Workbench, live debugger integration,
-and the hybrid analyzer. Descriptions outside Section 28 define the target
-experience unless they explicitly describe the current implementation.
+also serves as the authoritative delivery ledger. As of July 30, 2026, Stages
+0 through 4 and the Stage 5.1 typed-data foundation are complete: Clover has
+the inspection and checkpoint substrate, the structured decoder, the
+persistent Workbench, live debugger integration, the hybrid analyzer, and
+durable typed definitions and object bindings. Descriptions outside Section 28
+define the target experience unless they explicitly describe the current
+implementation.
 
 The capabilities described here fall into four planning horizons:
 
@@ -3284,16 +3286,44 @@ rather than a listing.
 
 ## Stage 5: Typed data and assets
 
-**Status: next planned stage.**
+**Status: in progress; typed-data foundation complete.**
+
+### Stage 5.1: Typed-data foundation
+
+Define system-neutral, stable representations for unsigned and signed
+integers, arrays, structures, pointers, enums, bitfields, and fixed-size
+strings. Types own byte size, byte order, element relationships, structure
+members, named values, pointer address spaces, and string encodings. Typed
+objects bind a definition to an explicit address-space range without erasing
+the underlying bytes or analyzer evidence.
+
+Persist user and imported types, members, named values, and object bindings in
+the per-media project. Schema migration and updates are transactional.
+Definitions reject missing references, inconsistent array sizes, out-of-bounds
+or overlapping structure members, duplicate identities, address overflow, and
+overlapping objects. A typed object creates a user data classification so
+hybrid analysis reports any code/data disagreement explicitly.
+
+The headless decoder formats scalar, aggregate, enum, bitfield, string, and
+pointer values from a side-effect-free byte reader. It bounds recursion and
+display expansion, reports unavailable bytes and pointer targets, and retains
+pointer targets as navigable addresses.
+
+The first Workbench surface marks typed ranges, shows type and decoded value in
+the inspector, provides byte and fixed-ASCII quick bindings, navigates between
+objects, and follows decoded pointers.
+
+**Implementation status:** complete on July 30, 2026. Schema v5 stores the
+typed model and four imported primitive definitions. `clover_typed_data_test`
+covers all first-slice type kinds, aggregate decoding, validation, unavailable
+bytes, and pointer targets. `clover_workbench_project_test` covers migration,
+full definition/object round trips, reanalysis survival, and atomic rejection
+of overlapping bindings.
+
+### Remaining Stage 5 work
 
 Implement:
 
-- arrays;
-- structures;
-- pointers;
-- enums;
-- bitfields;
-- strings;
 - graphics viewers;
 - palette viewers;
 - tile-map viewers;

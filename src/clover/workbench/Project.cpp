@@ -9,6 +9,7 @@
 #include "clover/frontend/MediaIdentity.h"
 #include "clover/utils/FileSystem.h"
 
+#include <algorithm>
 #include <array>
 #include <limits>
 #include <system_error>
@@ -438,6 +439,54 @@ namespace
         "CREATE INDEX analysis_coverage_location"
         " ON analysis_coverage(generation,address_space,address);"
     };
+
+    constexpr const char* k_schema_v5{
+        "CREATE TABLE typed_data_types("
+        "stable_id TEXT PRIMARY KEY,name TEXT NOT NULL,"
+        "kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 7),"
+        "byte_size INTEGER NOT NULL CHECK(byte_size>0),"
+        "byte_order INTEGER NOT NULL CHECK(byte_order BETWEEN 0 AND 1),"
+        "element_type_id TEXT REFERENCES typed_data_types(stable_id)"
+        " DEFERRABLE INITIALLY DEFERRED,"
+        "element_count INTEGER NOT NULL DEFAULT 0 CHECK(element_count>=0),"
+        "pointer_address_space TEXT NOT NULL DEFAULT '',"
+        "encoding TEXT NOT NULL DEFAULT '',"
+        "layer INTEGER NOT NULL CHECK(layer BETWEEN 0 AND 2),"
+        "source TEXT NOT NULL DEFAULT '');"
+        "CREATE TABLE typed_data_members("
+        "owner_type_id TEXT NOT NULL REFERENCES typed_data_types(stable_id)"
+        " ON DELETE CASCADE,"
+        "ordinal INTEGER NOT NULL CHECK(ordinal>=0),stable_id TEXT NOT NULL,"
+        "name TEXT NOT NULL,type_id TEXT NOT NULL REFERENCES typed_data_types(stable_id)"
+        " DEFERRABLE INITIALLY DEFERRED,"
+        "byte_offset INTEGER NOT NULL CHECK(byte_offset>=0),"
+        "bit_offset INTEGER NOT NULL CHECK(bit_offset BETWEEN 0 AND 63),"
+        "bit_width INTEGER NOT NULL CHECK(bit_width BETWEEN 0 AND 64),"
+        "PRIMARY KEY(owner_type_id,stable_id),"
+        "UNIQUE(owner_type_id,ordinal));"
+        "CREATE TABLE typed_data_values("
+        "owner_type_id TEXT NOT NULL REFERENCES typed_data_types(stable_id)"
+        " ON DELETE CASCADE,"
+        "ordinal INTEGER NOT NULL CHECK(ordinal>=0),name TEXT NOT NULL,"
+        "value INTEGER NOT NULL,"
+        "PRIMARY KEY(owner_type_id,name),"
+        "UNIQUE(owner_type_id,ordinal));"
+        "CREATE TABLE typed_data_objects("
+        "stable_id TEXT PRIMARY KEY,address_space TEXT NOT NULL,"
+        "address INTEGER NOT NULL,type_id TEXT NOT NULL"
+        " REFERENCES typed_data_types(stable_id),"
+        "name TEXT NOT NULL DEFAULT '',"
+        "layer INTEGER NOT NULL CHECK(layer BETWEEN 0 AND 2),"
+        "source TEXT NOT NULL DEFAULT '');"
+        "CREATE INDEX typed_data_objects_location"
+        " ON typed_data_objects(address_space,address);"
+        "INSERT INTO typed_data_types("
+        "stable_id,name,kind,byte_size,byte_order,layer,source) VALUES"
+        "('clover.u8','Unsigned byte',0,1,0,1,'clover.builtin-types.v1'),"
+        "('clover.u16le','Unsigned word',0,2,0,1,'clover.builtin-types.v1'),"
+        "('clover.u24le','Unsigned long address',0,3,0,1,'clover.builtin-types.v1'),"
+        "('clover.s8','Signed byte',1,1,0,1,'clover.builtin-types.v1');"
+    };
 }
 
 namespace clover::workbench
@@ -577,8 +626,10 @@ namespace clover::workbench
             success = execute(_database, k_schema_v3, error);
         if (success && version <= 3)
             success = execute(_database, k_schema_v4, error);
+        if (success && version <= 4)
+            success = execute(_database, k_schema_v5, error);
         if (success)
-            success = execute(_database, "PRAGMA user_version=4;", error);
+            success = execute(_database, "PRAGMA user_version=5;", error);
         if (success)
             success = commit_transaction(_database, error);
         if (!success)
@@ -1064,6 +1115,593 @@ namespace clover::workbench
         if (step_result != SQLITE_DONE)
             error = sqlite3_errmsg(_database);
         return result;
+    }
+
+    std::vector<project_data_type_t> project_t::data_types(
+        std::string& error
+    ) const
+    {
+        std::vector<project_data_type_t> result{};
+        if (_database == nullptr)
+        {
+            error = "Workbench project is not open";
+            return result;
+        }
+        statement_t type_statement{};
+        if (!type_statement.prepare(
+                _database,
+                "SELECT stable_id,name,kind,byte_size,byte_order,"
+                "element_type_id,element_count,pointer_address_space,encoding,"
+                "layer,source FROM typed_data_types ORDER BY stable_id;",
+                error
+            ))
+        {
+            return result;
+        }
+        int step_result{};
+        while ((step_result = sqlite3_step(type_statement.get())) == SQLITE_ROW)
+        {
+            analysis::data_type_t definition{
+                .stable_id = column_text(type_statement.get(), 0),
+                .name = column_text(type_statement.get(), 1),
+                .kind = static_cast<analysis::data_type_kind_t>(
+                    sqlite3_column_int(type_statement.get(), 2)
+                ),
+                .byte_size = static_cast<uint64_t>(
+                    sqlite3_column_int64(type_statement.get(), 3)
+                ),
+                .byte_order = static_cast<analysis::byte_order_t>(
+                    sqlite3_column_int(type_statement.get(), 4)
+                ),
+                .element_count = static_cast<uint64_t>(
+                    sqlite3_column_int64(type_statement.get(), 6)
+                ),
+                .pointer_address_space = column_text(type_statement.get(), 7),
+                .encoding = column_text(type_statement.get(), 8)
+            };
+            if (sqlite3_column_type(type_statement.get(), 5) != SQLITE_NULL)
+                definition.element_type_id = column_text(type_statement.get(), 5);
+            result.push_back({
+                .definition = std::move(definition),
+                .layer = fact_layer(sqlite3_column_int(type_statement.get(), 9)),
+                .source = column_text(type_statement.get(), 10)
+            });
+        }
+        if (step_result != SQLITE_DONE)
+        {
+            error = sqlite3_errmsg(_database);
+            return {};
+        }
+
+        statement_t member_statement{};
+        if (!member_statement.prepare(
+                _database,
+                "SELECT owner_type_id,stable_id,name,type_id,byte_offset,"
+                "bit_offset,bit_width FROM typed_data_members"
+                " ORDER BY owner_type_id,ordinal;",
+                error
+            ))
+        {
+            return {};
+        }
+        while ((step_result = sqlite3_step(member_statement.get())) == SQLITE_ROW)
+        {
+            const std::string owner{ column_text(member_statement.get(), 0) };
+            const auto found{
+                std::find_if(
+                    result.begin(),
+                    result.end(),
+                    [&owner](const project_data_type_t& type)
+                    {
+                        return type.definition.stable_id == owner;
+                    }
+                )
+            };
+            if (found == result.end())
+            {
+                error = "Typed-data member has no owner";
+                return {};
+            }
+            found->definition.members.push_back({
+                .stable_id = column_text(member_statement.get(), 1),
+                .name = column_text(member_statement.get(), 2),
+                .type_id = column_text(member_statement.get(), 3),
+                .byte_offset = static_cast<uint64_t>(
+                    sqlite3_column_int64(member_statement.get(), 4)
+                ),
+                .bit_offset = static_cast<uint8_t>(
+                    sqlite3_column_int(member_statement.get(), 5)
+                ),
+                .bit_width = static_cast<uint8_t>(
+                    sqlite3_column_int(member_statement.get(), 6)
+                )
+            });
+        }
+        if (step_result != SQLITE_DONE)
+        {
+            error = sqlite3_errmsg(_database);
+            return {};
+        }
+
+        statement_t value_statement{};
+        if (!value_statement.prepare(
+                _database,
+                "SELECT owner_type_id,name,value FROM typed_data_values"
+                " ORDER BY owner_type_id,ordinal;",
+                error
+            ))
+        {
+            return {};
+        }
+        while ((step_result = sqlite3_step(value_statement.get())) == SQLITE_ROW)
+        {
+            const std::string owner{ column_text(value_statement.get(), 0) };
+            const auto found{
+                std::find_if(
+                    result.begin(),
+                    result.end(),
+                    [&owner](const project_data_type_t& type)
+                    {
+                        return type.definition.stable_id == owner;
+                    }
+                )
+            };
+            if (found == result.end())
+            {
+                error = "Typed-data value has no owner";
+                return {};
+            }
+            found->definition.values.push_back({
+                .name = column_text(value_statement.get(), 1),
+                .value = sqlite3_column_int64(value_statement.get(), 2)
+            });
+        }
+        if (step_result != SQLITE_DONE)
+            error = sqlite3_errmsg(_database);
+        return result;
+    }
+
+    std::vector<project_typed_object_t> project_t::typed_objects(
+        std::string& error
+    ) const
+    {
+        std::vector<project_typed_object_t> result{};
+        if (_database == nullptr)
+        {
+            error = "Workbench project is not open";
+            return result;
+        }
+        statement_t statement{};
+        if (!statement.prepare(
+                _database,
+                "SELECT stable_id,address_space,address,type_id,name,layer,source"
+                " FROM typed_data_objects"
+                " ORDER BY address_space,address,stable_id;",
+                error
+            ))
+        {
+            return result;
+        }
+        int step_result{};
+        while ((step_result = sqlite3_step(statement.get())) == SQLITE_ROW)
+        {
+            result.push_back({
+                .object = {
+                    .stable_id = column_text(statement.get(), 0),
+                    .location = {
+                        .address_space = column_text(statement.get(), 1),
+                        .address = static_cast<uint64_t>(
+                            sqlite3_column_int64(statement.get(), 2)
+                        )
+                    },
+                    .type_id = column_text(statement.get(), 3),
+                    .name = column_text(statement.get(), 4)
+                },
+                .layer = fact_layer(sqlite3_column_int(statement.get(), 5)),
+                .source = column_text(statement.get(), 6)
+            });
+        }
+        if (step_result != SQLITE_DONE)
+            error = sqlite3_errmsg(_database);
+        return result;
+    }
+
+    bool project_t::set_data_type(const analysis::data_type_t& definition,
+                                  std::string& error)
+    {
+        error.clear();
+        if (_database == nullptr)
+        {
+            error = "Workbench project is not open";
+            return false;
+        }
+        std::vector<project_data_type_t> stored_types{ data_types(error) };
+        const std::vector<project_typed_object_t> stored_objects{
+            typed_objects(error)
+        };
+        if (!error.empty())
+            return false;
+        const auto existing{
+            std::find_if(
+                stored_types.begin(),
+                stored_types.end(),
+                [&definition](const project_data_type_t& type)
+                {
+                    return type.definition.stable_id == definition.stable_id;
+                }
+            )
+        };
+        if (existing != stored_types.end()
+            && existing->layer != fact_layer_t::user)
+        {
+            error = "Imported typed-data definitions cannot be overwritten";
+            return false;
+        }
+        if (existing == stored_types.end())
+        {
+            stored_types.push_back({
+                .definition = definition,
+                .layer = fact_layer_t::user
+            });
+        }
+        else
+        {
+            existing->definition = definition;
+        }
+        std::vector<analysis::data_type_t> definitions{};
+        for (const project_data_type_t& type : stored_types)
+            definitions.push_back(type.definition);
+        std::vector<analysis::typed_object_t> objects{};
+        for (const project_typed_object_t& object : stored_objects)
+            objects.push_back(object.object);
+        const analysis::typed_data_validation_t validation{
+            analysis::validate_typed_data(definitions, objects)
+        };
+        if (!validation.valid())
+        {
+            error = validation.conflicts.front().detail;
+            return false;
+        }
+        if (!begin_transaction(_database, error))
+            return false;
+
+        statement_t type_statement{};
+        bool success{
+            type_statement.prepare(
+                _database,
+                "INSERT INTO typed_data_types("
+                "stable_id,name,kind,byte_size,byte_order,element_type_id,"
+                "element_count,pointer_address_space,encoding,layer,source)"
+                " VALUES(?,?,?,?,?,?,?,?,?,0,'')"
+                " ON CONFLICT(stable_id) DO UPDATE SET"
+                " name=excluded.name,kind=excluded.kind,"
+                " byte_size=excluded.byte_size,byte_order=excluded.byte_order,"
+                " element_type_id=excluded.element_type_id,"
+                " element_count=excluded.element_count,"
+                " pointer_address_space=excluded.pointer_address_space,"
+                " encoding=excluded.encoding;",
+                error
+            )
+            && bind_text(
+                type_statement.get(),
+                1,
+                definition.stable_id,
+                error
+            )
+            && bind_text(type_statement.get(), 2, definition.name, error)
+        };
+        if (success)
+        {
+            sqlite3_bind_int(
+                type_statement.get(),
+                3,
+                static_cast<int>(definition.kind)
+            );
+            sqlite3_bind_int64(
+                type_statement.get(),
+                4,
+                static_cast<sqlite3_int64>(definition.byte_size)
+            );
+            sqlite3_bind_int(
+                type_statement.get(),
+                5,
+                static_cast<int>(definition.byte_order)
+            );
+            if (definition.element_type_id.has_value())
+            {
+                success = bind_text(
+                    type_statement.get(),
+                    6,
+                    *definition.element_type_id,
+                    error
+                );
+            }
+            else
+            {
+                success = sqlite3_bind_null(type_statement.get(), 6) == SQLITE_OK;
+            }
+            sqlite3_bind_int64(
+                type_statement.get(),
+                7,
+                static_cast<sqlite3_int64>(definition.element_count)
+            );
+            success = success && bind_text(
+                type_statement.get(),
+                8,
+                definition.pointer_address_space,
+                error
+            ) && bind_text(
+                type_statement.get(),
+                9,
+                definition.encoding,
+                error
+            ) && step_done(type_statement.get(), error);
+        }
+
+        statement_t delete_members{};
+        statement_t delete_values{};
+        if (success)
+        {
+            success = delete_members.prepare(
+                _database,
+                "DELETE FROM typed_data_members WHERE owner_type_id=?;",
+                error
+            ) && bind_text(
+                delete_members.get(),
+                1,
+                definition.stable_id,
+                error
+            ) && step_done(delete_members.get(), error)
+                && delete_values.prepare(
+                    _database,
+                    "DELETE FROM typed_data_values WHERE owner_type_id=?;",
+                    error
+                ) && bind_text(
+                    delete_values.get(),
+                    1,
+                    definition.stable_id,
+                    error
+                ) && step_done(delete_values.get(), error);
+        }
+
+        statement_t member_statement{};
+        if (success && !definition.members.empty())
+        {
+            success = member_statement.prepare(
+                _database,
+                "INSERT INTO typed_data_members("
+                "owner_type_id,ordinal,stable_id,name,type_id,byte_offset,"
+                "bit_offset,bit_width) VALUES(?,?,?,?,?,?,?,?);",
+                error
+            );
+        }
+        for (size_t index{}; success && index < definition.members.size(); ++index)
+        {
+            const analysis::data_type_member_t& member{
+                definition.members[index]
+            };
+            sqlite3_reset(member_statement.get());
+            sqlite3_clear_bindings(member_statement.get());
+            success = bind_text(
+                member_statement.get(),
+                1,
+                definition.stable_id,
+                error
+            );
+            sqlite3_bind_int64(
+                member_statement.get(),
+                2,
+                static_cast<sqlite3_int64>(index)
+            );
+            success = success
+                && bind_text(member_statement.get(), 3, member.stable_id, error)
+                && bind_text(member_statement.get(), 4, member.name, error)
+                && bind_text(member_statement.get(), 5, member.type_id, error);
+            sqlite3_bind_int64(
+                member_statement.get(),
+                6,
+                static_cast<sqlite3_int64>(member.byte_offset)
+            );
+            sqlite3_bind_int(member_statement.get(), 7, member.bit_offset);
+            sqlite3_bind_int(member_statement.get(), 8, member.bit_width);
+            success = success && step_done(member_statement.get(), error);
+        }
+
+        statement_t value_statement{};
+        if (success && !definition.values.empty())
+        {
+            success = value_statement.prepare(
+                _database,
+                "INSERT INTO typed_data_values("
+                "owner_type_id,ordinal,name,value) VALUES(?,?,?,?);",
+                error
+            );
+        }
+        for (size_t index{}; success && index < definition.values.size(); ++index)
+        {
+            const analysis::data_type_value_t& value{ definition.values[index] };
+            sqlite3_reset(value_statement.get());
+            sqlite3_clear_bindings(value_statement.get());
+            success = bind_text(
+                value_statement.get(),
+                1,
+                definition.stable_id,
+                error
+            );
+            sqlite3_bind_int64(
+                value_statement.get(),
+                2,
+                static_cast<sqlite3_int64>(index)
+            );
+            success = success
+                && bind_text(value_statement.get(), 3, value.name, error);
+            sqlite3_bind_int64(value_statement.get(), 4, value.value);
+            success = success && step_done(value_statement.get(), error);
+        }
+        if (success)
+            success = commit_transaction(_database, error);
+        if (!success)
+            rollback_transaction(_database);
+        return success;
+    }
+
+    bool project_t::set_typed_object(const analysis::typed_object_t& object,
+                                     std::string& error)
+    {
+        error.clear();
+        if (_database == nullptr || !valid_location(object.location))
+        {
+            error = "Invalid typed-data object";
+            return false;
+        }
+        const std::vector<project_data_type_t> stored_types{ data_types(error) };
+        std::vector<project_typed_object_t> stored_objects{
+            typed_objects(error)
+        };
+        if (!error.empty())
+            return false;
+        const auto existing{
+            std::find_if(
+                stored_objects.begin(),
+                stored_objects.end(),
+                [&object](const project_typed_object_t& stored)
+                {
+                    return stored.object.stable_id == object.stable_id;
+                }
+            )
+        };
+        if (existing != stored_objects.end()
+            && existing->layer != fact_layer_t::user)
+        {
+            error = "Imported typed-data objects cannot be overwritten";
+            return false;
+        }
+        if (existing == stored_objects.end())
+            stored_objects.push_back({ .object = object });
+        else
+            existing->object = object;
+        std::vector<analysis::data_type_t> definitions{};
+        for (const project_data_type_t& type : stored_types)
+            definitions.push_back(type.definition);
+        std::vector<analysis::typed_object_t> objects{};
+        for (const project_typed_object_t& stored : stored_objects)
+            objects.push_back(stored.object);
+        const analysis::typed_data_validation_t validation{
+            analysis::validate_typed_data(definitions, objects)
+        };
+        if (!validation.valid())
+        {
+            error = validation.conflicts.front().detail;
+            return false;
+        }
+
+        const auto selected_type{
+            std::find_if(
+                definitions.begin(),
+                definitions.end(),
+                [&object](const analysis::data_type_t& type)
+                {
+                    return type.stable_id == object.type_id;
+                }
+            )
+        };
+        if (selected_type == definitions.end()
+            || !begin_transaction(_database, error))
+        {
+            if (error.empty())
+                error = "Typed-data object type is unavailable";
+            return false;
+        }
+        statement_t statement{};
+        bool success{
+            statement.prepare(
+                _database,
+                "INSERT INTO typed_data_objects("
+                "stable_id,address_space,address,type_id,name,layer,source)"
+                " VALUES(?,?,?,?,?,0,'')"
+                " ON CONFLICT(stable_id) DO UPDATE SET"
+                " address_space=excluded.address_space,"
+                " address=excluded.address,type_id=excluded.type_id,"
+                " name=excluded.name;",
+                error
+            )
+            && bind_text(statement.get(), 1, object.stable_id, error)
+            && bind_text(
+                statement.get(),
+                2,
+                object.location.address_space,
+                error
+            )
+        };
+        if (success)
+        {
+            sqlite3_bind_int64(
+                statement.get(),
+                3,
+                static_cast<sqlite3_int64>(object.location.address)
+            );
+            success = bind_text(statement.get(), 4, object.type_id, error)
+                && bind_text(statement.get(), 5, object.name, error)
+                && step_done(statement.get(), error);
+        }
+
+        statement_t classification{};
+        if (success)
+        {
+            success = classification.prepare(
+                _database,
+                "INSERT INTO classifications("
+                "address_space,address,length,kind,layer,source,"
+                "analysis_generation) VALUES(?,?,?,1,0,'',0)"
+                " ON CONFLICT(address_space,address,layer,source) DO UPDATE SET"
+                " length=excluded.length,kind=excluded.kind,"
+                " updated_at=CURRENT_TIMESTAMP;",
+                error
+            ) && bind_text(
+                classification.get(),
+                1,
+                object.location.address_space,
+                error
+            );
+        }
+        if (success)
+        {
+            sqlite3_bind_int64(
+                classification.get(),
+                2,
+                static_cast<sqlite3_int64>(object.location.address)
+            );
+            sqlite3_bind_int64(
+                classification.get(),
+                3,
+                static_cast<sqlite3_int64>(selected_type->byte_size)
+            );
+            success = step_done(classification.get(), error);
+        }
+        if (success)
+            success = commit_transaction(_database, error);
+        if (!success)
+            rollback_transaction(_database);
+        return success;
+    }
+
+    bool project_t::remove_typed_object(std::string_view stable_id,
+                                        std::string& error)
+    {
+        if (_database == nullptr || stable_id.empty())
+        {
+            error = "Invalid typed-data object";
+            return false;
+        }
+        statement_t statement{};
+        return statement.prepare(
+                _database,
+                "DELETE FROM typed_data_objects"
+                " WHERE stable_id=? AND layer=0;",
+                error
+            )
+            && bind_text(statement.get(), 1, stable_id, error)
+            && step_done(statement.get(), error);
     }
 
     uint64_t project_t::analysis_generation(std::string& error) const

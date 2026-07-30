@@ -138,6 +138,7 @@ add_library(clover_media_identity STATIC
 target_include_directories(clover_media_identity PUBLIC src)
 
 add_library(clover_analysis STATIC
+    src/clover/analysis/TypedData.cpp
     src/clover/analysis/snes/Decoder.cpp
     src/clover/analysis/snes/Formatter.cpp
     src/clover/analysis/snes/HardwareSymbols.cpp
@@ -403,6 +404,12 @@ add_executable(clover_hybrid_analyzer_test
 target_include_directories(clover_hybrid_analyzer_test PRIVATE src)
 target_link_libraries(clover_hybrid_analyzer_test PRIVATE clover_analysis)
 
+add_executable(clover_typed_data_test
+    tests/TypedDataTest.cpp
+)
+target_include_directories(clover_typed_data_test PRIVATE src)
+target_link_libraries(clover_typed_data_test PRIVATE clover_analysis)
+
 add_executable(clover_machine_state_test
     tests/MachineStateTest.cpp
 )
@@ -518,6 +525,7 @@ if(MSVC)
         clover_analysis_boundary_test
         clover_decoder_test
         clover_hybrid_analyzer_test
+        clover_typed_data_test
         clover_machine_state_test
         clover_checkpoint_test
         clover_local_rom_regression_test
@@ -544,6 +552,7 @@ add_test(NAME clover_frontend_capability_test COMMAND clover_frontend_capability
 add_test(NAME clover_analysis_boundary_test COMMAND clover_analysis_boundary_test)
 add_test(NAME clover_decoder_test COMMAND clover_decoder_test)
 add_test(NAME clover_hybrid_analyzer_test COMMAND clover_hybrid_analyzer_test)
+add_test(NAME clover_typed_data_test COMMAND clover_typed_data_test)
 add_test(NAME clover_machine_state_test COMMAND clover_machine_state_test)
 add_test(NAME clover_checkpoint_test COMMAND clover_checkpoint_test)
 add_test(NAME clover_checkpoint_replay_test COMMAND clover_checkpoint_replay_test)

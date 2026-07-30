@@ -134,6 +134,12 @@ The optional execution sample is bounded and aggregated. Publishing a new
 SQLite analysis generation is atomic; prior generations and user-authored facts
 survive failed analysis or publication.
 
+Stage 5.1 adds persistent typed data for integers, arrays, structures,
+pointers, enums, bitfields, and strings. The Workbench inspector decodes bound
+objects through side-effect-free memory inspection; `Y` binds a byte,
+`Shift+Y` binds an ASCII string, `J` navigates objects, and `P` follows a
+decoded pointer.
+
 ## SDL Desktop App
 
 The checked-in `SDL Release` CMake preset builds the optimized `clover_sdl`

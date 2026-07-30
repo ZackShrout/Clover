@@ -36,6 +36,9 @@ Use `--project-root <path>` to override the platform application-data location.
 | N | Navigate to the next discovered function |
 | K | Navigate to the next analysis conflict |
 | X / Shift+X | Follow an outgoing / incoming cross-reference |
+| Y / Shift+Y | Bind the selected address as an unsigned byte / ASCII string[16] |
+| J | Navigate to the next typed object |
+| P | Follow the first pointer decoded from the selected typed object |
 | Up / Down | Select an instruction |
 | Enter | Follow a statically known direct target |
 | Page Up / Page Down | Move the linear listing |
@@ -51,10 +54,12 @@ Text edits are committed with Enter. The first desktop slice deliberately uses
 the native reset state. Once the live debugger attaches, disassembly width and
 effective addresses use the current `E`, `M`, `X`, `D`, and `DB` register
 values. The current PC is marked with `>` and execution breakpoints with `B`.
-Analyzed runtime-covered instructions are marked with `+`. The inspector shows
+Analyzed runtime-covered instructions are marked with `+`; typed ranges use
+`T`. The inspector shows
 live registers, a side-effect-free memory window, analysis confidence,
 canonical-ROM versus writable-code identity, evidence provenance, block
-ownership and outgoing edges, cross-reference counts, and conflicts.
+ownership and outgoing edges, cross-reference counts, conflicts, and decoded
+typed values.
 
 Workbench runs debugger continue operations in bounded batches of exact
 whole-machine instruction steps. This keeps the desktop responsive and allows
@@ -92,6 +97,22 @@ The same path is available without SDL:
 Omit `--project-root` for a read-only report and omit `--run-instructions` for
 vector-led static analysis only.
 
+## Typed data
+
+The schema-v5 typed-data model supports unsigned and signed integers, arrays,
+structures, pointers, enums, bitfields, and fixed-size ASCII or UTF-8 strings.
+Definitions record stable identities, explicit sizes and byte order, aggregate
+relationships, structure members, named values, pointer address spaces, and
+string encodings. Object bindings name an address-space range and persist as
+user facts.
+
+`Y` is the fastest way to bind the selected byte; `Shift+Y` creates or reuses a
+16-byte ASCII definition and binds it. Binding also creates a user data
+classification, so reanalysis reports a conflict if execution evidence treats
+the same bytes as code. `J` cycles through bindings, while `P` follows a
+decoded pointer. The inspector reports unavailable bytes and uninspectable
+pointer targets instead of manufacturing a value.
+
 ## Project storage
 
 Each project is keyed by the canonical media identity shared with the ROM
@@ -111,8 +132,14 @@ the schema-version update commits, or the migration rolls back.
 Facts carry one of three layers:
 
 - user: labels, comments, bookmarks, and explicit code/data classifications;
-- imported: the built-in SNES hardware register symbol package;
+- imported: the built-in SNES hardware register symbol and primitive-type
+  packages;
 - derived: analyzer output tied to an analysis generation.
+
+Typed definitions, members, enum/bitfield values, and object bindings are
+stored separately from regenerable analysis generations. They survive
+reanalysis and are validated before a transaction commits; invalid references
+or overlapping objects leave the prior model intact.
 
 Analysis generations record analyzer and decoder versions plus a deterministic
 input fingerprint. Instructions, blocks, many-to-many function ownership,

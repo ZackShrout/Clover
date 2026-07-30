@@ -113,13 +113,24 @@ the Stage 4 hybrid analyzer, and the SQLite-backed project service.
 Workbench persistence itself lives under `src/clover/workbench/`, is UI
 independent, and is included in the default headless build for testing.
 
-`clover_analysis` owns the system-neutral `ProgramModel` and the SNES analyzer.
+`clover_analysis` owns the system-neutral `ProgramModel`, typed-data model and
+decoder, and the SNES analyzer.
 The analyzer consumes immutable bytes, explicit decode contexts, user
 classifications, and bounded runtime edges. It emits stable instructions,
 basic blocks, many-to-many function ownership, typed control-flow edges,
 cross-references, confidence, evidence, conflicts, and coverage. Runtime code
 identity explicitly distinguishes canonical cartridge bytes from execution in
 writable storage.
+
+Typed-data definitions are likewise system-neutral: integer and aggregate
+shape, byte order, members, named values, pointer address spaces, and string
+encoding do not depend on SDL or SQLite. Decoding consumes an injected
+side-effect-free byte reader, bounds recursion and expansion, and returns
+explicit conflicts for unavailable bytes or targets. The Workbench project
+service persists user/imported definitions and address-space object bindings
+in schema v5. Binding an object also creates an authoritative data
+classification, connecting Stage 5 interpretation back to Stage 4 conflict
+analysis without teaching the hardware core about types.
 
 The project schema publishes a complete program model as one analysis
 generation transaction. A candidate is built outside SQLite; the prior

@@ -8,6 +8,7 @@
 #include "clover/analysis/snes/Formatter.h"
 #include "clover/analysis/snes/HybridAnalyzer.h"
 #include "clover/analysis/snes/StaticListing.h"
+#include "clover/analysis/TypedData.h"
 #include "clover/frontend/EmulatorCore.h"
 #include "clover/frontend/SnesEmulatorCore.h"
 #include "clover/utils/FileSystem.h"
@@ -214,6 +215,56 @@ namespace
             )
         };
         return found == facts.end() ? nullptr : &*found;
+    }
+
+    [[nodiscard]] const clover::analysis::data_type_t* data_type(
+        const std::vector<clover::workbench::project_data_type_t>& types,
+        std::string_view stable_id
+    )
+    {
+        const auto found{
+            std::find_if(
+                types.begin(),
+                types.end(),
+                [stable_id](
+                    const clover::workbench::project_data_type_t& type
+                )
+                {
+                    return type.definition.stable_id == stable_id;
+                }
+            )
+        };
+        return found == types.end() ? nullptr : &found->definition;
+    }
+
+    [[nodiscard]] const clover::workbench::project_typed_object_t*
+    typed_object_at(
+        const std::vector<clover::workbench::project_typed_object_t>& objects,
+        const std::vector<clover::workbench::project_data_type_t>& types,
+        uint32_t address
+    )
+    {
+        const auto found{
+            std::find_if(
+                objects.begin(),
+                objects.end(),
+                [&types, address](
+                    const clover::workbench::project_typed_object_t& object
+                )
+                {
+                    const clover::analysis::data_type_t* const type{
+                        data_type(types, object.object.type_id)
+                    };
+                    return type != nullptr
+                        && object.object.location.address_space
+                            == k_cpu_address_space
+                        && object.object.location.address <= address
+                        && address - object.object.location.address
+                            < type->byte_size;
+                }
+            )
+        };
+        return found == objects.end() ? nullptr : &*found;
     }
 
     [[nodiscard]] std::string formatted_memory(
@@ -479,6 +530,8 @@ namespace clover::platform
         std::vector<workbench::bookmark_t> bookmarks{};
         std::vector<workbench::classification_t> classifications{};
         std::vector<workbench::symbol_t> symbols{};
+        std::vector<workbench::project_data_type_t> data_types{};
+        std::vector<workbench::project_typed_object_t> typed_objects{};
         analysis::program_model_t analysis_model{};
         if (const auto stored{ project.current_analysis(error) };
             stored.has_value())
@@ -518,6 +571,36 @@ namespace clover::platform
             {
                 status = error;
             }
+        };
+        const auto decode_typed = [&](const analysis::typed_object_t& object)
+        {
+            std::vector<analysis::data_type_t> definitions{};
+            definitions.reserve(data_types.size());
+            for (const workbench::project_data_type_t& type : data_types)
+                definitions.push_back(type.definition);
+            return analysis::decode_typed_object(
+                definitions,
+                object,
+                [&source](
+                    const analysis::address_t& address
+                ) -> std::optional<uint8_t>
+                {
+                    if (address.address_space != k_cpu_address_space
+                        || address.address > 0x00ffffffu)
+                    {
+                        return std::nullopt;
+                    }
+                    const analysis::snes::inspected_byte_t inspection{
+                        source.inspect(static_cast<uint32_t>(address.address))
+                    };
+                    if (inspection.status
+                        != analysis::snes::byte_inspection_status_t::available)
+                    {
+                        return std::nullopt;
+                    }
+                    return inspection.value;
+                }
+            );
         };
         const auto run_analysis = [&]()
         {
@@ -667,6 +750,8 @@ namespace clover::platform
                 bookmarks = project.bookmarks(error);
                 classifications = project.classifications(error);
                 symbols = project.symbols(error);
+                data_types = project.data_types(error);
+                typed_objects = project.typed_objects(error);
                 if (!error.empty())
                     status = error;
                 refresh_facts = false;
@@ -997,6 +1082,118 @@ namespace clover::platform
                         : error;
                     refresh_facts = saved;
                 }
+                else if (event.key.scancode == SDL_SCANCODE_Y)
+                {
+                    const uint32_t address{ selected_address() };
+                    const bool string_binding{
+                        (event.key.mod & SDL_KMOD_SHIFT) != 0
+                    };
+                    const std::string type_id{
+                        string_binding ? "user.ascii16" : "clover.u8"
+                    };
+                    error.clear();
+                    bool saved{ true };
+                    if (string_binding
+                        && data_type(data_types, type_id) == nullptr)
+                    {
+                        saved = project.set_data_type(
+                            {
+                                .stable_id = type_id,
+                                .name = "ASCII string[16]",
+                                .kind = analysis::data_type_kind_t::string,
+                                .byte_size = 16u,
+                                .encoding = "ascii"
+                            },
+                            error
+                        );
+                    }
+                    if (saved)
+                    {
+                        saved = project.set_typed_object(
+                            {
+                                .stable_id = "typed@"
+                                    + formatted_address(address),
+                                .location = {
+                                    std::string{ k_cpu_address_space },
+                                    address
+                                },
+                                .type_id = type_id,
+                                .name = string_binding
+                                    ? "String " + formatted_address(address)
+                                    : "Byte " + formatted_address(address)
+                            },
+                            error
+                        );
+                    }
+                    status = saved
+                        ? (string_binding
+                            ? "Bound ASCII string[16]"
+                            : "Bound unsigned byte")
+                        : error;
+                    refresh_facts = saved;
+                }
+                else if (event.key.scancode == SDL_SCANCODE_J
+                         && !typed_objects.empty())
+                {
+                    const uint32_t address{ selected_address() };
+                    const auto next{
+                        std::find_if(
+                            typed_objects.begin(),
+                            typed_objects.end(),
+                            [address](
+                                const workbench::project_typed_object_t& object
+                            )
+                            {
+                                return object.object.location.address > address;
+                            }
+                        )
+                    };
+                    const auto& object{
+                        next != typed_objects.end()
+                            ? *next
+                            : typed_objects.front()
+                    };
+                    navigate(static_cast<uint32_t>(
+                        object.object.location.address
+                    ));
+                    status = "Typed object " + object.object.name;
+                }
+                else if (event.key.scancode == SDL_SCANCODE_P)
+                {
+                    const auto* object{
+                        typed_object_at(
+                            typed_objects,
+                            data_types,
+                            selected_address()
+                        )
+                    };
+                    if (object == nullptr)
+                    {
+                        status = "No typed object at the selected address";
+                    }
+                    else
+                    {
+                        const analysis::decoded_typed_value_t decoded{
+                            decode_typed(object->object)
+                        };
+                        if (decoded.pointer_targets.empty())
+                        {
+                            status = "Typed object has no inspectable pointer";
+                        }
+                        else if (decoded.pointer_targets.front().address
+                                 > 0x00ffffffu)
+                        {
+                            status = "Pointer target is outside the CPU bus";
+                        }
+                        else
+                        {
+                            navigate(static_cast<uint32_t>(
+                                decoded.pointer_targets.front().address
+                            ));
+                            status = "Followed typed pointer";
+                        }
+                    }
+                }
                 else if (event.key.scancode == SDL_SCANCODE_H)
                 {
                     error.clear();
@@ -1162,7 +1359,14 @@ namespace clover::platform
                     + "  Conflicts "
                     + std::to_string(analysis_model.conflicts.size())
             );
-            float fact_y{ 160.f };
+            draw_text(
+                sdl.renderer,
+                left.x + 10.f,
+                148.f,
+                "Types " + std::to_string(data_types.size())
+                    + "  Typed objects " + std::to_string(typed_objects.size())
+            );
+            float fact_y{ 176.f };
             for (auto iterator{ bookmarks.rbegin() };
                  iterator != bookmarks.rend() && fact_y < left.y + left.h - 24.f;
                  ++iterator)
@@ -1229,19 +1433,28 @@ namespace clover::platform
                     fact_at(analysis_model.coverage, instruction.address)
                         != nullptr
                 };
+                const bool has_typed_object{
+                    typed_object_at(
+                        typed_objects,
+                        data_types,
+                        instruction.address
+                    ) != nullptr
+                };
                 const std::string marker{
                     is_current
                         ? "> "
                         : (has_breakpoint
                             ? "B "
-                            : (has_coverage
-                                ? "+ "
-                                : (fact_at(
+                            : (has_typed_object
+                                ? "T "
+                                : (has_coverage
+                                    ? "+ "
+                                    : (fact_at(
                                         classifications,
                                         instruction.address
                                     ) != nullptr
                                     ? "* "
-                                    : "  ")))
+                                    : "  "))))
                 };
                 draw_text(
                     sdl.renderer,
@@ -1331,6 +1544,68 @@ namespace clover::platform
                         : "Classification: data"
                 );
                 inspector_y += 18.f;
+            }
+            if (const auto* typed{
+                    typed_object_at(typed_objects, data_types, current)
+                };
+                typed != nullptr)
+            {
+                const analysis::data_type_t* const type{
+                    data_type(data_types, typed->object.type_id)
+                };
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    "Type: " + (type != nullptr
+                        ? type->name
+                        : typed->object.type_id)
+                        + (typed->object.location.address == current
+                            ? ""
+                            : " +"
+                                + std::to_string(
+                                    current
+                                    - typed->object.location.address
+                                ))
+                );
+                inspector_y += 18.f;
+                const analysis::decoded_typed_value_t decoded{
+                    decode_typed(typed->object)
+                };
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    "Value: " + decoded.display
+                );
+                inspector_y += 18.f;
+                if (!decoded.pointer_targets.empty())
+                {
+                    draw_text(
+                        sdl.renderer,
+                        right.x + 10.f,
+                        inspector_y,
+                        "Pointer: "
+                            + decoded.pointer_targets.front().address_space
+                            + " "
+                            + formatted_address(static_cast<uint32_t>(
+                                decoded.pointer_targets.front().address
+                                    & 0x00ffffffu
+                            ))
+                    );
+                    inspector_y += 18.f;
+                }
+                if (!decoded.conflicts.empty())
+                {
+                    draw_text(
+                        sdl.renderer,
+                        right.x + 10.f,
+                        inspector_y,
+                        "Typed conflict: "
+                            + decoded.conflicts.front().detail
+                    );
+                    inspector_y += 18.f;
+                }
             }
             const analysis::instruction_fact_t* analyzed_instruction{
                 fact_at(analysis_model.instructions, current)
@@ -1533,10 +1808,12 @@ namespace clover::platform
                 inspector_y += 18.f;
             }
             inspector_y += 12.f;
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y, "A        analyze / publish");
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 16.f, "N / K    function / conflict");
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 32.f, "X / SHIFT+X xref out / in");
-            inspector_y += 48.f;
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y, "Y / SHIFT+Y byte / string");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 16.f, "J / P    typed object / pointer");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 32.f, "A        analyze / publish");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 48.f, "N / K    function / conflict");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 64.f, "X / SHIFT+X xref out / in");
+            inspector_y += 80.f;
             draw_text(sdl.renderer, right.x + 10.f, inspector_y, "F5       run / pause");
             draw_text(sdl.renderer, right.x + 10.f, inspector_y + 16.f, "F9       breakpoint");
             draw_text(sdl.renderer, right.x + 10.f, inspector_y + 32.f, "F10      step over");

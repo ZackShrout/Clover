@@ -43,6 +43,19 @@ function Resolve-DiagnosticLog {
     return $null
 }
 
+function Resolve-PerformanceTimeline {
+    $candidates = @(
+        (Join-Path $env:APPDATA "BunnySoft\Clover\logs\clover-performance.csv"),
+        (Join-Path $env:LOCALAPPDATA "BunnySoft\Clover\logs\clover-performance.csv")
+    )
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return $candidate
+        }
+    }
+    return $null
+}
+
 function Initialize-VisualStudioToolchain {
     $vswhere = Join-Path ${env:ProgramFiles(x86)} `
         "Microsoft Visual Studio\Installer\vswhere.exe"
@@ -123,6 +136,11 @@ if ($null -ne $beforeLog) {
     Copy-Item -LiteralPath $beforeLog `
         -Destination (Join-Path $outputDirectory "before-profile-clover-latest.log")
 }
+$beforeTimeline = Resolve-PerformanceTimeline
+if ($null -ne $beforeTimeline) {
+    Copy-Item -LiteralPath $beforeTimeline `
+        -Destination (Join-Path $outputDirectory "before-profile-clover-performance.csv")
+}
 
 if (-not $SkipBuild) {
     Write-Host "Configuring the optimized clang-cl profiling build..."
@@ -202,6 +220,7 @@ $perfViewArguments = @(
 Write-Host ""
 Write-Host "Starting the profile. Windows may request administrator permission."
 Write-Host "Play the same representative section until Clover exits automatically."
+Write-Host "Press F8 once immediately before triggering the section you want to measure."
 Write-Host "Requested frame count: $Frames (about $([math]::Round($Frames / 3600.0, 1)) minutes at full speed)."
 Write-Host ""
 
@@ -253,11 +272,16 @@ if ($null -ne $afterLog) {
     Copy-Item -LiteralPath $afterLog `
         -Destination (Join-Path $outputDirectory "profile-clover-latest.log")
 }
+$afterTimeline = Resolve-PerformanceTimeline
+if ($null -ne $afterTimeline) {
+    Copy-Item -LiteralPath $afterTimeline `
+        -Destination (Join-Path $outputDirectory "profile-clover-performance.csv")
+}
 
 $manifestPath = Join-Path $outputDirectory "profile-manifest.txt"
 $manifest = [System.IO.StreamWriter]::new($manifestPath, $false, [Text.Encoding]::UTF8)
 try {
-    Write-ManifestValue $manifest "profile_schema" "1"
+    Write-ManifestValue $manifest "profile_schema" "2"
     Write-ManifestValue $manifest "collected_at" (Get-Date -Format "o")
     Write-ManifestValue $manifest "frames_requested" $Frames.ToString()
     Write-ManifestValue $manifest "rom_filename" ([System.IO.Path]::GetFileName($resolvedRom))

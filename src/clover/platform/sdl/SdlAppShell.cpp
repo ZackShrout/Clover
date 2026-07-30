@@ -18,6 +18,7 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -421,8 +422,12 @@ namespace clover::platform
         class diagnostic_log_writer_t
         {
         public:
-            explicit diagnostic_log_writer_t(std::filesystem::path path)
+            diagnostic_log_writer_t(std::filesystem::path path,
+                                    std::filesystem::path timeline_path,
+                                    std::string timeline_header)
                 : _path{ std::move(path) },
+                  _timeline_path{ std::move(timeline_path) },
+                  _timeline_header{ std::move(timeline_header) },
                   _thread{ [this] { write_loop(); } }
             {
             }
@@ -435,12 +440,14 @@ namespace clover::platform
                 finish();
             }
 
-            void submit(std::string contents)
+            void submit(std::string contents, std::string timeline_line = {})
             {
                 {
                     const std::scoped_lock lock{ _mutex };
-                    _pending = std::move(contents);
-                    _has_pending = true;
+                    _pending.push_back({
+                        std::move(contents),
+                        std::move(timeline_line)
+                    });
                 }
                 _condition.notify_one();
             }
@@ -457,22 +464,59 @@ namespace clover::platform
             }
 
         private:
+            struct write_request_t
+            {
+                std::string contents{};
+                std::string timeline_line{};
+            };
+
             void write_loop() noexcept
             {
+                std::error_code filesystem_error{};
+                std::filesystem::create_directories(
+                    _timeline_path.parent_path(),
+                    filesystem_error
+                );
+                std::ofstream timeline{};
+                if (!filesystem_error)
+                {
+                    timeline.open(
+                        _timeline_path,
+                        std::ios::binary | std::ios::trunc
+                    );
+                    if (timeline)
+                    {
+                        timeline << _timeline_header << '\n';
+                        timeline.flush();
+                    }
+                }
+                if (filesystem_error || !timeline)
+                {
+                    std::fprintf(
+                        stderr,
+                        "Unable to open diagnostics timeline: %s\n",
+                        filesystem_error
+                            ? filesystem_error.message().c_str()
+                            : utils::path_to_utf8(_timeline_path).c_str()
+                    );
+                }
+
                 for (;;)
                 {
-                    std::string contents{};
+                    write_request_t request{};
                     {
                         std::unique_lock lock{ _mutex };
-                        _condition.wait(lock, [this] { return _has_pending || _stopping; });
-                        if (!_has_pending && _stopping)
+                        _condition.wait(lock, [this] {
+                            return !_pending.empty() || _stopping;
+                        });
+                        if (_pending.empty() && _stopping)
                             return;
-                        contents = std::move(_pending);
-                        _has_pending = false;
+                        request = std::move(_pending.front());
+                        _pending.pop_front();
                     }
 
                     std::string error{};
-                    const std::span<const char> characters{ contents };
+                    const std::span<const char> characters{ request.contents };
                     if (!utils::write_binary_file_atomic(
                             _path,
                             std::as_bytes(characters),
@@ -482,14 +526,29 @@ namespace clover::platform
                                      "Unable to write diagnostics log: %s\n",
                                      error.c_str());
                     }
+                    if (timeline && !request.timeline_line.empty())
+                    {
+                        timeline << request.timeline_line << '\n';
+                        timeline.flush();
+                        if (!timeline)
+                        {
+                            std::fprintf(
+                                stderr,
+                                "Unable to write diagnostics timeline: %s\n",
+                                utils::path_to_utf8(_timeline_path).c_str()
+                            );
+                            timeline.close();
+                        }
+                    }
                 }
             }
 
             std::filesystem::path _path{};
+            std::filesystem::path _timeline_path{};
+            std::string _timeline_header{};
             std::mutex _mutex{};
             std::condition_variable _condition{};
-            std::string _pending{};
-            bool _has_pending{ false };
+            std::deque<write_request_t> _pending{};
             bool _stopping{ false };
             std::thread _thread{};
         };
@@ -2005,12 +2064,33 @@ namespace clover::platform
         const std::filesystem::path diagnostic_log_path{
             data_root / "logs" / "clover-latest.log"
         };
-        diagnostic_log_writer_t diagnostic_log{ diagnostic_log_path };
+        const std::filesystem::path diagnostic_timeline_path{
+            data_root / "logs" / "clover-performance.csv"
+        };
+        diagnostic_log_writer_t diagnostic_log{
+            diagnostic_log_path,
+            diagnostic_timeline_path,
+            "interval,start_seconds,end_seconds,start_frame,end_frame,frames,"
+            "wall_fps,active_fps,power_state,power_percent,"
+            "core_average_ms,core_p50_ms,core_p95_ms,core_p99_ms,core_maximum_ms,"
+            "core_above_budget,active_loop_average_ms,active_loop_maximum_ms,"
+            "presentation_average_ms,presentation_maximum_ms,"
+            "event_processing_average_ms,event_processing_maximum_ms,"
+            "scheduler_lateness_count,scheduler_lateness_average_ms,"
+            "scheduler_lateness_maximum_ms,scheduler_lateness_above_budget,"
+            "completed_presentations,skipped_presentations,deadline_resets,"
+            "audio_queue_before_minimum,audio_queue_before_average,"
+            "audio_queue_after_minimum,audio_queue_after_average,"
+            "audio_underruns,audio_feed_requests,audio_feed_requested_bytes,"
+            "audio_discontinuities,marker_count,marker_first_frame,marker_last_frame"
+        };
         const std::string diagnostic_environment{
             presentation.diagnostic_environment()
         };
         std::printf("Clover diagnostics log: %s\n",
                     utils::path_to_utf8(diagnostic_log_path).c_str());
+        std::printf("Clover performance timeline: %s\n",
+                    utils::path_to_utf8(diagnostic_timeline_path).c_str());
 
         capture_session_t capture{};
         if (!command_line.capture_path.empty()
@@ -2064,12 +2144,36 @@ namespace clover::platform
         duration_stats_t paused_idle_stats{};
         integer_stats_t audio_queue_before_stats{};
         integer_stats_t audio_queue_after_stats{};
+        duration_stats_t interval_core_run_stats{};
+        duration_stats_t interval_presentation_stats{};
+        duration_stats_t interval_active_loop_stats{};
+        duration_stats_t interval_event_processing_stats{};
+        duration_stats_t interval_scheduler_lateness_stats{};
+        integer_stats_t interval_audio_queue_before_stats{};
+        integer_stats_t interval_audio_queue_after_stats{};
+        std::vector<uint64_t> interval_core_samples_ns{};
+        interval_core_samples_ns.reserve(512u);
         uint64_t skipped_presentations{ 0 };
         uint64_t completed_presentations{ 0 };
         uint64_t scheduler_deadline_resets{ 0 };
         uint64_t normal_speed_frames{ 0 };
         async_save_writer_t save_writer{};
         uint64_t next_diagnostic_log_ns{ run_start_ns };
+        uint64_t interval_index{ 0 };
+        uint64_t interval_start_ns{ run_start_ns };
+        uint64_t interval_start_frame{ 0 };
+        uint64_t interval_completed_presentations{ 0 };
+        uint64_t interval_skipped_presentations{ 0 };
+        uint64_t interval_scheduler_deadline_resets{ 0 };
+        uint64_t interval_audio_underruns_start{ presentation.audio_underruns() };
+        uint64_t interval_audio_feed_requests_start{ presentation.audio_feed_requests() };
+        uint64_t interval_audio_feed_requested_bytes_start{
+            presentation.audio_feed_requested_bytes()
+        };
+        uint64_t interval_audio_discontinuities{ 0 };
+        uint64_t interval_marker_count{ 0 };
+        uint64_t interval_marker_first_frame{ 0 };
+        uint64_t interval_marker_last_frame{ 0 };
         const auto diagnostic_snapshot{
             [&](bool final) -> std::string
             {
@@ -2091,7 +2195,7 @@ namespace clover::platform
                 output << std::fixed << std::setprecision(3);
                 output << "Clover diagnostics\n"
                        << "status=" << (final ? "final" : "running") << '\n'
-                       << "diagnostics_schema=2\n"
+                       << "diagnostics_schema=3\n"
                        << "version=" << CLOVER_VERSION << '\n'
                        << "build_revision=" << CLOVER_BUILD_REVISION << '\n'
                        << "compiler=" << CLOVER_BUILD_COMPILER << '\n'
@@ -2100,6 +2204,9 @@ namespace clover::platform
                        << "rom=" << (media_loaded
                                ? utils::path_to_utf8(rom_path.filename())
                                : "none")
+                       << '\n'
+                       << "performance_timeline="
+                       << utils::path_to_utf8(diagnostic_timeline_path.filename())
                        << '\n'
                        << diagnostic_environment
                        << "current_power_state=" << power_state_name(power_state) << '\n'
@@ -2151,6 +2258,160 @@ namespace clover::platform
                 return output.str();
             }
         };
+        const auto interval_snapshot{
+            [&](uint64_t end_ns) -> std::string
+            {
+                const uint64_t interval_frames{ frames_run - interval_start_frame };
+                if (end_ns <= interval_start_ns
+                    || (interval_frames == 0u
+                        && interval_active_loop_stats.count == 0u
+                        && interval_marker_count == 0u))
+                {
+                    return {};
+                }
+
+                std::sort(interval_core_samples_ns.begin(),
+                          interval_core_samples_ns.end());
+                const auto percentile_ms{
+                    [&](uint64_t percentile) -> double
+                    {
+                        if (interval_core_samples_ns.empty())
+                            return 0.0;
+                        const size_t index{
+                            static_cast<size_t>(
+                                (percentile * interval_core_samples_ns.size() + 99u) / 100u
+                            ) - 1u
+                        };
+                        return static_cast<double>(interval_core_samples_ns[index])
+                            / 1'000'000.0;
+                    }
+                };
+                const auto duration_average_ms{
+                    [](const duration_stats_t& stats) -> double
+                    {
+                        return stats.count == 0u
+                            ? 0.0
+                            : static_cast<double>(stats.total_ns)
+                                / static_cast<double>(stats.count)
+                                / 1'000'000.0;
+                    }
+                };
+                const auto integer_average{
+                    [](const integer_stats_t& stats) -> double
+                    {
+                        return stats.count == 0u
+                            ? 0.0
+                            : static_cast<double>(stats.total)
+                                / static_cast<double>(stats.count);
+                    }
+                };
+                const double wall_seconds{
+                    static_cast<double>(end_ns - interval_start_ns)
+                        / static_cast<double>(k_nanoseconds_per_second)
+                };
+                const double active_seconds{
+                    static_cast<double>(interval_active_loop_stats.total_ns)
+                        / static_cast<double>(k_nanoseconds_per_second)
+                };
+                int power_seconds{ -1 };
+                int power_percent{ -1 };
+                const SDL_PowerState power_state{
+                    SDL_GetPowerInfo(&power_seconds, &power_percent)
+                };
+                const uint64_t audio_underruns{
+                    presentation.audio_underruns() - interval_audio_underruns_start
+                };
+                const uint64_t audio_feed_requests{
+                    presentation.audio_feed_requests() - interval_audio_feed_requests_start
+                };
+                const uint64_t audio_feed_requested_bytes{
+                    presentation.audio_feed_requested_bytes()
+                        - interval_audio_feed_requested_bytes_start
+                };
+
+                std::ostringstream output{};
+                output << std::fixed << std::setprecision(3)
+                       << interval_index << ','
+                       << static_cast<double>(interval_start_ns - run_start_ns)
+                            / static_cast<double>(k_nanoseconds_per_second) << ','
+                       << static_cast<double>(end_ns - run_start_ns)
+                            / static_cast<double>(k_nanoseconds_per_second) << ','
+                       << interval_start_frame << ','
+                       << frames_run << ','
+                       << interval_frames << ','
+                       << (wall_seconds > 0.0
+                               ? static_cast<double>(interval_frames) / wall_seconds
+                               : 0.0) << ','
+                       << (active_seconds > 0.0
+                               ? static_cast<double>(interval_frames) / active_seconds
+                               : 0.0) << ','
+                       << power_state_name(power_state) << ','
+                       << power_percent << ','
+                       << duration_average_ms(interval_core_run_stats) << ','
+                       << percentile_ms(50u) << ','
+                       << percentile_ms(95u) << ','
+                       << percentile_ms(99u) << ','
+                       << static_cast<double>(interval_core_run_stats.maximum_ns)
+                            / 1'000'000.0 << ','
+                       << interval_core_run_stats.above_16_ms << ','
+                       << duration_average_ms(interval_active_loop_stats) << ','
+                       << static_cast<double>(interval_active_loop_stats.maximum_ns)
+                            / 1'000'000.0 << ','
+                       << duration_average_ms(interval_presentation_stats) << ','
+                       << static_cast<double>(interval_presentation_stats.maximum_ns)
+                            / 1'000'000.0 << ','
+                       << duration_average_ms(interval_event_processing_stats) << ','
+                       << static_cast<double>(interval_event_processing_stats.maximum_ns)
+                            / 1'000'000.0 << ','
+                       << interval_scheduler_lateness_stats.count << ','
+                       << duration_average_ms(interval_scheduler_lateness_stats) << ','
+                       << static_cast<double>(interval_scheduler_lateness_stats.maximum_ns)
+                            / 1'000'000.0 << ','
+                       << interval_scheduler_lateness_stats.above_16_ms << ','
+                       << interval_completed_presentations << ','
+                       << interval_skipped_presentations << ','
+                       << interval_scheduler_deadline_resets << ','
+                       << interval_audio_queue_before_stats.minimum << ','
+                       << integer_average(interval_audio_queue_before_stats) << ','
+                       << interval_audio_queue_after_stats.minimum << ','
+                       << integer_average(interval_audio_queue_after_stats) << ','
+                       << audio_underruns << ','
+                       << audio_feed_requests << ','
+                       << audio_feed_requested_bytes << ','
+                       << interval_audio_discontinuities << ','
+                       << interval_marker_count << ','
+                       << interval_marker_first_frame << ','
+                       << interval_marker_last_frame;
+                return output.str();
+            }
+        };
+        const auto reset_interval{
+            [&](uint64_t start_ns)
+            {
+                ++interval_index;
+                interval_start_ns = start_ns;
+                interval_start_frame = frames_run;
+                interval_core_run_stats = {};
+                interval_presentation_stats = {};
+                interval_active_loop_stats = {};
+                interval_event_processing_stats = {};
+                interval_scheduler_lateness_stats = {};
+                interval_audio_queue_before_stats = {};
+                interval_audio_queue_after_stats = {};
+                interval_core_samples_ns.clear();
+                interval_completed_presentations = 0;
+                interval_skipped_presentations = 0;
+                interval_scheduler_deadline_resets = 0;
+                interval_audio_underruns_start = presentation.audio_underruns();
+                interval_audio_feed_requests_start = presentation.audio_feed_requests();
+                interval_audio_feed_requested_bytes_start =
+                    presentation.audio_feed_requested_bytes();
+                interval_audio_discontinuities = 0;
+                interval_marker_count = 0;
+                interval_marker_first_frame = 0;
+                interval_marker_last_frame = 0;
+            }
+        };
         bool paused{ false };
         bool frame_advance_pending{ false };
         size_t speed_selection{ 1u };
@@ -2170,7 +2431,11 @@ namespace clover::platform
             if (frame_start_ns >= next_diagnostic_log_ns)
             {
                 const uint64_t submit_start_ns{ SDL_GetTicksNS() };
-                diagnostic_log.submit(diagnostic_snapshot(false));
+                diagnostic_log.submit(
+                    diagnostic_snapshot(false),
+                    interval_snapshot(frame_start_ns)
+                );
+                reset_interval(frame_start_ns);
                 diagnostics_submit_stats.observe(SDL_GetTicksNS() - submit_start_ns);
                 next_diagnostic_log_ns = frame_start_ns + 5u * k_nanoseconds_per_second;
             }
@@ -2212,7 +2477,11 @@ namespace clover::platform
                 }
                 presentation.handle_event(event);
             }
-            event_processing_stats.observe(SDL_GetTicksNS() - event_processing_start_ns);
+            const uint64_t event_processing_duration_ns{
+                SDL_GetTicksNS() - event_processing_start_ns
+            };
+            event_processing_stats.observe(event_processing_duration_ns);
+            interval_event_processing_stats.observe(event_processing_duration_ns);
             if (!running)
                 break;
 
@@ -2569,6 +2838,14 @@ namespace clover::platform
             const frontend::gamepad_state_t gamepad_state{ presentation.gamepad_state(0u) };
             const frontend::gamepad_state_t gamepad_state_2{ presentation.gamepad_state(1u) };
             const bool capture_marker{ presentation.consume_capture_marker() };
+            if (capture_marker)
+            {
+                const uint64_t marker_frame{ frames_run + 1u };
+                ++interval_marker_count;
+                if (interval_marker_first_frame == 0u)
+                    interval_marker_first_frame = marker_frame;
+                interval_marker_last_frame = marker_frame;
+            }
             core->set_gamepad_state(0u, gamepad_state);
             core->set_gamepad_state(1u, gamepad_state_2);
             static constexpr std::array<size_t, 5> frames_per_presentation{ 1u, 1u, 2u, 4u, 8u };
@@ -2608,6 +2885,7 @@ namespace clover::platform
                     if (presentation_is_late)
                     {
                         ++skipped_presentations;
+                        ++interval_skipped_presentations;
                         present_end_ns = audio_queue_end_ns;
                     }
                     else
@@ -2615,19 +2893,36 @@ namespace clover::platform
                         presentation.present(core->video_frame());
                         present_end_ns = SDL_GetTicksNS();
                         ++completed_presentations;
+                        ++interval_completed_presentations;
                     }
                 }
-                core_run_stats.observe(core_run_end_ns - core_run_start_ns);
+                const uint64_t core_run_duration_ns{
+                    core_run_end_ns - core_run_start_ns
+                };
+                core_run_stats.observe(core_run_duration_ns);
+                interval_core_run_stats.observe(core_run_duration_ns);
+                interval_core_samples_ns.push_back(core_run_duration_ns);
                 if (batch_complete && !paused && speed_selection == 1u)
                     audio_queue_stats.observe(audio_queue_end_ns - core_run_end_ns);
                 if (batch_complete && present_end_ns > audio_queue_end_ns)
+                {
                     presentation_stats.observe(present_end_ns - audio_queue_end_ns);
+                    interval_presentation_stats.observe(
+                        present_end_ns - audio_queue_end_ns
+                    );
+                }
                 if (batch_complete && !paused && speed_selection == 1u)
                 {
                     audio_queue_before_stats.observe(
                         presentation.audio_queued_bytes_before_put()
                     );
                     audio_queue_after_stats.observe(
+                        presentation.audio_queued_bytes_after_put()
+                    );
+                    interval_audio_queue_before_stats.observe(
+                        presentation.audio_queued_bytes_before_put()
+                    );
+                    interval_audio_queue_after_stats.observe(
                         presentation.audio_queued_bytes_after_put()
                     );
                 }
@@ -2648,7 +2943,11 @@ namespace clover::platform
                                          audio_queue_end_ns - core_run_end_ns);
                 }
                 audio_sample_values += audio.interleaved_samples.size();
-                audio_discontinuities += audio.discontinuity ? 1u : 0u;
+                if (audio.discontinuity)
+                {
+                    ++audio_discontinuities;
+                    ++interval_audio_discontinuities;
+                }
                 max_audio_sample_values_per_frame = std::max(
                     max_audio_sample_values_per_frame,
                     audio.interleaved_samples.size()
@@ -2670,7 +2969,11 @@ namespace clover::platform
 
             if (advancing_paused_frame)
             {
-                active_loop_stats.observe(SDL_GetTicksNS() - active_loop_start_ns);
+                const uint64_t active_loop_duration_ns{
+                    SDL_GetTicksNS() - active_loop_start_ns
+                };
+                active_loop_stats.observe(active_loop_duration_ns);
+                interval_active_loop_stats.observe(active_loop_duration_ns);
                 next_frame_deadline_ns = SDL_GetTicksNS();
                 previous_frame_start_ns = next_frame_deadline_ns;
                 continue;
@@ -2679,7 +2982,11 @@ namespace clover::platform
             static constexpr std::array<double, 4> speed_multipliers{ 0.5, 1.0, 2.0, 4.0 };
             if (speed_selection >= speed_multipliers.size())
             {
-                active_loop_stats.observe(SDL_GetTicksNS() - active_loop_start_ns);
+                const uint64_t active_loop_duration_ns{
+                    SDL_GetTicksNS() - active_loop_start_ns
+                };
+                active_loop_stats.observe(active_loop_duration_ns);
+                interval_active_loop_stats.observe(active_loop_duration_ns);
                 next_frame_deadline_ns = SDL_GetTicksNS();
                 continue;
             }
@@ -2717,13 +3024,19 @@ namespace clover::platform
             {
                 const uint64_t lateness_ns{ current_ticks_ns - next_frame_deadline_ns };
                 scheduler_lateness_stats.observe(lateness_ns);
+                interval_scheduler_lateness_stats.observe(lateness_ns);
                 if (lateness_ns > paced_batch_duration_ns * 3u)
                 {
                     next_frame_deadline_ns = current_ticks_ns;
                     ++scheduler_deadline_resets;
+                    ++interval_scheduler_deadline_resets;
                 }
             }
-            active_loop_stats.observe(SDL_GetTicksNS() - active_loop_start_ns);
+            const uint64_t active_loop_duration_ns{
+                SDL_GetTicksNS() - active_loop_start_ns
+            };
+            active_loop_stats.observe(active_loop_duration_ns);
+            interval_active_loop_stats.observe(active_loop_duration_ns);
         }
 
         const double elapsed_seconds{
@@ -2762,7 +3075,10 @@ namespace clover::platform
         };
         save_flush_stats.observe(SDL_GetTicksNS() - save_flush_start_ns);
         const uint64_t final_submit_start_ns{ SDL_GetTicksNS() };
-        diagnostic_log.submit(diagnostic_snapshot(true));
+        diagnostic_log.submit(
+            diagnostic_snapshot(true),
+            interval_snapshot(final_submit_start_ns)
+        );
         diagnostics_submit_stats.observe(SDL_GetTicksNS() - final_submit_start_ns);
         diagnostic_log.finish();
         capture.finalize();

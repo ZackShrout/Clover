@@ -26,8 +26,10 @@ run:
 ```
 
 The default run lasts 7,200 emulated frames, approximately two minutes at full
-speed. Load the same save and play the representative slow section. Clover
-exits automatically at the frame limit.
+speed. Load the same save and play the representative slow section. Press F8
+once immediately before triggering the section under test (for example, just
+before initiating combat). Clover records that frame in its five-second
+performance timeline and exits automatically at the frame limit.
 
 The first run:
 
@@ -48,8 +50,9 @@ The first run:
 
 The ZIP contains the merged `clover-cpu.etl.zip` trace, its exact `Clover.exe`
 and `Clover.pdb`, PerfView's collection log, Clover's before/after diagnostics,
-and a manifest containing build, CPU, OS, power, and file-identity information.
-Send that outer ZIP for analysis. ROM bytes and save data are not included.
+the five-second `clover-performance.csv` timeline with any F8 marker, and a
+manifest containing build, CPU, OS, power, and file-identity information. Send
+that outer ZIP for analysis. ROM bytes and save data are not included.
 
 Use a different duration when necessary:
 

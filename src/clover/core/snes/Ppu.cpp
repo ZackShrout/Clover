@@ -1631,13 +1631,35 @@ namespace clover::core
         // attributes survive a mid-scanline mode change, but their old bit
         // depth does not: the newly selected mode decides how many bitplane
         // pairs are consumed from those retained latches.
-        const uint8_t row_pair_count{ static_cast<uint8_t>(
-            1u << background_mode_index(_bg_state.render_mode[background_index])
-        ) };
-        for (uint8_t pair{ 0u }; pair < row_pair_count; ++pair)
+        using mode_t = ppu_background_render_state_t::mode_t;
+        switch (_bg_state.render_mode[background_index])
         {
-            color |= static_cast<uint8_t>((tile.row_data[pair] & 3u) << (pair << 1u));
-            tile.row_data[pair] = static_cast<uint16_t>(tile.row_data[pair] >> 2u);
+        case mode_t::bpp8:
+            color = static_cast<uint8_t>(
+                (tile.row_data[0] & 0x0003u)
+                | ((tile.row_data[1] & 0x0003u) << 2u)
+                | ((tile.row_data[2] & 0x0003u) << 4u)
+                | ((tile.row_data[3] & 0x0003u) << 6u)
+            );
+            tile.row_data[0] = static_cast<uint16_t>(tile.row_data[0] >> 2u);
+            tile.row_data[1] = static_cast<uint16_t>(tile.row_data[1] >> 2u);
+            tile.row_data[2] = static_cast<uint16_t>(tile.row_data[2] >> 2u);
+            tile.row_data[3] = static_cast<uint16_t>(tile.row_data[3] >> 2u);
+            break;
+        case mode_t::bpp4:
+            color = static_cast<uint8_t>(
+                (tile.row_data[0] & 0x0003u)
+                | ((tile.row_data[1] & 0x0003u) << 2u)
+            );
+            tile.row_data[0] = static_cast<uint16_t>(tile.row_data[0] >> 2u);
+            tile.row_data[1] = static_cast<uint16_t>(tile.row_data[1] >> 2u);
+            break;
+        case mode_t::bpp2:
+        case mode_t::mode7:
+        case mode_t::inactive:
+            color = static_cast<uint8_t>(tile.row_data[0] & 0x0003u);
+            tile.row_data[0] = static_cast<uint16_t>(tile.row_data[0] >> 2u);
+            break;
         }
         ppu_pixel_candidate_t candidate{};
         if (color != 0u)
@@ -2138,15 +2160,15 @@ namespace clover::core
 
     [[nodiscard]] ppu_pixel_candidate_t ppu_t::resolve_object_pixel_candidate(uint16_t x) const noexcept
     {
-        ppu_pixel_candidate_t candidate{};
         const uint16_t object_x{ static_cast<uint16_t>(_screen_state.hires ? x >> 1u : x) };
-        const size_t render_buffer_index{ _object_layer_state.active_buffer ? 0u : 1u };
-        for (const auto& fetched_tile : _object_layer_state.tile_buffers[render_buffer_index])
+        // The forward resolver used to retain every matching opaque tile, so
+        // the last fetched tile always won.  Search that immutable scanline
+        // list in reverse and stop at the first opaque match instead.
+        for (uint8_t tile_index{ _object_layer_state.render_tile_count };
+             tile_index > 0u;
+             --tile_index)
         {
-            if (!fetched_tile.valid)
-                break;
-
-            const auto& tile{ fetched_tile.candidate };
+            const auto& tile{ _object_layer_state.render_tiles[tile_index - 1u] };
             const int16_t pixel_x{ static_cast<int16_t>(object_x) };
             const int16_t screen_x{
                 static_cast<int16_t>(
@@ -2171,7 +2193,7 @@ namespace clover::core
             if (color == 0u)
                 continue;
 
-            candidate = {
+            return {
                 .priority = _object_layer_state.priority[tile.priority],
                 .palette = static_cast<uint8_t>(tile.palette_base + color),
                 .palette_group = 0u,
@@ -2180,7 +2202,7 @@ namespace clover::core
             };
         }
 
-        return candidate;
+        return {};
     }
 
     [[nodiscard]] ppu_pixel_candidate_t ppu_t::resolve_background_pixel_candidate(uint8_t background_index,
@@ -2315,22 +2337,24 @@ namespace clover::core
                         ? candidate : ppu_pixel_candidate_t{};
                 }
 
-                const bool background_window_hit{
-                    window_hit(pixel_x,
-                               _window_state.one_left,
-                               _window_state.one_right,
-                               _window_state.two_left,
-                               _window_state.two_right,
-                               _window_state.one_invert[background_index],
-                               _window_state.one_enable[background_index],
-                               _window_state.two_invert[background_index],
-                               _window_state.two_enable[background_index],
-                               _bg_state.window_mask[background_index])
-                };
-                if (background_window_hit && _bg_state.window_above_enabled[background_index])
-                    background_above = {};
-                if (background_window_hit && _bg_state.window_below_enabled[background_index])
-                    background_below = {};
+                if ((_bg_state.window_above_enabled[background_index]
+                        || _bg_state.window_below_enabled[background_index])
+                    && window_hit(pixel_x,
+                                  _window_state.one_left,
+                                  _window_state.one_right,
+                                  _window_state.two_left,
+                                  _window_state.two_right,
+                                  _window_state.one_invert[background_index],
+                                  _window_state.one_enable[background_index],
+                                  _window_state.two_invert[background_index],
+                                  _window_state.two_enable[background_index],
+                                  _bg_state.window_mask[background_index]))
+                {
+                    if (_bg_state.window_above_enabled[background_index])
+                        background_above = {};
+                    if (_bg_state.window_below_enabled[background_index])
+                        background_below = {};
+                }
             }
 
             _compositor_state.backgrounds[background_index].above_samples[sample_x] = background_above;
@@ -2347,22 +2371,24 @@ namespace clover::core
         ppu_pixel_candidate_t object_below{
             _object_layer_state.below_enabled ? object_candidate : ppu_pixel_candidate_t{}
         };
-        const bool object_window_hit{
-            window_hit(pixel_x,
-                       _window_state.one_left,
-                       _window_state.one_right,
-                       _window_state.two_left,
-                       _window_state.two_right,
-                       _window_state.one_invert[4],
-                       _window_state.one_enable[4],
-                       _window_state.two_invert[4],
-                       _window_state.two_enable[4],
-                       _window_state.object_mask)
-        };
-        if (object_window_hit && _object_layer_state.window_above_enabled)
-            object_above = {};
-        if (object_window_hit && _object_layer_state.window_below_enabled)
-            object_below = {};
+        if ((_object_layer_state.window_above_enabled
+                || _object_layer_state.window_below_enabled)
+            && window_hit(pixel_x,
+                          _window_state.one_left,
+                          _window_state.one_right,
+                          _window_state.two_left,
+                          _window_state.two_right,
+                          _window_state.one_invert[4],
+                          _window_state.one_enable[4],
+                          _window_state.two_invert[4],
+                          _window_state.two_enable[4],
+                          _window_state.object_mask))
+        {
+            if (_object_layer_state.window_above_enabled)
+                object_above = {};
+            if (_object_layer_state.window_below_enabled)
+                object_below = {};
+        }
 
         _compositor_state.objects.above_samples[sample_x] = object_above;
         _compositor_state.objects.below_samples[sample_x] = object_below;
@@ -2371,17 +2397,24 @@ namespace clover::core
         if (object_below.priority > below.priority)
             below = object_below;
 
+        const uint8_t color_mask_above{ static_cast<uint8_t>(_window_state.color_mask_above & 0x03u) };
+        const uint8_t color_mask_below{ static_cast<uint8_t>(_window_state.color_mask_below & 0x03u) };
+        const bool color_window_needed{
+            color_mask_above == 1u || color_mask_above == 2u
+                || color_mask_below == 1u || color_mask_below == 2u
+        };
         const bool color_window_hit{
-            window_hit(pixel_x,
-                       _window_state.one_left,
-                       _window_state.one_right,
-                       _window_state.two_left,
-                       _window_state.two_right,
-                       _window_state.one_invert[5],
-                       _window_state.one_enable[5],
-                       _window_state.two_invert[5],
-                       _window_state.two_enable[5],
-                       _window_state.color_mask)
+            color_window_needed
+                && window_hit(pixel_x,
+                              _window_state.one_left,
+                              _window_state.one_right,
+                              _window_state.two_left,
+                              _window_state.two_right,
+                              _window_state.one_invert[5],
+                              _window_state.one_enable[5],
+                              _window_state.two_invert[5],
+                              _window_state.two_enable[5],
+                              _window_state.color_mask)
         };
         const std::array<bool, 4> color_enable{
             true,
@@ -2390,9 +2423,9 @@ namespace clover::core
             false
         };
         _compositor_state.color_enable_above[sample_x] =
-            color_enable[_window_state.color_mask_above & 0x03u];
+            color_enable[color_mask_above];
         _compositor_state.color_enable_below[sample_x] =
-            color_enable[_window_state.color_mask_below & 0x03u];
+            color_enable[color_mask_below];
     }
 
     void ppu_t::resolve_pixel_color_math(uint16_t x,

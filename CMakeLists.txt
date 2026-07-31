@@ -140,6 +140,7 @@ target_include_directories(clover_media_identity PUBLIC src)
 add_library(clover_analysis STATIC
     src/clover/analysis/Palette.cpp
     src/clover/analysis/TileGraphics.cpp
+    src/clover/analysis/TileMap.cpp
     src/clover/analysis/TypedData.cpp
     src/clover/analysis/snes/Decoder.cpp
     src/clover/analysis/snes/Formatter.cpp
@@ -424,6 +425,12 @@ add_executable(clover_tile_graphics_test
 target_include_directories(clover_tile_graphics_test PRIVATE src)
 target_link_libraries(clover_tile_graphics_test PRIVATE clover_analysis)
 
+add_executable(clover_tile_map_test
+    tests/TileMapTest.cpp
+)
+target_include_directories(clover_tile_map_test PRIVATE src)
+target_link_libraries(clover_tile_map_test PRIVATE clover_analysis)
+
 add_executable(clover_machine_state_test
     tests/MachineStateTest.cpp
 )
@@ -559,6 +566,21 @@ target_link_libraries(clover_workbench_tile_graphics_integration_test PRIVATE
     clover_workbench_debugger
 )
 
+add_executable(clover_workbench_tile_map_integration_test
+    tests/WorkbenchTileMapIntegrationTest.cpp
+    src/clover/frontend/EmulatorCore.cpp
+    src/clover/frontend/SnesEmulatorCore.cpp
+)
+target_include_directories(
+    clover_workbench_tile_map_integration_test PRIVATE src
+)
+target_link_libraries(clover_workbench_tile_map_integration_test PRIVATE
+    clover_analysis
+    clover_core
+    clover_snes_checkpoint
+    clover_workbench_debugger
+)
+
 if(MSVC)
     set(CLOVER_TEST_TARGETS
         clover_smoke_test
@@ -572,6 +594,7 @@ if(MSVC)
         clover_typed_data_test
         clover_palette_test
         clover_tile_graphics_test
+        clover_tile_map_test
         clover_machine_state_test
         clover_checkpoint_test
         clover_local_rom_regression_test
@@ -582,6 +605,7 @@ if(MSVC)
         clover_workbench_analysis_integration_test
         clover_workbench_palette_integration_test
         clover_workbench_tile_graphics_integration_test
+        clover_workbench_tile_map_integration_test
     )
     if(TARGET clover_rom_library_test)
         list(APPEND CLOVER_TEST_TARGETS clover_rom_library_test)
@@ -603,6 +627,7 @@ add_test(NAME clover_hybrid_analyzer_test COMMAND clover_hybrid_analyzer_test)
 add_test(NAME clover_typed_data_test COMMAND clover_typed_data_test)
 add_test(NAME clover_palette_test COMMAND clover_palette_test)
 add_test(NAME clover_tile_graphics_test COMMAND clover_tile_graphics_test)
+add_test(NAME clover_tile_map_test COMMAND clover_tile_map_test)
 add_test(NAME clover_machine_state_test COMMAND clover_machine_state_test)
 add_test(NAME clover_checkpoint_test COMMAND clover_checkpoint_test)
 add_test(NAME clover_checkpoint_replay_test COMMAND clover_checkpoint_replay_test)
@@ -622,6 +647,10 @@ add_test(
 add_test(
     NAME clover_workbench_tile_graphics_integration_test
     COMMAND clover_workbench_tile_graphics_integration_test
+)
+add_test(
+    NAME clover_workbench_tile_map_integration_test
+    COMMAND clover_workbench_tile_map_integration_test
 )
 if(CLOVER_BUILD_SDL_FRONTEND)
     add_test(NAME clover_rom_library_test COMMAND clover_rom_library_test)

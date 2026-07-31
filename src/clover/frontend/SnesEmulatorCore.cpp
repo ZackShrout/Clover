@@ -206,6 +206,76 @@ namespace clover::frontend
         return true;
     }
 
+    size_t snes_emulator_core_t::inspect_tile_layers(
+        std::span<tile_layer_state_t> destination
+    ) const noexcept
+    {
+        static constexpr std::array<std::string_view, 4> labels{
+            "BG1", "BG2", "BG3", "BG4"
+        };
+        const core::ppu_render_state_snapshot_t snapshot{
+            _console.ppu_render_state()
+        };
+        const size_t count{ std::min(destination.size(), labels.size()) };
+        for (size_t index{}; index < count; ++index)
+        {
+            const core::ppu_background_render_state_t& background{
+                snapshot.backgrounds[index]
+            };
+            tile_layer_format_t format{ tile_layer_format_t::inactive };
+            switch (background.mode)
+            {
+            case core::ppu_background_render_state_t::mode_t::bpp2:
+                format = tile_layer_format_t::indexed_2bpp;
+                break;
+            case core::ppu_background_render_state_t::mode_t::bpp4:
+                format = tile_layer_format_t::indexed_4bpp;
+                break;
+            case core::ppu_background_render_state_t::mode_t::bpp8:
+                format = tile_layer_format_t::indexed_8bpp;
+                break;
+            case core::ppu_background_render_state_t::mode_t::mode7:
+                format = tile_layer_format_t::affine_mode7;
+                break;
+            case core::ppu_background_render_state_t::mode_t::inactive:
+                format = tile_layer_format_t::inactive;
+                break;
+            }
+            destination[index] = {
+                .id = static_cast<uint32_t>(index + 1u),
+                .label = labels[index],
+                .active = background.active
+                    && (background.above_enabled
+                        || background.below_enabled),
+                .tile_map = {
+                    snes_debug::k_vram_space,
+                    static_cast<uint64_t>(background.screen_address) * 2u
+                },
+                .tile_graphics = {
+                    snes_debug::k_vram_space,
+                    static_cast<uint64_t>(background.tiledata_address) * 2u
+                },
+                .width_tiles = static_cast<uint16_t>(
+                    32u << (background.screen_size & 0x01u)
+                ),
+                .height_tiles = static_cast<uint16_t>(
+                    32u << ((background.screen_size >> 1u) & 0x01u)
+                ),
+                .format = format,
+                .screen_size = background.screen_size,
+                .tile_size = static_cast<uint8_t>(
+                    background.large_tiles ? 16u : 8u
+                ),
+                .palette_base = static_cast<uint16_t>(
+                    snapshot.bg_mode == 0u ? index * 32u : 0u
+                ),
+                .horizontal_scroll = background.hoffset,
+                .vertical_scroll = background.voffset
+            };
+        }
+        return count;
+    }
+
     std::span<const execution_domain_descriptor_t>
         snes_emulator_core_t::execution_domains() const noexcept
     {
@@ -560,6 +630,191 @@ namespace clover::frontend
             .boundary = execution_boundary(result.boundary),
             .machine_clocks_elapsed = result.elapsed_master_clocks
         };
+    }
+
+    execution_run_result_t snes_emulator_core_t::run_execution_domain(
+        execution_domain_id_t domain,
+        size_t instruction_budget,
+        std::span<const execution_breakpoint_t> breakpoints,
+        std::span<const execution_watchpoint_t> watchpoints
+    ) noexcept
+    {
+        if (domain != snes_debug::k_main_cpu_domain)
+        {
+            return {
+                .status = domain == snes_debug::k_audio_cpu_domain
+                    ? execution_step_status_t::unsupported
+                    : execution_step_status_t::invalid_domain,
+                .domain = domain
+            };
+        }
+        if (!_machine_running)
+        {
+            return {
+                .status = execution_step_status_t::not_running,
+                .domain = domain
+            };
+        }
+        if (!_debug_paused)
+        {
+            return {
+                .status = execution_step_status_t::not_paused,
+                .domain = domain
+            };
+        }
+        if (!watchpoints.empty() && !_observation_storage)
+        {
+            return {
+                .status = execution_step_status_t::unsupported,
+                .domain = domain
+            };
+        }
+
+        const auto cpu_address = [this]() noexcept
+        {
+            const core::cpu_state_t& cpu{ _console.cpu_state() };
+            return debug_address_t{
+                .space = snes_debug::k_cpu_bus_space,
+                .value = (static_cast<uint32_t>(cpu.pb) << 16u) | cpu.pc
+            };
+        };
+        const auto restore_observations = [this]() noexcept
+        {
+            if (_observation_mask == 0u)
+            {
+                _console.set_observation_sink(nullptr);
+                return;
+            }
+            core::snes_observation_mask_t core_mask{};
+            if ((_observation_mask & k_observe_execution_boundary) != 0u)
+                core_mask |= core::k_snes_observe_cpu_boundary;
+            if ((_observation_mask & k_observe_memory_access) != 0u)
+                core_mask |= core::k_snes_observe_cpu_memory_access;
+            _observation_sink.configure(
+                { _observation_storage.get(), k_observation_capacity },
+                core_mask
+            );
+            _console.set_observation_sink(&_observation_sink);
+        };
+
+        _observation_sink.clear();
+        if (watchpoints.empty())
+        {
+            _console.set_observation_sink(nullptr);
+        }
+        else
+        {
+            _observation_sink.configure(
+                { _observation_storage.get(), k_observation_capacity },
+                core::k_snes_observe_cpu_memory_access
+            );
+            _console.set_observation_sink(&_observation_sink);
+        }
+
+        execution_run_result_t result{
+            .status = execution_step_status_t::complete,
+            .domain = domain,
+            .stop = execution_run_stop_t::budget_exhausted,
+            .instruction_address = cpu_address()
+        };
+        for (; result.instructions_executed < instruction_budget;
+             ++result.instructions_executed)
+        {
+            const debug_address_t before{ cpu_address() };
+            for (size_t index{ 0 }; index < breakpoints.size(); ++index)
+            {
+                if (breakpoints[index].address.space == before.space
+                    && breakpoints[index].address.value == before.value)
+                {
+                    result.stop = execution_run_stop_t::breakpoint;
+                    result.trap_index = index;
+                    result.instruction_address = before;
+                    restore_observations();
+                    return result;
+                }
+            }
+
+            _observation_sink.clear();
+            const core::cpu_boundary_step_result_t step{
+                _console.step_cpu_boundary()
+            };
+            if (step.status != core::cpu_boundary_step_status_t::complete)
+            {
+                result.status = execution_step_status_t::not_running;
+                result.instruction_address = cpu_address();
+                restore_observations();
+                return result;
+            }
+            result.machine_clocks_elapsed += step.elapsed_master_clocks;
+            result.instruction_address = cpu_address();
+
+            if (!watchpoints.empty())
+            {
+                for (const core::snes_observation_event_t& event
+                     : _observation_sink.events())
+                {
+                    if (event.kind
+                        != core::snes_observation_kind_t::cpu_memory_access)
+                    {
+                        continue;
+                    }
+                    const bool write{
+                        event.cpu_memory_access.kind
+                            == core::snes_memory_access_kind_t::write
+                    };
+                    for (size_t index{ 0 }; index < watchpoints.size(); ++index)
+                    {
+                        const execution_watchpoint_t& watchpoint{
+                            watchpoints[index]
+                        };
+                        const uint64_t address{
+                            event.cpu_memory_access.address
+                        };
+                        if (watchpoint.start.space
+                                != snes_debug::k_cpu_bus_space
+                            || (write ? !watchpoint.write : !watchpoint.read)
+                            || address < watchpoint.start.value
+                            || address - watchpoint.start.value
+                                >= watchpoint.length)
+                        {
+                            continue;
+                        }
+                        ++result.instructions_executed;
+                        result.stop = execution_run_stop_t::watchpoint;
+                        result.trap_index = index;
+                        result.access_address = {
+                            .space = snes_debug::k_cpu_bus_space,
+                            .value = address
+                        };
+                        result.access_instruction_address = {
+                            .space = snes_debug::k_cpu_bus_space,
+                            .value = event.cpu_memory_access.instruction_address
+                        };
+                        result.access_was_write = write;
+                        result.access_value = event.cpu_memory_access.value;
+                        restore_observations();
+                        return result;
+                    }
+                }
+            }
+            if (step.boundary == core::cpu_step_boundary_t::waiting)
+            {
+                ++result.instructions_executed;
+                result.stop = execution_run_stop_t::waiting;
+                restore_observations();
+                return result;
+            }
+            if (step.boundary == core::cpu_step_boundary_t::stopped)
+            {
+                ++result.instructions_executed;
+                result.stop = execution_run_stop_t::stopped;
+                restore_observations();
+                return result;
+            }
+        }
+        result.instruction_address = cpu_address();
+        restore_observations();
+        return result;
     }
 
     observation_control_t* snes_emulator_core_t::observation_control() noexcept

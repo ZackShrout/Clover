@@ -55,6 +55,9 @@ namespace clover::frontend
         [[nodiscard]] std::span<const video_plane_descriptor_t> video_planes() const noexcept override;
         [[nodiscard]] bool set_video_plane_enabled(video_plane_id_t id,
                                                    bool enabled) noexcept override;
+        [[nodiscard]] size_t inspect_tile_layers(
+            std::span<tile_layer_state_t> destination
+        ) const noexcept override;
         [[nodiscard]] std::span<const execution_domain_descriptor_t>
             execution_domains() const noexcept override;
         [[nodiscard]] std::span<const address_space_descriptor_t>
@@ -76,6 +79,12 @@ namespace clover::frontend
         [[nodiscard]] execution_control_t* execution_control() noexcept override;
         [[nodiscard]] execution_step_result_t step_execution_domain(
             execution_domain_id_t domain
+        ) noexcept override;
+        [[nodiscard]] execution_run_result_t run_execution_domain(
+            execution_domain_id_t domain,
+            size_t instruction_budget,
+            std::span<const execution_breakpoint_t> breakpoints,
+            std::span<const execution_watchpoint_t> watchpoints
         ) noexcept override;
         [[nodiscard]] observation_control_t* observation_control() noexcept override;
         [[nodiscard]] observation_mask_t available_observations() const noexcept override;

@@ -100,6 +100,32 @@ namespace clover::frontend
                                                            bool enabled) noexcept = 0;
     };
 
+    enum class tile_layer_format_t : uint8_t
+    {
+        indexed_2bpp,
+        indexed_4bpp,
+        indexed_8bpp,
+        affine_mode7,
+        inactive
+    };
+
+    struct tile_layer_state_t
+    {
+        uint32_t id{ 0u };
+        std::string_view label{};
+        bool active{ false };
+        debug_address_t tile_map{};
+        debug_address_t tile_graphics{};
+        uint16_t width_tiles{ 0u };
+        uint16_t height_tiles{ 0u };
+        tile_layer_format_t format{ tile_layer_format_t::inactive };
+        uint8_t screen_size{ 0u };
+        uint8_t tile_size{ 8u };
+        uint16_t palette_base{ 0u };
+        uint16_t horizontal_scroll{ 0u };
+        uint16_t vertical_scroll{ 0u };
+    };
+
     struct emulator_core_t
     {
     public:
@@ -121,6 +147,12 @@ namespace clover::frontend
         [[nodiscard]] virtual video_plane_control_t* video_plane_control() noexcept
         {
             return nullptr;
+        }
+        [[nodiscard]] virtual size_t inspect_tile_layers(
+            std::span<tile_layer_state_t>
+        ) const noexcept
+        {
+            return 0u;
         }
         [[nodiscard]] virtual debug_target_t* debug_target() noexcept
         {

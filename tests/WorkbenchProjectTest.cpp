@@ -348,6 +348,47 @@ int main()
     }
     error.clear();
 
+    const analysis::tile_map_asset_t vram_map{
+        .stable_id = "tilemap.vram",
+        .name = "Live BG map",
+        .location = { "snes.vram", 0x8000u },
+        .screen_size = 0u,
+        .tile_size = 8u,
+        .tile_asset_id = "tiles.vram",
+        .palette_id = "palette.cgram"
+    };
+    const analysis::tile_map_asset_t actor_map{
+        .stable_id = "tilemap.actor",
+        .name = "Actor map",
+        .location = { "snes.cpu-bus", 0x7e1400u },
+        .screen_size = 0u,
+        .tile_size = 8u,
+        .tile_asset_id = "tiles.actor",
+        .palette_id = "palette.actor"
+    };
+    if (!project.set_tile_map(vram_map, error)
+        || !project.set_tile_map(actor_map, error))
+    {
+        return fail("write_tile_maps", error);
+    }
+    const auto initial_maps{ project.tile_maps(error) };
+    if (!error.empty() || initial_maps.size() != 2u
+        || initial_maps.front().asset.tile_asset_id != "tiles.actor"
+        || initial_maps.back().asset.palette_id != "palette.cgram")
+    {
+        return fail("tile_map_round_trip", error);
+    }
+    error.clear();
+    analysis::tile_map_asset_t invalid_map{ actor_map };
+    invalid_map.stable_id = "tilemap.invalid";
+    invalid_map.tile_asset_id = "tiles.missing";
+    if (project.set_tile_map(invalid_map, error)
+        || error.empty() || project.tile_maps(error).size() != 2u)
+    {
+        return fail("invalid_tile_map_rejected_atomically", error);
+    }
+    error.clear();
+
     if (project.set_typed_object(
             {
                 .stable_id = "object.overlap",
@@ -375,7 +416,7 @@ int main()
         || !has_layer(initial_labels, fact_layer_t::derived)
         || initial_comments.size() != 1u
         || initial_bookmarks.size() != 1u
-        || initial_classifications.size() != 5u
+        || initial_classifications.size() != 6u
         || initial_symbols.size() < 90u
         || initial_symbols.front().layer != fact_layer_t::imported)
     {
@@ -428,11 +469,12 @@ int main()
     if (project.labels(error).size() != 2u
         || project.comments(error).size() != 1u
         || project.bookmarks(error).size() != 1u
-        || project.classifications(error).size() != 5u
+        || project.classifications(error).size() != 6u
         || project.data_types(error).size() != 9u
         || project.typed_objects(error).size() != 2u
         || project.palettes(error).size() != 2u
         || project.tile_assets(error).size() != 2u
+        || project.tile_maps(error).size() != 2u
         || project.debug_breakpoints(error).size() != 1u
         || project.debug_watchpoints(error).size() != 1u
         || project.debug_watchpoints(error).front().access
@@ -454,11 +496,12 @@ int main()
         || regenerated_labels.size() != 1u
         || regenerated_labels.front().layer != fact_layer_t::user
         || project.comments(error).size() != 1u
-        || project.classifications(error).size() != 5u
+        || project.classifications(error).size() != 6u
         || project.data_types(error).size() != 9u
         || project.typed_objects(error).size() != 2u
         || project.palettes(error).size() != 2u
         || project.tile_assets(error).size() != 2u
+        || project.tile_maps(error).size() != 2u
         || project.symbols(error).size() != initial_symbols.size()
         || project.analysis_generation(error) != 1u)
     {
@@ -617,6 +660,7 @@ int main()
     if (sqlite3_open(expected_path_utf8.c_str(), &migration_database) != SQLITE_OK)
         return fail("open_migration_fixture");
     const char* downgrade_sql{
+        "DROP TABLE tile_map_assets;"
         "DROP TABLE tile_assets;"
         "DROP TABLE palette_assets;"
         "DROP TABLE typed_data_objects;"
@@ -706,7 +750,8 @@ int main()
 
     std::printf(
         "Workbench project tests passed: identity, migrations, facts, "
-        "typed data, palettes, tiles, invalidation, symbols, debugger points, "
+        "typed data, palettes, tiles, tile maps, invalidation, symbols, "
+        "debugger points, "
         "and navigation\n"
     );
     return 0;

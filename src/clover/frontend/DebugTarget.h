@@ -138,6 +138,43 @@ namespace clover::frontend
         uint64_t machine_clocks_elapsed{ 0 };
     };
 
+    enum class execution_run_stop_t : uint8_t
+    {
+        budget_exhausted,
+        breakpoint,
+        watchpoint,
+        waiting,
+        stopped
+    };
+
+    struct execution_breakpoint_t
+    {
+        debug_address_t address{};
+    };
+
+    struct execution_watchpoint_t
+    {
+        debug_address_t start{};
+        uint64_t length{ 1 };
+        bool read{ true };
+        bool write{ true };
+    };
+
+    struct execution_run_result_t
+    {
+        execution_step_status_t status{ execution_step_status_t::unsupported };
+        execution_domain_id_t domain{ 0 };
+        execution_run_stop_t stop{ execution_run_stop_t::budget_exhausted };
+        size_t instructions_executed{ 0 };
+        size_t trap_index{ 0 };
+        debug_address_t instruction_address{};
+        debug_address_t access_address{};
+        debug_address_t access_instruction_address{};
+        bool access_was_write{ false };
+        uint8_t access_value{ 0 };
+        uint64_t machine_clocks_elapsed{ 0 };
+    };
+
     struct execution_control_t
     {
     public:
@@ -145,6 +182,18 @@ namespace clover::frontend
         [[nodiscard]] virtual execution_step_result_t step_execution_domain(
             execution_domain_id_t domain
         ) noexcept = 0;
+        [[nodiscard]] virtual execution_run_result_t run_execution_domain(
+            execution_domain_id_t domain,
+            size_t instruction_budget,
+            std::span<const execution_breakpoint_t> breakpoints,
+            std::span<const execution_watchpoint_t> watchpoints
+        ) noexcept
+        {
+            return {
+                .status = execution_step_status_t::unsupported,
+                .domain = domain
+            };
+        }
     };
 
     enum class debug_session_state_t : uint8_t

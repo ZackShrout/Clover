@@ -60,13 +60,13 @@ The disassembler is the first major view into that system, but it is only one vi
 
 This document is a product north star and architectural direction. Section 28
 also serves as the authoritative delivery ledger. As of July 30, 2026, Stages
-0 through 4 and the Stage 5.1-5.3 typed-data, palette, and tile-graphics
-foundations are complete: Clover has the inspection and checkpoint substrate,
-the structured decoder, the persistent Workbench, live debugger integration,
-the hybrid analyzer, durable typed definitions and object bindings, and
-persistent palette and tile inspection. Descriptions outside Section 28 define
-the target experience unless they explicitly describe the current
-implementation.
+0 through 4 and the Stage 5.1-5.4 typed-data, palette, tile-graphics, and
+tile-map foundations are complete: Clover has the inspection and checkpoint
+substrate, the structured decoder, the persistent Workbench, live debugger
+integration, the hybrid analyzer, durable typed definitions and object
+bindings, and persistent palette, tile, and background-map inspection.
+Descriptions outside Section 28 define the target experience unless they
+explicitly describe the current implementation.
 
 The capabilities described here fall into four planning horizons:
 
@@ -3287,7 +3287,7 @@ rather than a listing.
 
 ## Stage 5: Typed data and assets
 
-**Status: in progress; typed-data, palette, and tile-graphics foundations complete.**
+**Status: in progress; typed-data, palette, tile-graphics, and tile-map foundations complete.**
 
 ### Stage 5.1: Typed-data foundation
 
@@ -3374,11 +3374,46 @@ palette links, data classification, and atomic invalid-definition rejection.
 through `$2115-$2119` and follows it through side-effect-free VRAM inspection
 to decoded planar pixels.
 
+### Stage 5.4: Background tile-map assets and inspection
+
+Add a system-neutral tile-map asset whose stable identity binds a source,
+32/64-screen geometry, 8/16-pixel tile size, tile asset, palette, and palette
+base. The native SNES decoder preserves each 16-bit entry's 10-bit character,
+three-bit palette group, priority, horizontal flip, and vertical flip. It
+models the SNES quadrant layout for all four screen sizes and VRAM address
+wrapping while reporting invalid, misaligned, unavailable, and truncated
+sources explicitly.
+
+Expose a read-only frontend tile-layer snapshot derived from the PPU's stored
+render state. Each active BG layer reports its map and character bases, screen
+geometry, bit depth, tile size, and Mode 0 palette base without reading PPU
+registers or duplicating their latches. Persist maps in schema v8 and validate
+their tile/palette links transactionally. CPU-bus maps classify their complete
+source range as data; live VRAM maps remain device-space facts.
+
+The Workbench binds an active BG layer and its live CGRAM/tile dependencies in
+one action, assembles 8x8 and 16x16 entries with palette groups and flips, and
+provides entry navigation plus raw character/palette/priority/flip inspection.
+Mode 7 remains reserved for its affine-specific viewer.
+
+Normal Continue is a core-side batch operation with exact breakpoint,
+watchpoint, WAI, and STP stops. Per-instruction decode and runtime-edge
+collection are reserved for an explicit traced Continue mode so interactive
+scene capture does not inherit analysis-mode execution cost.
+
+**Implementation status:** complete on July 30, 2026. `clover_tile_map_test`
+covers entry bits, every quadrant layout, validation, and VRAM wrapping. The
+project test covers schema migration, durable links, classification, and
+atomic invalid-link rejection. `clover_analysis_boundary_test` guards the
+system-neutral live layer snapshot.
+`clover_workbench_tile_map_integration_test` executes real PPU configuration,
+tile, and map uploads and follows them through live layer discovery and both
+decoders.
+
 ### Remaining Stage 5 work
 
 Implement:
 
-- tile-map viewers;
 - OAM inspection;
 - DMA source tracking;
 - asset definitions;

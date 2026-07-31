@@ -25,7 +25,9 @@ Use `--project-root <path>` to override the platform application-data location.
 
 | Control | Action |
 |---|---|
-| F5 | Continue or pause the live target |
+| Tab | Toggle the live game-output preview |
+| F5 | Fast continue or pause the live target; breakpoints and watchpoints remain exact |
+| Shift+F5 | Traced continue or pause; collects per-instruction runtime analysis evidence |
 | F9 | Add or remove a persistent execution breakpoint |
 | F10 | Step over a call, otherwise step one instruction |
 | F11 | Step one instruction |
@@ -47,6 +49,10 @@ Use `--project-root <path>` to override the platform application-data location.
 | G / Shift+G | Open or cycle tile assets / return to disassembly |
 | Arrow keys in tile view | Select a tile |
 | Shift+arrow keys in tile view | Select a pixel within the tile |
+| Ctrl+1 / Ctrl+2 / Ctrl+3 / Ctrl+4 | Bind the corresponding active live BG tile map |
+| H / Shift+H | Open or cycle tile maps / return to disassembly |
+| F in a live tile-map view | Toggle the current scrolled viewport / full backing map |
+| Arrow keys in tile-map view | Select a map entry |
 | Up / Down | Select an instruction |
 | Enter | Follow a statically known direct target |
 | Page Up / Page Down | Move the linear listing |
@@ -150,6 +156,28 @@ decoded color index and linked palette are shown in the inspector. Live VRAM
 inspection reads the PPU-owned 64 KiB array directly and never touches the
 stateful `$2139/$213A` ports.
 
+## Background tile-map inspection
+
+Tile-map assets persist their SNES screen geometry, tile size, source, and
+links to tile and palette assets. Stage 5.4 decodes all four 32/64-screen
+quadrant layouts and retains each entry's character, palette group, priority,
+and horizontal/vertical flips. Both 8x8 and 16x16 entries are assembled in the
+viewer.
+
+Press `Tab` to watch the live game output while the debugger runs, then pause
+on the scene to inspect. Press `Ctrl+1` through `Ctrl+4` to bind the
+corresponding active BG layer. The binding reads the PPU's already-decoded render configuration and
+automatically creates or updates its live CGRAM palette, VRAM tile set, and
+tile map, opens that map, and never reads stateful PPU ports. Press `H` to
+cycle saved maps and `Shift+H` to return to disassembly. Arrow keys select an entry, and
+the inspector shows its raw word, position, character, palette group, priority,
+and flips. Live bindings open on the PPU's current 256x224 scrolled viewport;
+press `F` to inspect the complete 32/64-screen backing map. Transparent
+color-zero pixels use a checkerboard so partially uploaded or sparse maps
+remain legible. Selecting a BG layer that is inactive in the current PPU mode closes
+the previous map instead of leaving stale layer contents visible. Mode 7 is
+intentionally deferred to an affine-specific viewer.
+
 ## Project storage
 
 Each project is keyed by the canonical media identity shared with the ROM
@@ -178,10 +206,11 @@ stored separately from regenerable analysis generations. They survive
 reanalysis and are validated before a transaction commits; invalid references
 or overlapping objects leave the prior model intact.
 
-Schema v7 stores palette and tile-graphics assets. CPU-bus asset bindings
+Schema v8 stores palette, tile-graphics, and tile-map assets. CPU-bus bindings
 participate in code/data conflict analysis, while device-space CGRAM and VRAM
-assets remain durable facts. Tile assets retain their palette link and base
-color. Invalid definitions never replace the previously stored asset.
+assets remain durable facts. Maps retain validated tile/palette links, screen
+geometry, and palette base. Invalid definitions never replace the previously
+stored asset.
 
 Analysis generations record analyzer and decoder versions plus a deterministic
 input fingerprint. Instructions, blocks, many-to-many function ownership,

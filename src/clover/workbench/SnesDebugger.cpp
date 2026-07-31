@@ -402,16 +402,24 @@ namespace clover::workbench
     }
 
     bool snes_debugger_t::execute_one(debugger_stop_reason_t manual_reason,
-                                      std::string& error)
+                                      std::string& error,
+                                      const live_processor_state_t* known_before,
+                                      live_processor_state_t* resulting_after)
     {
         if (!is_initialized())
         {
             error = "Debugger is not initialized";
             return false;
         }
-        live_processor_state_t before_state{};
-        if (!snapshot(before_state, error) || _source == nullptr)
+        live_processor_state_t captured_before{};
+        if (known_before == nullptr
+            && !snapshot(captured_before, error))
             return false;
+        if (_source == nullptr)
+            return false;
+        const live_processor_state_t& before_state{
+            known_before != nullptr ? *known_before : captured_before
+        };
         const analysis::snes::decoded_instruction_t instruction{
             analysis::snes::decode_instruction(
                 *_source,
@@ -438,7 +446,10 @@ namespace clover::workbench
         const frontend::observation_drain_result_t drain{
             _observations->drain_observations(events)
         };
-        live_processor_state_t after_state{};
+        live_processor_state_t captured_after{};
+        live_processor_state_t& after_state{
+            resulting_after != nullptr ? *resulting_after : captured_after
+        };
         if (!snapshot(after_state, error))
         {
             stop(debugger_stop_reason_t::error, {}, error);
@@ -535,18 +546,18 @@ namespace clover::workbench
                     break;
                 }
             }
-            if (!execute_one(debugger_stop_reason_t::none, error))
+            live_processor_state_t after{};
+            if (!execute_one(
+                    debugger_stop_reason_t::none,
+                    error,
+                    &before,
+                    &after
+                ))
                 break;
             ++executed;
             if (_run_state != debugger_run_state_t::running)
                 break;
 
-            live_processor_state_t after{};
-            if (!snapshot(after, error))
-            {
-                stop(debugger_stop_reason_t::error, {}, error);
-                break;
-            }
             bool operation_complete{ false };
             debugger_stop_reason_t reason{ debugger_stop_reason_t::none };
             if ((_operation == operation_t::run_to
@@ -570,6 +581,187 @@ namespace clover::workbench
                 stop(reason, after.instruction_address);
                 break;
             }
+        }
+        return executed;
+    }
+
+    size_t snes_debugger_t::pump_fast(size_t instruction_budget,
+                                      std::string& error)
+    {
+        error.clear();
+        if (_run_state != debugger_run_state_t::running
+            || instruction_budget == 0u)
+        {
+            return 0u;
+        }
+        if (_operation != operation_t::continue_)
+            return pump(instruction_budget, error);
+
+        size_t executed{};
+        if (_skip_breakpoint_once.has_value())
+        {
+            live_processor_state_t before{};
+            if (!snapshot(before, error))
+            {
+                stop(debugger_stop_reason_t::error, {}, error);
+                return 0u;
+            }
+            const bool skip{
+                same_address(*_skip_breakpoint_once, before.instruction_address)
+            };
+            _skip_breakpoint_once.reset();
+            if (skip)
+            {
+                if (!execute_one(debugger_stop_reason_t::none, error, &before))
+                    return 0u;
+                ++executed;
+                if (_run_state != debugger_run_state_t::running
+                    || executed == instruction_budget)
+                {
+                    return executed;
+                }
+            }
+        }
+
+        std::vector<frontend::execution_breakpoint_t> breakpoints{};
+        std::vector<uint64_t> breakpoint_ids{};
+        breakpoints.reserve(_breakpoints.size());
+        breakpoint_ids.reserve(_breakpoints.size());
+        for (const breakpoint_t& breakpoint : _breakpoints)
+        {
+            if (!breakpoint.enabled)
+                continue;
+            breakpoints.push_back({ .address = breakpoint.address });
+            breakpoint_ids.push_back(breakpoint.id);
+        }
+
+        std::vector<frontend::execution_watchpoint_t> watchpoints{};
+        std::vector<uint64_t> watchpoint_ids{};
+        watchpoints.reserve(_watchpoints.size());
+        watchpoint_ids.reserve(_watchpoints.size());
+        for (const watchpoint_t& watchpoint : _watchpoints)
+        {
+            if (!watchpoint.enabled)
+                continue;
+            const uint8_t access{ static_cast<uint8_t>(watchpoint.access) };
+            watchpoints.push_back({
+                .start = watchpoint.start,
+                .length = watchpoint.length,
+                .read = (access & static_cast<uint8_t>(watch_access_t::read))
+                    != 0u,
+                .write = (access & static_cast<uint8_t>(watch_access_t::write))
+                    != 0u
+            });
+            watchpoint_ids.push_back(watchpoint.id);
+        }
+
+        const frontend::execution_run_result_t result{
+            _execution->run_execution_domain(
+                frontend::snes_debug::k_main_cpu_domain,
+                instruction_budget - executed,
+                breakpoints,
+                watchpoints
+            )
+        };
+        if (result.status == frontend::execution_step_status_t::unsupported)
+            return executed + pump(instruction_budget - executed, error);
+        if (result.status != frontend::execution_step_status_t::complete)
+        {
+            error = "Main CPU fast run failed";
+            stop(debugger_stop_reason_t::error, result.instruction_address, error);
+            return executed;
+        }
+        executed += result.instructions_executed;
+
+        switch (result.stop)
+        {
+        case frontend::execution_run_stop_t::budget_exhausted:
+            break;
+        case frontend::execution_run_stop_t::breakpoint:
+            if (result.trap_index >= breakpoint_ids.size())
+            {
+                error = "Fast run returned an invalid breakpoint";
+                stop(debugger_stop_reason_t::error, result.instruction_address, error);
+                break;
+            }
+            {
+                const uint64_t id{ breakpoint_ids[result.trap_index] };
+                const auto found{
+                    std::find_if(
+                        _breakpoints.begin(),
+                        _breakpoints.end(),
+                        [id](const breakpoint_t& breakpoint)
+                        {
+                            return breakpoint.id == id;
+                        }
+                    )
+                };
+                const bool temporary{
+                    found != _breakpoints.end() && found->temporary
+                };
+                if (found != _breakpoints.end())
+                    ++found->hit_count;
+                stop(
+                    debugger_stop_reason_t::breakpoint,
+                    result.instruction_address,
+                    "Execution breakpoint hit"
+                );
+                _last_stop.breakpoint_id = id;
+                if (temporary)
+                    static_cast<void>(remove_breakpoint(id));
+            }
+            break;
+        case frontend::execution_run_stop_t::watchpoint:
+            if (result.trap_index >= watchpoint_ids.size())
+            {
+                error = "Fast run returned an invalid watchpoint";
+                stop(debugger_stop_reason_t::error, result.instruction_address, error);
+                break;
+            }
+            {
+                const uint64_t id{ watchpoint_ids[result.trap_index] };
+                const auto found{
+                    std::find_if(
+                        _watchpoints.begin(),
+                        _watchpoints.end(),
+                        [id](const watchpoint_t& watchpoint)
+                        {
+                            return watchpoint.id == id;
+                        }
+                    )
+                };
+                if (found != _watchpoints.end())
+                    ++found->hit_count;
+                stop(
+                    debugger_stop_reason_t::watchpoint,
+                    result.instruction_address,
+                    "Memory watchpoint hit"
+                );
+                _last_stop.watchpoint_id = id;
+                _last_stop.memory_access = frontend::memory_access_observation_t{
+                    .kind = result.access_was_write
+                        ? frontend::memory_access_kind_t::write
+                        : frontend::memory_access_kind_t::read,
+                    .address = result.access_address,
+                    .value = result.access_value,
+                    .instruction_address = result.access_instruction_address
+                };
+            }
+            break;
+        case frontend::execution_run_stop_t::waiting:
+            stop(
+                debugger_stop_reason_t::waiting,
+                result.instruction_address,
+                "Processor entered WAI"
+            );
+            break;
+        case frontend::execution_run_stop_t::stopped:
+            stop(
+                debugger_stop_reason_t::processor_stopped,
+                result.instruction_address,
+                "Processor entered STP"
+            );
+            break;
         }
         return executed;
     }

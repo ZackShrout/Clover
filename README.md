@@ -151,6 +151,18 @@ links and a live, read-only 64 KiB VRAM address space. `2`, `4`, or `8` binds
 tiles at the selected CPU address; hold Shift to bind live VRAM. `G` opens or
 cycles the tile grid, and Shift+arrow keys inspect individual pixels.
 
+Stage 5.4 adds persistent SNES background tile maps and live PPU layer
+discovery. `Ctrl+1` through `Ctrl+4` bind an active BG layer together with its
+current VRAM tiles and CGRAM palette; `H` opens or cycles the assembled map.
+The inspector exposes each selected entry's character, palette group,
+priority, and horizontal/vertical flip attributes. Inactive BG selections
+clear the map view so a previously selected layer cannot masquerade as the
+requested one. `Tab` provides a live game-output preview so a debugger pause
+and BG capture can be tied to a visible scene instead of an arbitrary upload.
+Live maps default to the current scrolled viewport; `F` toggles the complete
+backing map. Normal `F5` uses exact core-side fast Continue; `Shift+F5` opts
+into slower per-instruction tracing when runtime analysis evidence is needed.
+
 ## SDL Desktop App
 
 The checked-in `SDL Release` CMake preset builds the optimized `clover_sdl`

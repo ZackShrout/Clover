@@ -97,6 +97,7 @@ int main()
         return fail("instruction_step", error);
     }
 
+    emulator->reset();
     const uint64_t hardware_watch{
         debugger.add_watchpoint(
             { frontend::snes_debug::k_cpu_bus_space, 0x002100u },
@@ -105,7 +106,7 @@ int main()
         )
     };
     if (!debugger.resume(error)
-        || debugger.pump(8u, error) != 1u
+        || debugger.pump_fast(8u, error) != 2u
         || debugger.last_stop().reason != debugger_stop_reason_t::watchpoint
         || debugger.last_stop().watchpoint_id != hardware_watch
         || !debugger.last_stop().memory_access.has_value()
@@ -141,7 +142,7 @@ int main()
         )
     };
     if (!debugger.resume(error)
-        || debugger.pump(8u, error) != 1u
+        || debugger.pump_fast(8u, error) != 1u
         || debugger.last_stop().reason != debugger_stop_reason_t::breakpoint
         || debugger.last_stop().breakpoint_id != loop_breakpoint
         || debugger.breakpoints().front().hit_count != 1u)
@@ -231,7 +232,7 @@ int main()
 
     std::printf(
         "Workbench debugger tests passed: runtime state, stepping, "
-        "breakpoints, watchpoints, run-to, call/return observation, "
+        "fast breakpoints/watchpoints, run-to, call/return observation, "
         "and bounded analysis evidence\n"
     );
     return 0;

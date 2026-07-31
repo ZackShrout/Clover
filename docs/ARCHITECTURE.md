@@ -148,6 +148,15 @@ the PPU-owned 64 KiB VRAM array read-only, avoiding `$2139/$213A` latch and
 increment side effects. Schema v7 persists tile assets; CPU-bus sources become
 user data classifications while device-space VRAM sources do not.
 
+Tile maps compose those assets without crossing the boundary. A map definition
+names its geometry, tile size, tile asset, palette, and base color; the generic
+decoder emits character, palette-group, priority, and flip attributes while
+modeling SNES quadrant layout and VRAM wrapping. A system-neutral frontend
+tile-layer snapshot translates the PPU's already-decoded render state into map
+and tile addresses, dimensions, bit depth, and tile size. It does not expose
+the PPU object itself or read stateful registers. Schema v8 persists maps,
+validates their links before commit, and classifies CPU-bus sources as data.
+
 The project schema publishes a complete program model as one analysis
 generation transaction. A candidate is built outside SQLite; the prior
 generation remains current and readable until every new row and constraint
@@ -155,7 +164,10 @@ validates and the publication commits. Analyzer failure, cancellation, or
 database failure therefore cannot expose a partial graph or delete user facts.
 The debugger's runtime evidence is aggregated by address edge, decode context,
 and session under a fixed distinct-edge limit with explicit dropped-record
-accounting.
+accounting. Normal Continue uses a core-side batch execution boundary that
+retains exact execution-breakpoint and memory-watchpoint stops without paying
+the decoder and evidence cost on every instruction. Traced Continue is an
+explicit mode for collecting that per-instruction evidence.
 
 The future checkpoint boundary is specified by
 `docs/SNES_MACHINE_STATE_AUDIT.md`. Checkpoints preserve causal hardware state

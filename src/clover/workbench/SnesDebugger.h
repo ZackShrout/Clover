@@ -126,6 +126,8 @@ namespace clover::workbench
         [[nodiscard]] bool run_to(frontend::debug_address_t address,
                                   std::string& error);
         [[nodiscard]] size_t pump(size_t instruction_budget, std::string& error);
+        [[nodiscard]] size_t pump_fast(size_t instruction_budget,
+                                       std::string& error);
 
         [[nodiscard]] uint64_t add_breakpoint(frontend::debug_address_t address,
                                               bool temporary = false);
@@ -172,7 +174,9 @@ namespace clover::workbench
                                      std::optional<frontend::debug_address_t> target,
                                      std::string& error);
         [[nodiscard]] bool execute_one(debugger_stop_reason_t manual_reason,
-                                       std::string& error);
+                                       std::string& error,
+                                       const live_processor_state_t* known_before = nullptr,
+                                       live_processor_state_t* resulting_after = nullptr);
         [[nodiscard]] bool snapshot(live_processor_state_t& state,
                                     std::string& error) const;
         [[nodiscard]] std::optional<breakpoint_t*> breakpoint_at(

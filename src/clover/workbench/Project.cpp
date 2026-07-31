@@ -513,6 +513,21 @@ namespace
         "CREATE INDEX tile_assets_location"
         " ON tile_assets(address_space,address);"
     };
+
+    constexpr const char* k_schema_v8{
+        "CREATE TABLE tile_map_assets("
+        "stable_id TEXT PRIMARY KEY,name TEXT NOT NULL,"
+        "address_space TEXT NOT NULL,address INTEGER NOT NULL,"
+        "screen_size INTEGER NOT NULL CHECK(screen_size BETWEEN 0 AND 3),"
+        "tile_size INTEGER NOT NULL CHECK(tile_size IN (8,16)),"
+        "format INTEGER NOT NULL CHECK(format=0),"
+        "tile_asset_id TEXT NOT NULL,palette_id TEXT NOT NULL,"
+        "palette_base INTEGER NOT NULL CHECK(palette_base BETWEEN 0 AND 255),"
+        "layer INTEGER NOT NULL CHECK(layer BETWEEN 0 AND 2),"
+        "source TEXT NOT NULL DEFAULT '');"
+        "CREATE INDEX tile_map_assets_location"
+        " ON tile_map_assets(address_space,address);"
+    };
 }
 
 namespace clover::workbench
@@ -658,8 +673,10 @@ namespace clover::workbench
             success = execute(_database, k_schema_v6, error);
         if (success && version <= 6)
             success = execute(_database, k_schema_v7, error);
+        if (success && version <= 7)
+            success = execute(_database, k_schema_v8, error);
         if (success)
-            success = execute(_database, "PRAGMA user_version=7;", error);
+            success = execute(_database, "PRAGMA user_version=8;", error);
         if (success)
             success = commit_transaction(_database, error);
         if (!success)
@@ -2124,6 +2141,249 @@ namespace clover::workbench
         return statement.prepare(
                 _database,
                 "DELETE FROM tile_assets WHERE stable_id=? AND layer=0;",
+                error
+            )
+            && bind_text(statement.get(), 1, stable_id, error)
+            && step_done(statement.get(), error);
+    }
+
+    std::vector<project_tile_map_t> project_t::tile_maps(
+        std::string& error
+    ) const
+    {
+        std::vector<project_tile_map_t> result{};
+        if (_database == nullptr)
+        {
+            error = "Workbench project is not open";
+            return result;
+        }
+        statement_t statement{};
+        if (!statement.prepare(
+                _database,
+                "SELECT stable_id,name,address_space,address,screen_size,"
+                "tile_size,format,tile_asset_id,palette_id,palette_base,"
+                "layer,source FROM tile_map_assets"
+                " ORDER BY address_space,address,stable_id;",
+                error
+            ))
+        {
+            return result;
+        }
+        int step_result{};
+        while ((step_result = sqlite3_step(statement.get())) == SQLITE_ROW)
+        {
+            result.push_back({
+                .asset = {
+                    .stable_id = column_text(statement.get(), 0),
+                    .name = column_text(statement.get(), 1),
+                    .location = {
+                        .address_space = column_text(statement.get(), 2),
+                        .address = static_cast<uint64_t>(
+                            sqlite3_column_int64(statement.get(), 3)
+                        )
+                    },
+                    .screen_size = static_cast<uint8_t>(
+                        sqlite3_column_int(statement.get(), 4)
+                    ),
+                    .tile_size = static_cast<uint8_t>(
+                        sqlite3_column_int(statement.get(), 5)
+                    ),
+                    .format = static_cast<analysis::tile_map_format_t>(
+                        sqlite3_column_int(statement.get(), 6)
+                    ),
+                    .tile_asset_id = column_text(statement.get(), 7),
+                    .palette_id = column_text(statement.get(), 8),
+                    .palette_base = static_cast<uint16_t>(
+                        sqlite3_column_int(statement.get(), 9)
+                    )
+                },
+                .layer = fact_layer(sqlite3_column_int(statement.get(), 10)),
+                .source = column_text(statement.get(), 11)
+            });
+        }
+        if (step_result != SQLITE_DONE)
+            error = sqlite3_errmsg(_database);
+        return result;
+    }
+
+    bool project_t::set_tile_map(const analysis::tile_map_asset_t& asset,
+                                 std::string& error)
+    {
+        error.clear();
+        if (_database == nullptr || !valid_location(asset.location))
+        {
+            error = "Invalid tile-map asset";
+            return false;
+        }
+        const analysis::tile_map_validation_t validation{
+            analysis::validate_tile_map_asset(asset)
+        };
+        if (!validation.valid())
+        {
+            error = validation.conflicts.front().detail;
+            return false;
+        }
+        const std::vector<project_tile_asset_t> stored_tiles{
+            tile_assets(error)
+        };
+        const std::vector<project_palette_t> stored_palettes{
+            error.empty() ? palettes(error) : std::vector<project_palette_t>{}
+        };
+        if (!error.empty())
+            return false;
+        const bool tile_exists{
+            std::any_of(
+                stored_tiles.begin(),
+                stored_tiles.end(),
+                [&asset](const project_tile_asset_t& tile)
+                {
+                    return tile.asset.stable_id == asset.tile_asset_id;
+                }
+            )
+        };
+        const bool palette_exists{
+            std::any_of(
+                stored_palettes.begin(),
+                stored_palettes.end(),
+                [&asset](const project_palette_t& palette)
+                {
+                    return palette.asset.stable_id == asset.palette_id;
+                }
+            )
+        };
+        if (!tile_exists || !palette_exists)
+        {
+            error = !tile_exists
+                ? "Tile map references an unknown tile asset"
+                : "Tile map references an unknown palette";
+            return false;
+        }
+        const std::vector<project_tile_map_t> stored{ tile_maps(error) };
+        if (!error.empty())
+            return false;
+        const auto existing{
+            std::find_if(
+                stored.begin(),
+                stored.end(),
+                [&asset](const project_tile_map_t& map)
+                {
+                    return map.asset.stable_id == asset.stable_id;
+                }
+            )
+        };
+        if (existing != stored.end() && existing->layer != fact_layer_t::user)
+        {
+            error = "Imported tile-map assets cannot be overwritten";
+            return false;
+        }
+        if (!begin_transaction(_database, error))
+            return false;
+        statement_t statement{};
+        bool success{
+            statement.prepare(
+                _database,
+                "INSERT INTO tile_map_assets("
+                "stable_id,name,address_space,address,screen_size,tile_size,"
+                "format,tile_asset_id,palette_id,palette_base,layer,source)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,0,'')"
+                " ON CONFLICT(stable_id) DO UPDATE SET"
+                " name=excluded.name,address_space=excluded.address_space,"
+                " address=excluded.address,screen_size=excluded.screen_size,"
+                " tile_size=excluded.tile_size,format=excluded.format,"
+                " tile_asset_id=excluded.tile_asset_id,"
+                " palette_id=excluded.palette_id,"
+                " palette_base=excluded.palette_base;",
+                error
+            )
+            && bind_text(statement.get(), 1, asset.stable_id, error)
+            && bind_text(statement.get(), 2, asset.name, error)
+            && bind_text(
+                statement.get(),
+                3,
+                asset.location.address_space,
+                error
+            )
+        };
+        if (success)
+        {
+            sqlite3_bind_int64(
+                statement.get(),
+                4,
+                static_cast<sqlite3_int64>(asset.location.address)
+            );
+            sqlite3_bind_int(statement.get(), 5, asset.screen_size);
+            sqlite3_bind_int(statement.get(), 6, asset.tile_size);
+            sqlite3_bind_int(
+                statement.get(),
+                7,
+                static_cast<int>(asset.format)
+            );
+            success = bind_text(
+                statement.get(), 8, asset.tile_asset_id, error
+            ) && bind_text(
+                statement.get(), 9, asset.palette_id, error
+            );
+        }
+        if (success)
+        {
+            sqlite3_bind_int(statement.get(), 10, asset.palette_base);
+            success = step_done(statement.get(), error);
+        }
+
+        statement_t classification{};
+        if (success && asset.location.address_space == "snes.cpu-bus")
+        {
+            success = classification.prepare(
+                _database,
+                "INSERT INTO classifications("
+                "address_space,address,length,kind,layer,source,"
+                "analysis_generation) VALUES(?,?,?,1,0,'',0)"
+                " ON CONFLICT(address_space,address,layer,source) DO UPDATE SET"
+                " length=MAX(length,excluded.length),kind=excluded.kind,"
+                " updated_at=CURRENT_TIMESTAMP;",
+                error
+            ) && bind_text(
+                classification.get(),
+                1,
+                asset.location.address_space,
+                error
+            );
+            if (success)
+            {
+                sqlite3_bind_int64(
+                    classification.get(),
+                    2,
+                    static_cast<sqlite3_int64>(asset.location.address)
+                );
+                sqlite3_bind_int64(
+                    classification.get(),
+                    3,
+                    static_cast<sqlite3_int64>(
+                        analysis::tile_map_width(asset.screen_size)
+                    ) * analysis::tile_map_height(asset.screen_size) * 2
+                );
+                success = step_done(classification.get(), error);
+            }
+        }
+        if (success)
+            success = commit_transaction(_database, error);
+        if (!success)
+            rollback_transaction(_database);
+        return success;
+    }
+
+    bool project_t::remove_tile_map(std::string_view stable_id,
+                                    std::string& error)
+    {
+        if (_database == nullptr || stable_id.empty())
+        {
+            error = "Invalid tile-map asset";
+            return false;
+        }
+        statement_t statement{};
+        return statement.prepare(
+                _database,
+                "DELETE FROM tile_map_assets WHERE stable_id=? AND layer=0;",
                 error
             )
             && bind_text(statement.get(), 1, stable_id, error)

@@ -12,6 +12,7 @@
 #include "clover/workbench/SnesDebugger.h"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cstdio>
 #include <filesystem>
@@ -29,12 +30,14 @@ int main(int argc, char** argv)
         std::fprintf(
             stderr,
             "Usage: clover_workbench_analyze <rom> "
-            "[--project-root PATH] [--run-instructions COUNT]\n"
+            "[--project-root PATH] [--run-instructions COUNT] "
+            "[--fast-run-instructions COUNT]\n"
         );
         return 2;
     }
     std::filesystem::path project_root{};
     uint64_t run_instructions{};
+    bool fast_run{};
     for (int index{ 2 }; index < argc; ++index)
     {
         if (index + 1 >= argc)
@@ -48,7 +51,8 @@ int main(int argc, char** argv)
         {
             project_root = utils::path_from_utf8(value);
         }
-        else if (option == "--run-instructions")
+        else if (option == "--run-instructions"
+                 || option == "--fast-run-instructions")
         {
             const auto parsed{
                 std::from_chars(
@@ -63,6 +67,7 @@ int main(int argc, char** argv)
                 std::fprintf(stderr, "Invalid instruction count.\n");
                 return 2;
             }
+            fast_run = option == "--fast-run-instructions";
         }
         else
         {
@@ -128,7 +133,11 @@ int main(int argc, char** argv)
             const size_t budget{
                 static_cast<size_t>(std::min<uint64_t>(remaining, 10000u))
             };
-            const size_t executed{ debugger.pump(budget, error) };
+            const size_t executed{
+                fast_run
+                    ? debugger.pump_fast(budget, error)
+                    : debugger.pump(budget, error)
+            };
             if (!error.empty() || executed == 0u)
                 break;
             remaining -= executed;
@@ -137,6 +146,43 @@ int main(int argc, char** argv)
         {
             std::fprintf(stderr, "Debugger execution failed: %s\n", error.c_str());
             return 1;
+        }
+        workbench::live_processor_state_t live{};
+        if (!debugger.live_state(live, error))
+        {
+            std::fprintf(stderr, "Unable to inspect final debugger state: %s\n",
+                         error.c_str());
+            return 1;
+        }
+        std::printf(
+            "Run: %llu instructions, PC=$%02llX:%04llX",
+            static_cast<unsigned long long>(run_instructions - remaining),
+            static_cast<unsigned long long>(
+                (live.instruction_address.value >> 16u) & 0xffu
+            ),
+            static_cast<unsigned long long>(
+                live.instruction_address.value & 0xffffu
+            )
+        );
+        std::printf("\n");
+        std::array<frontend::tile_layer_state_t, 4> layers{};
+        const size_t layer_count{ core->inspect_tile_layers(layers) };
+        for (size_t index{}; index < layer_count; ++index)
+        {
+            const frontend::tile_layer_state_t& layer{ layers[index] };
+            std::printf(
+                "  %.*s: active=%u map=$%04llX tiles=$%04llX "
+                "format=%u geometry=%ux%u/%upx\n",
+                static_cast<int>(layer.label.size()),
+                layer.label.data(),
+                layer.active ? 1u : 0u,
+                static_cast<unsigned long long>(layer.tile_map.value),
+                static_cast<unsigned long long>(layer.tile_graphics.value),
+                static_cast<unsigned>(layer.format),
+                layer.width_tiles,
+                layer.height_tiles,
+                layer.tile_size
+            );
         }
         options.runtime_edges = debugger.runtime_edges();
     }

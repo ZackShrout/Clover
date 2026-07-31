@@ -682,6 +682,7 @@ namespace clover::core
         _screen_state = {};
         _compositor_state = {};
         _pipeline_state = {};
+        _pipeline_synchronized_timing = timing();
         _display_write_history = {};
         decode_render_state();
         _vram_state = {};
@@ -836,6 +837,7 @@ namespace clover::core
 
     void ppu_t::set_frame_capture_enabled(bool enabled) noexcept
     {
+        synchronize_pipeline();
         _frame_capture_enabled = enabled;
     }
 
@@ -2936,6 +2938,16 @@ namespace clover::core
 
     }
 
+    void ppu_t::synchronize_pipeline() noexcept
+    {
+        const timing_snapshot_t current_timing{ timing() };
+        if (_pipeline_synchronized_timing == current_timing)
+            return;
+
+        process_pipeline_range(_pipeline_synchronized_timing, current_timing);
+        _pipeline_synchronized_timing = current_timing;
+    }
+
     void ppu_t::process_pipeline_range(const timing_snapshot_t& previous_timing,
                                        const timing_snapshot_t& current_timing) noexcept
     {
@@ -3680,6 +3692,11 @@ namespace clover::core
         if (offset >= _registers.size())
             return 0;
 
+        // Status and data-port reads can observe work performed by the pixel,
+        // object, VRAM, and CGRAM pipelines.  Materialize that work before the
+        // read produces a value or mutates a port latch.
+        synchronize_pipeline();
+
         switch (address)
         {
         case 0x2104u:
@@ -3802,6 +3819,9 @@ namespace clover::core
         if (offset >= _registers.size())
             return;
 
+        // Rendering up to the current beam position belongs to the old
+        // register/memory state.  Catch it up before exposing this write.
+        synchronize_pipeline();
         const timing_snapshot_t write_timing{ timing() };
         if (address == 0x2133u)
         {
@@ -4240,7 +4260,22 @@ namespace clover::core
     {
         const uint16_t previous_visible_scanlines{ active_visible_scanlines() };
         const timing_snapshot_t previous_timing{ timing() };
-        _counter.advance(master_clocks, _video_timing, _timing_interlace);
+        raster_counter_t advanced_counter{ _counter };
+        advanced_counter.advance(master_clocks, _video_timing, _timing_interlace);
+
+        const bool crosses_interlace_sample{
+            previous_timing.raster.scanline < 128u
+            && advanced_counter.scanline >= 128u
+        };
+        const bool wraps_field{
+            advanced_counter.scanline < previous_timing.raster.scanline
+        };
+        // Do not let deferred work cross changes to timing interpretation or
+        // the odd/even field used for interlaced output row placement.
+        if (crosses_interlace_sample || wraps_field)
+            synchronize_pipeline();
+
+        _counter = advanced_counter;
 
         ppu_step_result_t result{};
         result.timing = timing();
@@ -4253,8 +4288,12 @@ namespace clover::core
             _timing_interlace = _screen_state.interlace;
         }
         result.interlace = _timing_interlace;
-        if (result.timing.raster.scanline < previous_timing.raster.scanline)
+        if (wraps_field)
         {
+            // Complete the tiny boundary-crossing range before publishing the
+            // frame.  The bulk of the old field was synchronized above while
+            // its odd/even state was still current.
+            synchronize_pipeline();
             ++_frame_counter;
             _presented_frame = _composed_frame;
             if (_presentation_layer_mask != ppu_presentation_options_t::k_all_layers_visible)
@@ -4289,7 +4328,6 @@ namespace clover::core
             result.frames_completed = 1;
         }
 
-        process_pipeline_range(previous_timing, result.timing);
         result.entered_scanline = result.timing.raster.scanline != previous_timing.raster.scanline;
         result.entered_frame_start = result.frame_complete
             || crossed_raster_point(previous_timing, result.timing, 0, 0);
@@ -4331,6 +4369,9 @@ namespace clover::core
 
     ppu_render_state_snapshot_t ppu_t::render_state_snapshot() const noexcept
     {
+        // Snapshot consumers expect the fetch/evaluation state at the current
+        // beam position, not the last register synchronization point.
+        const_cast<ppu_t*>(this)->synchronize_pipeline();
         ppu_render_state_snapshot_t snapshot{};
         snapshot.display_disabled = _display.disabled;
         snapshot.brightness = _display.brightness;
@@ -4515,6 +4556,9 @@ namespace clover::core
 
     void ppu_t::capture_causal_state(causal_state_t& state) const noexcept
     {
+        // Canonicalize derived pipeline work before serialization.  The
+        // private deferred-work cursor then need not become checkpoint state.
+        const_cast<ppu_t*>(this)->synchronize_pipeline();
         state.composed_frame = _composed_frame;
         state.presented_frame = _presented_frame;
         state.presentation_composed_frame = _presentation_composed_frame;
@@ -4852,6 +4896,7 @@ namespace clover::core
         _external_latch_enabled = state.external_latch_enabled;
         _ppu1_mdr = state.ppu1_mdr;
         _ppu2_mdr = state.ppu2_mdr;
+        _pipeline_synchronized_timing = timing();
 
         _cgram_write_trace = {};
         _cgram_write_trace_count = 0;
@@ -4921,6 +4966,7 @@ namespace clover::core
         ) };
         if (masked == _presentation_layer_mask)
             return;
+        synchronize_pipeline();
         _presentation_layer_mask = masked;
         _presentation_composed_frame.clear();
         _presentation_presented_frame.clear();

@@ -389,6 +389,7 @@ namespace clover::core
         void begin_object_scanline(uint16_t scanline) noexcept;
         void prepare_background_scanline(uint16_t scanline) noexcept;
         void initialize_scanline_pipeline(uint16_t scanline) noexcept;
+        void synchronize_pipeline() noexcept;
         void process_pipeline_range(const timing_snapshot_t& previous_timing,
                                     const timing_snapshot_t& current_timing) noexcept;
         void process_scanline_range(uint16_t scanline, uint16_t start_dot, uint16_t end_dot) noexcept;
@@ -784,6 +785,7 @@ namespace clover::core
         ppu_screen_state_t _screen_state{};
         ppu_compositor_state_t _compositor_state{};
         ppu_pipeline_state_t _pipeline_state{};
+        timing_snapshot_t _pipeline_synchronized_timing{};
         ppu_vram_state_t _vram_state{};
         ppu_cgram_state_t _cgram_state{};
         std::array<ppu_cgram_write_trace_t, ppu_cgram_write_trace_capacity> _cgram_write_trace{};

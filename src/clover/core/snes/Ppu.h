@@ -58,11 +58,28 @@ namespace clover::core
 
     struct ppu_pixel_candidate_t
     {
-        uint8_t priority{ 0 };
-        uint8_t palette{ 0 };
-        uint8_t palette_group{ 0 };
-        bool color_math_enabled : 1 { false };
-        ppu_pixel_source_t source : 7 { ppu_pixel_source_t::none };
+        constexpr ppu_pixel_candidate_t() noexcept
+            : priority{ 0 }, palette{ 0 }, palette_group{ 0 },
+              color_math_enabled{ false }, source{ ppu_pixel_source_t::none }
+        {
+        }
+
+        constexpr ppu_pixel_candidate_t(uint8_t candidate_priority,
+                                        uint8_t candidate_palette,
+                                        uint8_t candidate_palette_group,
+                                        bool candidate_color_math_enabled,
+                                        ppu_pixel_source_t candidate_source) noexcept
+            : priority{ candidate_priority }, palette{ candidate_palette },
+              palette_group{ candidate_palette_group },
+              color_math_enabled{ candidate_color_math_enabled }, source{ candidate_source }
+        {
+        }
+
+        uint8_t priority;
+        uint8_t palette;
+        uint8_t palette_group;
+        bool color_math_enabled : 1;
+        ppu_pixel_source_t source : 7;
 
         [[nodiscard]] bool operator==(const ppu_pixel_candidate_t&) const noexcept = default;
     };

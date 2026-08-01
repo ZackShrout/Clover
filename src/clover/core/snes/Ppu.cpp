@@ -1192,12 +1192,12 @@ namespace clover::core
             if (palette == 0u)
                 continue;
 
-            background.samples[screen_x] = {
-                .priority = _bg_state.priority[background_index][priority_index],
-                .palette = palette,
-                .palette_group = 0u,
-                .color_math_enabled = _color_math_state.bg_color_enable[background_index],
-                .source = background_pixel_source(background_index)
+            background.samples[screen_x] = ppu_pixel_candidate_t{
+                _bg_state.priority[background_index][priority_index],
+                palette,
+                0u,
+                _color_math_state.bg_color_enable[background_index],
+                background_pixel_source(background_index)
             };
         }
     }
@@ -1666,12 +1666,12 @@ namespace clover::core
         ppu_pixel_candidate_t candidate{};
         if (color != 0u)
         {
-            candidate = {
-                .priority = tile.priority,
-                .palette = static_cast<uint8_t>(tile.palette_base + color),
-                .palette_group = tile.palette_group,
-                .color_math_enabled = _color_math_state.bg_color_enable[background_index],
-                .source = background_pixel_source(background_index)
+            candidate = ppu_pixel_candidate_t{
+                tile.priority,
+                static_cast<uint8_t>(tile.palette_base + color),
+                tile.palette_group,
+                _color_math_state.bg_color_enable[background_index],
+                background_pixel_source(background_index)
             };
         }
         background.cycle_pixel_counter = static_cast<uint8_t>((background.cycle_pixel_counter + 1u) & 7u);
@@ -1864,14 +1864,12 @@ namespace clover::core
                 ppu_pixel_candidate_t candidate{};
                 if (color != 0u)
                 {
-                    candidate = {
-                        .priority = _bg_state.priority[background_index][
-                            (tilemap_entry >> 13u) & 0x01u
-                        ],
-                        .palette = static_cast<uint8_t>((palette_group << palette_size_shift) + color),
-                        .palette_group = palette_group,
-                        .color_math_enabled = _color_math_state.bg_color_enable[background_index],
-                        .source = background_pixel_source(background_index)
+                    candidate = ppu_pixel_candidate_t{
+                        _bg_state.priority[background_index][(tilemap_entry >> 13u) & 0x01u],
+                        static_cast<uint8_t>((palette_group << palette_size_shift) + color),
+                        palette_group,
+                        _color_math_state.bg_color_enable[background_index],
+                        background_pixel_source(background_index)
                     };
                 }
 
@@ -1909,11 +1907,11 @@ namespace clover::core
                     continue;
 
                 const ppu_pixel_candidate_t candidate{
-                    .priority = tile.priority,
-                    .palette = static_cast<uint8_t>(tile.palette_base + color),
-                    .palette_group = tile.palette_group,
-                    .color_math_enabled = _color_math_state.bg_color_enable[background_index],
-                    .source = background_pixel_source(background_index)
+                    tile.priority,
+                    static_cast<uint8_t>(tile.palette_base + color),
+                    tile.palette_group,
+                    _color_math_state.bg_color_enable[background_index],
+                    background_pixel_source(background_index)
                 };
 
                 if (candidate.priority >= background.samples[sample_x].priority)
@@ -2195,12 +2193,12 @@ namespace clover::core
             if (color == 0u)
                 continue;
 
-            return {
-                .priority = _object_layer_state.priority[tile.priority],
-                .palette = static_cast<uint8_t>(tile.palette_base + color),
-                .palette_group = 0u,
-                .color_math_enabled = _color_math_state.obj_color_enable,
-                .source = ppu_pixel_source_t::objects
+            return ppu_pixel_candidate_t{
+                _object_layer_state.priority[tile.priority],
+                static_cast<uint8_t>(tile.palette_base + color),
+                0u,
+                _color_math_state.obj_color_enable,
+                ppu_pixel_source_t::objects
             };
         }
 
@@ -2243,12 +2241,12 @@ namespace clover::core
         ppu_pixel_candidate_t candidate{};
         if (color != 0u)
         {
-            candidate = {
-                .priority = tile.priority,
-                .palette = static_cast<uint8_t>(tile.palette_base + color),
-                .palette_group = tile.palette_group,
-                .color_math_enabled = _color_math_state.bg_color_enable[background_index],
-                .source = background_pixel_source(background_index)
+            candidate = ppu_pixel_candidate_t{
+                tile.priority,
+                static_cast<uint8_t>(tile.palette_base + color),
+                tile.palette_group,
+                _color_math_state.bg_color_enable[background_index],
+                background_pixel_source(background_index)
             };
         }
 
@@ -2474,7 +2472,7 @@ namespace clover::core
                 | (_color_math_state.fixed_green << 5u)
                 | _color_math_state.fixed_red)
         };
-        ppu_pixel_candidate_t math_source{ .source = ppu_pixel_source_t::backdrop };
+        ppu_pixel_candidate_t math_source{ 0u, 0u, 0u, false, ppu_pixel_source_t::backdrop };
         if (!above_transparent)
             math_source = above_candidate;
 
@@ -2576,7 +2574,7 @@ namespace clover::core
                 | (_color_math_state.fixed_green << 5u)
                 | _color_math_state.fixed_red)
         };
-        ppu_pixel_candidate_t math_source{ .source = ppu_pixel_source_t::backdrop };
+        ppu_pixel_candidate_t math_source{ 0u, 0u, 0u, false, ppu_pixel_source_t::backdrop };
         if (!above_transparent)
             math_source = above;
         bool math_enabled{
@@ -3219,11 +3217,11 @@ namespace clover::core
                     continue;
 
                 const ppu_pixel_candidate_t candidate{
-                    .priority = _object_layer_state.priority[tile.priority],
-                    .palette = static_cast<uint8_t>(tile.palette_base + color),
-                    .palette_group = 0u,
-                    .color_math_enabled = _color_math_state.obj_color_enable,
-                    .source = ppu_pixel_source_t::objects
+                    _object_layer_state.priority[tile.priority],
+                    static_cast<uint8_t>(tile.palette_base + color),
+                    0u,
+                    _color_math_state.obj_color_enable,
+                    ppu_pixel_source_t::objects
                 };
 
                 if (_object_layer_state.above_enabled)
@@ -3365,9 +3363,7 @@ namespace clover::core
             _compositor_state.above_transparent[sample_x] = above_transparent;
             _compositor_state.below_transparent[sample_x] = below_transparent;
 
-            ppu_pixel_candidate_t math_source{
-                .source = ppu_pixel_source_t::backdrop
-            };
+            ppu_pixel_candidate_t math_source{ 0u, 0u, 0u, false, ppu_pixel_source_t::backdrop };
             if (!above_transparent)
                 math_source = above_candidate;
 

@@ -2280,7 +2280,10 @@ namespace clover::core
                                      ppu_pixel_candidate_t& above,
                                      ppu_pixel_candidate_t& below) noexcept
     {
-        const uint8_t pixel_x{ static_cast<uint8_t>(_screen_state.hires ? x >> 1u : x) };
+        const bool hires{ _screen_state.hires };
+        const bool odd_sample{ (x & 1u) != 0u };
+        const bool use_cycle_pipeline{ _pipeline_state.use_cycle_background_pipeline };
+        const uint8_t pixel_x{ static_cast<uint8_t>(hires ? x >> 1u : x) };
         const size_t sample_x{ static_cast<size_t>(x) };
 
         for (uint8_t background_index{ 0 }; background_index < 4u; ++background_index)
@@ -2289,23 +2292,24 @@ namespace clover::core
             ppu_pixel_candidate_t background_below{};
             if (_bg_state.active[background_index])
             {
-                const ppu_pixel_candidate_t cycle_candidate{
-                    _bg_state.render_mode[background_index]
-                            == ppu_background_render_state_t::mode_t::mode7
-                        ? ppu_pixel_candidate_t{}
-                        : (_screen_state.hires && (x & 1u) == 0u
-                            ? _background_layer_state[background_index].cycle_below_pixel
-                            : resolve_cycle_background_pixel_candidate(background_index))
+                const bool cycle_rendered{
+                    use_cycle_pipeline
+                        && _bg_state.render_mode[background_index]
+                            != ppu_background_render_state_t::mode_t::mode7
                 };
-                const ppu_pixel_candidate_t candidate{
-                    _pipeline_state.use_cycle_background_pipeline
-                            && _bg_state.render_mode[background_index]
-                                != ppu_background_render_state_t::mode_t::mode7
-                        ? cycle_candidate
-                        : resolve_background_pixel_candidate(background_index, x)
-                };
+                ppu_pixel_candidate_t candidate{};
+                if (cycle_rendered)
+                {
+                    candidate = hires && !odd_sample
+                        ? _background_layer_state[background_index].cycle_below_pixel
+                        : resolve_cycle_background_pixel_candidate(background_index);
+                }
+                else
+                {
+                    candidate = resolve_background_pixel_candidate(background_index, x);
+                }
                 _background_layer_state[background_index].samples[sample_x] = candidate;
-                if (_screen_state.hires)
+                if (hires)
                 {
                     // Modes 5 and 6 render two background samples per dot.  The
                     // even sample feeds the subscreen and the odd sample feeds
@@ -2316,7 +2320,7 @@ namespace clover::core
                             ? ppu_pixel_candidate_t{}
                             : _background_layer_state[background_index].samples[sample_x - 1u]
                     };
-                    if ((x & 1u) == 0u)
+                    if (!odd_sample)
                     {
                         background_above = _bg_state.above_enabled[background_index]
                             ? paired_candidate : ppu_pixel_candidate_t{};

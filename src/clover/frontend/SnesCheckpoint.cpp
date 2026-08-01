@@ -259,8 +259,15 @@ namespace clover::frontend
             scalar(archive, value.priority);
             scalar(archive, value.palette);
             scalar(archive, value.palette_group);
-            scalar(archive, value.color_math_enabled);
-            scalar(archive, value.source);
+            bool color_math_enabled{ value.color_math_enabled };
+            core::ppu_pixel_source_t source{ value.source };
+            scalar(archive, color_math_enabled);
+            scalar(archive, source);
+            if constexpr (std::is_same_v<std::remove_cvref_t<archive_t>, reader_t>)
+            {
+                value.color_math_enabled = color_math_enabled;
+                value.source = source;
+            }
         }
 
         template <typename archive_t>

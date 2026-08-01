@@ -61,11 +61,13 @@ namespace clover::core
         uint8_t priority{ 0 };
         uint8_t palette{ 0 };
         uint8_t palette_group{ 0 };
-        bool color_math_enabled{ false };
-        ppu_pixel_source_t source{ ppu_pixel_source_t::none };
+        bool color_math_enabled : 1 { false };
+        ppu_pixel_source_t source : 7 { ppu_pixel_source_t::none };
 
         [[nodiscard]] bool operator==(const ppu_pixel_candidate_t&) const noexcept = default;
     };
+
+    static_assert(sizeof(ppu_pixel_candidate_t) == 4u);
 
     struct ppu_background_render_state_t
     {

@@ -8,6 +8,7 @@
 #include "clover/analysis/snes/Formatter.h"
 #include "clover/analysis/snes/HybridAnalyzer.h"
 #include "clover/analysis/snes/StaticListing.h"
+#include "clover/analysis/Oam.h"
 #include "clover/analysis/Palette.h"
 #include "clover/analysis/TileGraphics.h"
 #include "clover/analysis/TileMap.h"
@@ -15,6 +16,7 @@
 #include "clover/frontend/EmulatorCore.h"
 #include "clover/frontend/SnesEmulatorCore.h"
 #include "clover/utils/FileSystem.h"
+#include "clover/workbench/LivePpuSnapshot.h"
 #include "clover/workbench/Project.h"
 #include "clover/workbench/SnesDebugger.h"
 
@@ -34,6 +36,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace
@@ -548,6 +551,9 @@ namespace clover::platform
         static_cast<void>(
             SDL_SetTextureScaleMode(sdl.video_texture, SDL_SCALEMODE_NEAREST)
         );
+        static_cast<void>(
+            SDL_SetTextureBlendMode(sdl.video_texture, SDL_BLENDMODE_BLEND)
+        );
 
         analysis::snes::cpu_decode_context_t context{};
         workbench::live_processor_state_t live_state{};
@@ -584,12 +590,16 @@ namespace clover::platform
         uint8_t selected_pixel_x{ 0u };
         uint8_t selected_pixel_y{ 0u };
         bool tile_map_view{ false };
+        bool rendered_bg_view{ false };
         size_t tile_map_index{ 0u };
         uint16_t selected_map_x{ 0u };
         uint16_t selected_map_y{ 0u };
         std::string pending_tile_map_id{};
-        std::optional<frontend::tile_layer_state_t> live_map_layer{};
+        std::optional<size_t> live_map_layer_index{};
+        std::optional<workbench::live_ppu_snapshot_t> live_ppu_snapshot{};
         bool tile_map_full_view{ false };
+        bool object_view{ false };
+        uint8_t selected_object{ 0u };
         uint64_t debugger_instructions_executed{};
         edit_kind_t edit_kind{ edit_kind_t::none };
         std::string edit_buffer{};
@@ -802,6 +812,27 @@ namespace clover::platform
                     status = error;
                 }
             }
+            if (tile_map_view && live_map_layer_index.has_value())
+            {
+                workbench::live_ppu_snapshot_t captured{};
+                std::string snapshot_error{};
+                if (workbench::capture_live_ppu_snapshot(
+                        *core,
+                        *target,
+                        *live_map_layer_index,
+                        captured,
+                        snapshot_error
+                    ))
+                {
+                    live_ppu_snapshot = std::move(captured);
+                }
+                else
+                {
+                    live_ppu_snapshot.reset();
+                    tile_map_view = false;
+                    status = snapshot_error;
+                }
+            }
             if (refresh_listing)
             {
                 error.clear();
@@ -889,6 +920,7 @@ namespace clover::platform
                             output_view = false;
                             palette_view = false;
                             graphics_view = false;
+                            object_view = false;
                         }
                         pending_tile_map_id.clear();
                     }
@@ -1046,6 +1078,7 @@ namespace clover::platform
                         palette_view = false;
                         graphics_view = false;
                         tile_map_view = false;
+                        object_view = false;
                     }
                     status = output_view
                         ? "Live game output"
@@ -1165,6 +1198,7 @@ namespace clover::platform
                             output_view = false;
                             graphics_view = false;
                             tile_map_view = false;
+                            object_view = false;
                         }
                         selected_color = 0u;
                         status = "Palette "
@@ -1227,6 +1261,7 @@ namespace clover::platform
                             output_view = false;
                             palette_view = false;
                             tile_map_view = false;
+                            object_view = false;
                         }
                         selected_tile = 0u;
                         selected_pixel_x = 0u;
@@ -1240,6 +1275,7 @@ namespace clover::platform
                     if ((event.key.mod & SDL_KMOD_SHIFT) != 0)
                     {
                         tile_map_view = false;
+                        rendered_bg_view = false;
                         status = "Disassembly view";
                     }
                     else if (tile_maps.empty())
@@ -1259,15 +1295,36 @@ namespace clover::platform
                             output_view = false;
                             palette_view = false;
                             graphics_view = false;
+                            object_view = false;
                         }
                         selected_map_x = 0u;
                         selected_map_y = 0u;
-                        tile_map_full_view = !live_map_layer.has_value()
+                        tile_map_full_view = !live_ppu_snapshot.has_value()
                             || tile_maps[tile_map_index].asset.stable_id
                                 != "tilemap@live-"
-                                    + std::string{ live_map_layer->label };
+                                    + std::string{
+                                        live_ppu_snapshot->layer.label
+                                    };
                         status = "Tile map "
                             + tile_maps[tile_map_index].asset.name;
+                        rendered_bg_view = false;
+                    }
+                }
+                else if (event.key.scancode == SDL_SCANCODE_O)
+                {
+                    object_view = !object_view;
+                    if (object_view)
+                    {
+                        output_view = false;
+                        palette_view = false;
+                        graphics_view = false;
+                        tile_map_view = false;
+                        selected_object = 0u;
+                        status = "Live OAM objects";
+                    }
+                    else
+                    {
+                        status = "Disassembly view";
                     }
                 }
                 else if (event.key.scancode == SDL_SCANCODE_F
@@ -1275,10 +1332,12 @@ namespace clover::platform
                          && tile_map_index < tile_maps.size())
                 {
                     const bool has_live_viewport{
-                        live_map_layer.has_value()
+                        live_ppu_snapshot.has_value()
                         && tile_maps[tile_map_index].asset.stable_id
                             == "tilemap@live-"
-                                + std::string{ live_map_layer->label }
+                                + std::string{
+                                    live_ppu_snapshot->layer.label
+                                }
                     };
                     if (has_live_viewport)
                     {
@@ -1292,6 +1351,15 @@ namespace clover::platform
                         status = "This saved map has no live viewport snapshot";
                     }
                 }
+                else if (event.key.scancode == SDL_SCANCODE_R
+                         && tile_map_view
+                         && live_map_layer_index.has_value())
+                {
+                    rendered_bg_view = !rendered_bg_view;
+                    status = rendered_bg_view
+                        ? "Completed raster-accurate raw BG frame"
+                        : "Coherent backing tilemap snapshot";
+                }
                 else if (control
                          && (event.key.scancode == SDL_SCANCODE_1
                              || event.key.scancode == SDL_SCANCODE_2
@@ -1304,40 +1372,24 @@ namespace clover::platform
                                 : (event.key.scancode == SDL_SCANCODE_3
                                     ? 2u : 3u))
                     };
-                    std::array<frontend::tile_layer_state_t, 4> layers{};
-                    const size_t layer_count{
-                        core->inspect_tile_layers(layers)
-                    };
-                    if (layer_index >= layer_count
-                        || !layers[layer_index].active)
+                    workbench::live_ppu_snapshot_t captured{};
+                    error.clear();
+                    if (!workbench::capture_live_ppu_snapshot(
+                            *core, *target, layer_index, captured, error
+                        ))
                     {
                         tile_map_view = false;
                         pending_tile_map_id.clear();
                         selected_map_x = 0u;
                         selected_map_y = 0u;
-                        status = "Selected BG layer is inactive";
+                        status = error;
                         continue;
                     }
                     const frontend::tile_layer_state_t& layer{
-                        layers[layer_index]
+                        captured.layer
                     };
-                    std::optional<analysis::tile_format_t> format{};
-                    switch (layer.format)
-                    {
-                    case frontend::tile_layer_format_t::indexed_2bpp:
-                        format = analysis::tile_format_t::snes_2bpp;
-                        break;
-                    case frontend::tile_layer_format_t::indexed_4bpp:
-                        format = analysis::tile_format_t::snes_4bpp;
-                        break;
-                    case frontend::tile_layer_format_t::indexed_8bpp:
-                        format = analysis::tile_format_t::snes_8bpp;
-                        break;
-                    case frontend::tile_layer_format_t::affine_mode7:
-                    case frontend::tile_layer_format_t::inactive:
-                        break;
-                    }
-                    if (!format.has_value())
+                    const auto assets{ workbench::make_live_bg_assets(layer) };
+                    if (!assets.has_value())
                     {
                         tile_map_view = false;
                         pending_tile_map_id.clear();
@@ -1346,76 +1398,28 @@ namespace clover::platform
                         status = "Mode 7 maps require the later affine viewer";
                         continue;
                     }
-                    const std::string layer_name{
-                        std::string{ layer.label }
-                    };
-                    const std::string palette_id{
-                        "palette@snes.cgram:000"
-                    };
-                    const analysis::palette_asset_t palette{
-                        .stable_id = palette_id,
-                        .name = "Live CGRAM",
-                        .location = { "snes.cgram", 0u },
-                        .color_count = 256u
-                    };
-                    const uint32_t bytes_per_tile{
-                        analysis::tile_bytes(*format)
-                    };
-                    const uint32_t tile_count{
-                        std::min<uint32_t>(
-                            1024u,
-                            static_cast<uint32_t>(
-                                (65536u - layer.tile_graphics.value)
-                                    / bytes_per_tile
-                            )
-                        )
-                    };
-                    const std::string tile_id{
-                        "tiles@live-" + layer_name
-                    };
-                    const analysis::tile_asset_t tiles{
-                        .stable_id = tile_id,
-                        .name = "Live " + layer_name + " tiles",
-                        .location = {
-                            "snes.vram",
-                            layer.tile_graphics.value
-                        },
-                        .tile_count = tile_count,
-                        .format = *format,
-                        .palette_id = palette_id,
-                        .palette_base = layer.palette_base
-                    };
-                    const analysis::tile_map_asset_t map{
-                        .stable_id = "tilemap@live-" + layer_name,
-                        .name = "Live " + layer_name + " map",
-                        .location = {
-                            "snes.vram",
-                            layer.tile_map.value
-                        },
-                        .screen_size = layer.screen_size,
-                        .tile_size = layer.tile_size,
-                        .tile_asset_id = tile_id,
-                        .palette_id = palette_id,
-                        .palette_base = layer.palette_base
-                    };
+                    const std::string layer_name{ layer.label };
                     error.clear();
                     const bool palette_saved{
-                        project.set_palette(palette, error)
+                        project.set_palette(assets->palette, error)
                     };
                     const bool tiles_saved{
-                        palette_saved && project.set_tile_asset(tiles, error)
+                        palette_saved
+                            && project.set_tile_asset(assets->tiles, error)
                     };
                     const bool map_saved{
-                        tiles_saved && project.set_tile_map(map, error)
+                        tiles_saved && project.set_tile_map(assets->map, error)
                     };
                     status = map_saved
                         ? "Bound live " + layer_name + " tile map"
                         : error;
                     if (map_saved)
                     {
-                        pending_tile_map_id = map.stable_id;
-                        live_map_layer = layer;
+                        pending_tile_map_id = assets->map.stable_id;
+                        live_map_layer_index = layer_index;
+                        live_ppu_snapshot = std::move(captured);
                         tile_map_full_view = false;
+                        rendered_bg_view = true;
                     }
                     refresh_facts = map_saved;
                 }
@@ -1533,6 +1537,34 @@ namespace clover::platform
                 {
                     ++selected_map_y;
                 }
+                else if (object_view
+                         && event.key.scancode == SDL_SCANCODE_LEFT
+                         && selected_object > 0u)
+                {
+                    --selected_object;
+                }
+                else if (object_view
+                         && event.key.scancode == SDL_SCANCODE_RIGHT
+                         && selected_object < 127u)
+                {
+                    ++selected_object;
+                }
+                else if (object_view
+                         && event.key.scancode == SDL_SCANCODE_UP
+                         && selected_object >= 16u)
+                {
+                    selected_object = static_cast<uint8_t>(
+                        selected_object - 16u
+                    );
+                }
+                else if (object_view
+                         && event.key.scancode == SDL_SCANCODE_DOWN
+                         && selected_object < 112u)
+                {
+                    selected_object = static_cast<uint8_t>(
+                        selected_object + 16u
+                    );
+                }
                 else if (graphics_view
                          && event.key.scancode == SDL_SCANCODE_LEFT)
                 {
@@ -1608,10 +1640,12 @@ namespace clover::platform
                     );
                 }
                 else if (!palette_view && !graphics_view && !tile_map_view
+                         && !object_view
                          && event.key.scancode == SDL_SCANCODE_UP
                          && selected > 0u)
                     --selected;
                 else if (!palette_view && !graphics_view && !tile_map_view
+                         && !object_view
                          && event.key.scancode == SDL_SCANCODE_DOWN
                          && selected + 1u < listing.instructions.size())
                     ++selected;
@@ -2063,6 +2097,10 @@ namespace clover::platform
             std::optional<analysis::decoded_tile_map_t> displayed_map{};
             std::optional<analysis::decoded_tile_set_t> displayed_map_tiles{};
             std::optional<analysis::decoded_palette_t> displayed_map_palette{};
+            std::optional<frontend::video_plane_frame_view_t>
+                displayed_bg_frame{};
+            std::optional<frontend::object_layer_state_t> displayed_object_layer{};
+            std::optional<analysis::decoded_snes_oam_t> displayed_oam{};
             if (output_view)
             {
                 draw_text(
@@ -2071,6 +2109,10 @@ namespace clover::platform
                     48.f,
                     "LIVE GAME OUTPUT"
                 );
+                // Debugger execution advances hardware outside run_frame().
+                // Publish the latest completed PPU frame only while this view
+                // needs it, avoiding a framebuffer copy in the other tools.
+                core->refresh_video_frame();
                 const frontend::video_frame_view_t frame{ core->video_frame() };
                 if (frame.pixels != nullptr
                     && frame.format == frontend::pixel_format_t::argb8888
@@ -2135,50 +2177,490 @@ namespace clover::platform
                     );
                 }
             }
+            else if (tile_map_view
+                     && rendered_bg_view
+                     && live_map_layer_index.has_value())
+            {
+                frontend::video_plane_frame_view_t frame{};
+                frontend::video_plane_control_t* const planes{
+                    core->video_plane_control()
+                };
+                if (planes != nullptr
+                    && planes->inspect_video_plane_frame(
+                        static_cast<frontend::video_plane_id_t>(
+                            *live_map_layer_index
+                        ),
+                        frame
+                    )
+                    && frame.pixels != nullptr
+                    && frame.format == frontend::pixel_format_t::argb8888
+                    && frame.width <= display.framebuffer_width
+                    && frame.height <= display.framebuffer_height)
+                {
+                    displayed_bg_frame = frame;
+                    const std::string layer_name{
+                        live_ppu_snapshot.has_value()
+                            ? std::string{ live_ppu_snapshot->layer.label }
+                            : "BG" + std::to_string(
+                                *live_map_layer_index + 1u
+                            )
+                    };
+                    draw_text(
+                        sdl.renderer,
+                        center.x + 10.f,
+                        48.f,
+                        "RAW RENDERED " + layer_name + "  FRAME "
+                            + std::to_string(frame.frame_index)
+                    );
+                    const SDL_Rect update{
+                        0,
+                        0,
+                        static_cast<int>(frame.width),
+                        static_cast<int>(frame.height)
+                    };
+                    static_cast<void>(SDL_UpdateTexture(
+                        sdl.video_texture,
+                        &update,
+                        frame.pixels,
+                        static_cast<int>(frame.pitch_bytes)
+                    ));
+                    const float available_width{ center.w - 24.f };
+                    const float available_height{ center.h - 88.f };
+                    const float aspect_width{
+                        static_cast<float>(frame.width)
+                            * display.pixel_aspect_ratio
+                    };
+                    const float scale{
+                        std::min(
+                            available_width / aspect_width,
+                            available_height
+                                / static_cast<float>(frame.height)
+                        )
+                    };
+                    const float rendered_width{ aspect_width * scale };
+                    const float rendered_height{
+                        static_cast<float>(frame.height) * scale
+                    };
+                    const SDL_FRect source{
+                        0.f,
+                        0.f,
+                        static_cast<float>(frame.width),
+                        static_cast<float>(frame.height)
+                    };
+                    const SDL_FRect destination{
+                        center.x + (center.w - rendered_width) / 2.f,
+                        76.f + (available_height - rendered_height) / 2.f,
+                        rendered_width,
+                        rendered_height
+                    };
+                    constexpr float checker_size{ 16.f };
+                    for (float y{ destination.y };
+                         y < destination.y + destination.h;
+                         y += checker_size)
+                    {
+                        for (float x{ destination.x };
+                             x < destination.x + destination.w;
+                             x += checker_size)
+                        {
+                            const bool light{
+                                ((static_cast<int>(
+                                    (x - destination.x) / checker_size
+                                )
+                                ^ static_cast<int>(
+                                    (y - destination.y) / checker_size
+                                )) & 1) != 0
+                            };
+                            static_cast<void>(SDL_SetRenderDrawColor(
+                                sdl.renderer,
+                                light ? 31u : 22u,
+                                light ? 36u : 27u,
+                                light ? 46u : 35u,
+                                255u
+                            ));
+                            const SDL_FRect square{
+                                x,
+                                y,
+                                std::min(
+                                    checker_size,
+                                    destination.x + destination.w - x
+                                ),
+                                std::min(
+                                    checker_size,
+                                    destination.y + destination.h - y
+                                )
+                            };
+                            static_cast<void>(SDL_RenderFillRect(
+                                sdl.renderer, &square
+                            ));
+                        }
+                    }
+                    static_cast<void>(SDL_RenderTexture(
+                        sdl.renderer,
+                        sdl.video_texture,
+                        &source,
+                        &destination
+                    ));
+                }
+                else
+                {
+                    draw_text(
+                        sdl.renderer,
+                        center.x + 10.f,
+                        48.f,
+                        "RAW RENDERED BG"
+                    );
+                    draw_text(
+                        sdl.renderer,
+                        center.x + 10.f,
+                        76.f,
+                        "No completed diagnostic BG frame yet; run the ROM "
+                        "through one frame"
+                    );
+                }
+            }
+            else if (object_view)
+            {
+                frontend::object_layer_state_t layer{};
+                std::array<uint8_t, 544> oam_bytes{};
+                std::array<std::byte, 544> inspected_oam{};
+                const frontend::memory_inspection_result_t oam_result{
+                    target->inspect_memory(
+                        { frontend::snes_debug::k_oam_space, 0u },
+                        inspected_oam
+                    )
+                };
+                if (core->inspect_object_layer(layer)
+                    && oam_result.status
+                        == frontend::memory_inspection_status_t::complete
+                    && oam_result.bytes_read == inspected_oam.size())
+                {
+                    for (size_t index{}; index < oam_bytes.size(); ++index)
+                    {
+                        oam_bytes[index] = std::to_integer<uint8_t>(
+                            inspected_oam[index]
+                        );
+                    }
+                    displayed_object_layer = layer;
+                    displayed_oam = analysis::decode_snes_oam(
+                        {
+                            .tile_base_word_address =
+                                layer.tile_base_word_address,
+                            .name_select = layer.name_select,
+                            .base_size = layer.base_size,
+                            .interlace = layer.interlace
+                        },
+                        [&oam_bytes](uint16_t address)
+                            -> std::optional<uint8_t>
+                        {
+                            return oam_bytes[address];
+                        }
+                    );
+                }
+
+                draw_text(
+                    sdl.renderer,
+                    center.x + 10.f,
+                    48.f,
+                    "OBJECTS  Live OAM"
+                );
+                if (displayed_oam.has_value()
+                    && displayed_oam->complete())
+                {
+                    const analysis::decoded_palette_t object_palette{
+                        decode_palette({
+                            .stable_id = "palette@live-objects",
+                            .name = "Live OBJ palette",
+                            .location = { "snes.cgram", 0u },
+                            .color_count = 256u
+                        })
+                    };
+                    const float cell_size{
+                        std::max(
+                            14.f,
+                            std::min(30.f, (center.w - 60.f) / 16.f)
+                        )
+                    };
+                    const float grid_width{ cell_size * 16.f };
+                    const float grid_x{
+                        center.x + (center.w - grid_width) / 2.f
+                    };
+                    const float grid_y{ 78.f };
+                    for (const analysis::snes_oam_object_t& object
+                         : displayed_oam->objects)
+                    {
+                        const uint8_t palette_index{
+                            static_cast<uint8_t>(
+                                128u + object.palette * 16u + 1u
+                            )
+                        };
+                        uint8_t red{ 44u };
+                        uint8_t green{ 48u };
+                        uint8_t blue{ 58u };
+                        if (object.intersects_viewport
+                            && palette_index
+                                < object_palette.colors.size())
+                        {
+                            const auto& color{
+                                object_palette.colors[palette_index]
+                            };
+                            red = color.red8;
+                            green = color.green8;
+                            blue = color.blue8;
+                        }
+                        const SDL_FRect cell{
+                            grid_x + (object.index % 16u) * cell_size,
+                            grid_y + (object.index / 16u) * cell_size,
+                            cell_size - 2.f,
+                            cell_size - 2.f
+                        };
+                        static_cast<void>(SDL_SetRenderDrawColor(
+                            sdl.renderer, red, green, blue, 255u
+                        ));
+                        static_cast<void>(
+                            SDL_RenderFillRect(sdl.renderer, &cell)
+                        );
+                        static_cast<void>(SDL_SetRenderDrawColor(
+                            sdl.renderer,
+                            object.index == selected_object ? 255u : 75u,
+                            object.index == selected_object ? 255u : 84u,
+                            object.index == selected_object ? 255u : 102u,
+                            255u
+                        ));
+                        static_cast<void>(
+                            SDL_RenderRect(sdl.renderer, &cell)
+                        );
+                    }
+
+                    const analysis::snes_oam_object_t& object{
+                        displayed_oam->objects[selected_object]
+                    };
+                    const float preview_top{
+                        grid_y + cell_size * 8.f + 28.f
+                    };
+                    const float preview_available{
+                        std::max(64.f, center.h - preview_top - 18.f)
+                    };
+                    const float pixel_size{
+                        std::max(
+                            1.f,
+                            std::min(
+                                8.f,
+                                std::min(
+                                    (center.w - 40.f) / object.width,
+                                    preview_available / object.height
+                                )
+                            )
+                        )
+                    };
+                    const float preview_width{ object.width * pixel_size };
+                    const float preview_height{ object.height * pixel_size };
+                    const float preview_x{
+                        center.x + (center.w - preview_width) / 2.f
+                    };
+                    const float preview_y{
+                        preview_top
+                            + (preview_available - preview_height) / 2.f
+                    };
+                    for (uint8_t y{}; y < object.height; ++y)
+                    {
+                        for (uint8_t x{}; x < object.width; ++x)
+                        {
+                            const bool checker{
+                                (((x / 4u) + (y / 4u)) & 1u) != 0u
+                            };
+                            static_cast<void>(SDL_SetRenderDrawColor(
+                                sdl.renderer,
+                                checker ? 31u : 24u,
+                                checker ? 36u : 29u,
+                                checker ? 46u : 38u,
+                                255u
+                            ));
+                            const SDL_FRect pixel_rect{
+                                preview_x + x * pixel_size,
+                                preview_y + y * pixel_size,
+                                pixel_size,
+                                pixel_size
+                            };
+                            static_cast<void>(
+                                SDL_RenderFillRect(sdl.renderer, &pixel_rect)
+                            );
+                        }
+                    }
+
+                    std::unordered_map<uint16_t, analysis::decoded_tile_t>
+                        decoded_object_tiles{};
+                    for (uint8_t y{}; y < object.height; ++y)
+                    {
+                        for (uint8_t x{}; x < object.width; ++x)
+                        {
+                            const uint16_t word_address{
+                                analysis::snes_oam_object_tile_word_address(
+                                    displayed_oam->configuration,
+                                    object,
+                                    x,
+                                    y
+                                )
+                            };
+                            auto tile{ decoded_object_tiles.find(word_address) };
+                            if (tile == decoded_object_tiles.end())
+                            {
+                                const analysis::decoded_tile_set_t decoded{
+                                    decode_tiles({
+                                        .stable_id = "obj-tile",
+                                        .name = "OBJ tile",
+                                        .location = {
+                                            "snes.vram",
+                                            static_cast<uint64_t>(word_address)
+                                                * 2u
+                                        },
+                                        .tile_count = 1u,
+                                        .format =
+                                            analysis::tile_format_t::snes_4bpp
+                                    })
+                                };
+                                if (decoded.tiles.empty())
+                                    continue;
+                                tile = decoded_object_tiles.emplace(
+                                    word_address,
+                                    decoded.tiles.front()
+                                ).first;
+                            }
+                            const std::array<uint8_t, 2> source_pixel{
+                                analysis::snes_oam_object_source_pixel(
+                                    object, x, y
+                                )
+                            };
+                            const uint8_t color_index{
+                                tile->second.pixels[
+                                    static_cast<size_t>(source_pixel[1] & 7u)
+                                        * 8u + (source_pixel[0] & 7u)
+                                ]
+                            };
+                            if (color_index == 0u)
+                                continue;
+                            const size_t palette_index{
+                                static_cast<size_t>(128u)
+                                    + object.palette * 16u + color_index
+                            };
+                            if (palette_index >= object_palette.colors.size())
+                                continue;
+                            const auto& color{
+                                object_palette.colors[palette_index]
+                            };
+                            static_cast<void>(SDL_SetRenderDrawColor(
+                                sdl.renderer,
+                                color.red8,
+                                color.green8,
+                                color.blue8,
+                                255u
+                            ));
+                            const SDL_FRect pixel_rect{
+                                preview_x + x * pixel_size,
+                                preview_y + y * pixel_size,
+                                pixel_size,
+                                pixel_size
+                            };
+                            static_cast<void>(
+                                SDL_RenderFillRect(sdl.renderer, &pixel_rect)
+                            );
+                        }
+                    }
+                }
+                else
+                {
+                    draw_text(
+                        sdl.renderer,
+                        center.x + 10.f,
+                        76.f,
+                        displayed_oam.has_value()
+                            && !displayed_oam->conflicts.empty()
+                            ? displayed_oam->conflicts.front().detail
+                            : "Live OAM is unavailable"
+                    );
+                }
+            }
             else if (tile_map_view && tile_map_index < tile_maps.size())
             {
-                displayed_map = decode_tile_map(
-                    tile_maps[tile_map_index].asset
-                );
-                const auto linked_tiles{
-                    std::find_if(
-                        tile_assets.begin(),
-                        tile_assets.end(),
-                        [&displayed_map](
-                            const workbench::project_tile_asset_t& tiles
+                const auto live_assets{
+                    live_ppu_snapshot.has_value()
+                        ? workbench::make_live_bg_assets(
+                            live_ppu_snapshot->layer
                         )
-                        {
-                            return tiles.asset.stable_id
-                                == displayed_map->asset.tile_asset_id;
-                        }
-                    )
+                        : std::nullopt
                 };
-                if (linked_tiles != tile_assets.end())
-                    displayed_map_tiles = decode_tiles(linked_tiles->asset);
-                const auto linked_palette{
-                    std::find_if(
-                        palettes.begin(),
-                        palettes.end(),
-                        [&displayed_map](
-                            const workbench::project_palette_t& palette
-                        )
-                        {
-                            return palette.asset.stable_id
-                                == displayed_map->asset.palette_id;
-                        }
-                    )
+                const bool displaying_live_snapshot{
+                    live_assets.has_value()
+                    && tile_maps[tile_map_index].asset.stable_id
+                        == live_assets->map.stable_id
                 };
-                if (linked_palette != palettes.end())
+                if (displaying_live_snapshot)
                 {
-                    displayed_map_palette = decode_palette(
-                        linked_palette->asset
+                    const auto snapshot_reader{
+                        [&snapshot = *live_ppu_snapshot](
+                            const analysis::address_t& address
+                        )
+                        {
+                            return snapshot.inspect_byte(address);
+                        }
+                    };
+                    displayed_map = analysis::decode_tile_map(
+                        live_assets->map, snapshot_reader
                     );
+                    displayed_map_tiles = analysis::decode_tiles(
+                        live_assets->tiles, snapshot_reader
+                    );
+                    displayed_map_palette = analysis::decode_palette(
+                        live_assets->palette, snapshot_reader
+                    );
+                }
+                else
+                {
+                    displayed_map = decode_tile_map(
+                        tile_maps[tile_map_index].asset
+                    );
+                    const auto linked_tiles{
+                        std::find_if(
+                            tile_assets.begin(),
+                            tile_assets.end(),
+                            [&displayed_map](const auto& tiles)
+                            {
+                                return tiles.asset.stable_id
+                                    == displayed_map->asset.tile_asset_id;
+                            }
+                        )
+                    };
+                    if (linked_tiles != tile_assets.end())
+                    {
+                        displayed_map_tiles = decode_tiles(
+                            linked_tiles->asset
+                        );
+                    }
+                    const auto linked_palette{
+                        std::find_if(
+                            palettes.begin(),
+                            palettes.end(),
+                            [&displayed_map](const auto& palette)
+                            {
+                                return palette.asset.stable_id
+                                    == displayed_map->asset.palette_id;
+                            }
+                        )
+                    };
+                    if (linked_palette != palettes.end())
+                    {
+                        displayed_map_palette = decode_palette(
+                            linked_palette->asset
+                        );
+                    }
                 }
                 draw_text(
                     sdl.renderer,
                     center.x + 10.f,
                     48.f,
-                    "TILE MAP  " + displayed_map->asset.name
+                    (displaying_live_snapshot
+                        ? "RAW BG SNAPSHOT  "
+                        : "TILE MAP  ")
+                        + displayed_map->asset.name
                 );
                 if (!displayed_map->entries.empty()
                     && displayed_map_tiles.has_value()
@@ -2198,10 +2680,7 @@ namespace clover::platform
                         )
                     };
                     const bool has_live_viewport{
-                        live_map_layer.has_value()
-                        && tile_maps[tile_map_index].asset.stable_id
-                            == "tilemap@live-"
-                                + std::string{ live_map_layer->label }
+                        displaying_live_snapshot
                     };
                     const bool show_viewport{
                         has_live_viewport && !tile_map_full_view
@@ -2219,14 +2698,16 @@ namespace clover::platform
                     const uint16_t origin_x{
                         static_cast<uint16_t>(show_viewport
                             ? static_cast<uint16_t>(
-                                live_map_layer->horizontal_scroll % map_width
+                                live_ppu_snapshot->layer.horizontal_scroll
+                                    % map_width
                             )
                             : 0u)
                     };
                     const uint16_t origin_y{
                         static_cast<uint16_t>(show_viewport
                             ? static_cast<uint16_t>(
-                                live_map_layer->vertical_scroll % map_height
+                                live_ppu_snapshot->layer.vertical_scroll
+                                    % map_height
                             )
                             : 0u)
                     };
@@ -2989,6 +3470,47 @@ namespace clover::platform
                     inspector_y += 18.f;
                 }
             }
+            if (displayed_bg_frame.has_value())
+            {
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    "Raw rendered BG frame"
+                );
+                inspector_y += 18.f;
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    "Frame: "
+                        + std::to_string(displayed_bg_frame->frame_index)
+                );
+                inspector_y += 18.f;
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    "Geometry: "
+                        + std::to_string(displayed_bg_frame->width) + "x"
+                        + std::to_string(displayed_bg_frame->height)
+                );
+                inspector_y += 18.f;
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    "Raster state captured per scanline"
+                );
+                inspector_y += 18.f;
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    "R: coherent backing tilemap"
+                );
+                inspector_y += 18.f;
+            }
             if (displayed_map.has_value())
             {
                 draw_text(
@@ -3021,10 +3543,12 @@ namespace clover::platform
                         ) + "px"
                 );
                 inspector_y += 18.f;
-                if (live_map_layer.has_value()
+                if (live_ppu_snapshot.has_value()
                     && tile_maps[tile_map_index].asset.stable_id
                         == "tilemap@live-"
-                            + std::string{ live_map_layer->label })
+                            + std::string{
+                                live_ppu_snapshot->layer.label
+                            })
                 {
                     draw_text(
                         sdl.renderer,
@@ -3032,11 +3556,11 @@ namespace clover::platform
                         inspector_y,
                         "Scroll: "
                             + std::to_string(
-                                live_map_layer->horizontal_scroll
+                                live_ppu_snapshot->layer.horizontal_scroll
                             )
                             + ","
                             + std::to_string(
-                                live_map_layer->vertical_scroll
+                                live_ppu_snapshot->layer.vertical_scroll
                             )
                             + (tile_map_full_view
                                 ? "  Full map"
@@ -3121,7 +3645,96 @@ namespace clover::platform
                     inspector_y += 18.f;
                 }
             }
-            if (!palette_view && !graphics_view && !tile_map_view)
+            if (displayed_oam.has_value()
+                && displayed_object_layer.has_value())
+            {
+                const analysis::snes_oam_object_t& object{
+                    displayed_oam->objects[selected_object]
+                };
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    "Object " + std::to_string(object.index)
+                        + (object.intersects_viewport
+                            ? "  on-screen"
+                            : "  off-screen")
+                );
+                inspector_y += 18.f;
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    "Position: " + std::to_string(object.screen_x)
+                        + "," + std::to_string(object.y)
+                        + "  Size " + std::to_string(object.width)
+                        + "x" + std::to_string(object.height)
+                );
+                inspector_y += 18.f;
+                std::ostringstream character_text{};
+                character_text << "Character: $" << std::uppercase
+                               << std::hex << std::setfill('0')
+                               << std::setw(2)
+                               << static_cast<unsigned>(object.character)
+                               << "  Name " << std::dec
+                               << (object.name_table ? 1 : 0);
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    character_text.str()
+                );
+                inspector_y += 18.f;
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    "Palette: " + std::to_string(object.palette)
+                        + "  Priority " + std::to_string(object.priority)
+                );
+                inspector_y += 18.f;
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    "Flip: "
+                        + std::string{ object.horizontal_flip ? "H" : "-" }
+                        + (object.vertical_flip ? "V" : "-")
+                        + "  " + (object.large ? "large" : "small")
+                );
+                inspector_y += 18.f;
+                std::ostringstream base_text{};
+                base_text << "OBJ base: $" << std::uppercase << std::hex
+                          << std::setfill('0') << std::setw(4)
+                          << displayed_object_layer->tile_base_word_address
+                          << "  Select " << std::dec
+                          << static_cast<unsigned>(
+                              displayed_object_layer->base_size
+                          );
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    base_text.str()
+                );
+                inspector_y += 18.f;
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    "First: " + std::to_string(
+                        displayed_object_layer->first_sprite
+                    ) + "  Overflow: "
+                        + (displayed_object_layer->range_over ? "R" : "-")
+                        + (displayed_object_layer->time_over ? "T" : "-")
+                        + (displayed_object_layer->active
+                            ? "  active"
+                            : "  inactive")
+                );
+                inspector_y += 18.f;
+            }
+            if (!palette_view && !graphics_view && !tile_map_view
+                && !object_view)
             {
                 if (const auto* label{ fact_at(labels, current) };
                     label != nullptr)
@@ -3430,14 +4043,16 @@ namespace clover::platform
             draw_text(sdl.renderer, right.x + 10.f, inspector_y + 32.f, "2 / 4 / 8 bind tile format");
             draw_text(sdl.renderer, right.x + 10.f, inspector_y + 48.f, "SHIFT+2/4/8 live VRAM");
             draw_text(sdl.renderer, right.x + 10.f, inspector_y + 64.f, "G / SHIFT+G tiles / close");
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 80.f, "CTRL+1..4 bind live BG map");
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 96.f, "H / SHIFT+H map / close; F full");
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 112.f, "Y / SHIFT+Y byte / string");
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 128.f, "J / P    typed object / pointer");
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 144.f, "A        analyze / publish");
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 160.f, "N / K    function / conflict");
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 176.f, "X / SHIFT+X xref out / in");
-            inspector_y += 192.f;
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 80.f, "CTRL+1..4 raw rendered BG");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 96.f, "R        rendered / backing map");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 112.f, "H / SHIFT+H map / close; F full");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 128.f, "O        live OAM / close");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 144.f, "Y / SHIFT+Y byte / string");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 160.f, "J / P    typed object / pointer");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 176.f, "A        analyze / publish");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 192.f, "N / K    function / conflict");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 208.f, "X / SHIFT+X xref out / in");
+            inspector_y += 224.f;
             draw_text(sdl.renderer, right.x + 10.f, inspector_y, "TAB / F5 output / fast run");
             draw_text(sdl.renderer, right.x + 10.f, inspector_y + 16.f, "F9       breakpoint");
             draw_text(sdl.renderer, right.x + 10.f, inspector_y + 32.f, "F10      step over");

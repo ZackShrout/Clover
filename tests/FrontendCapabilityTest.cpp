@@ -36,5 +36,11 @@ int main()
     {
         return 5;
     }
-    return control->set_video_plane_enabled(99u, false) ? 6 : 0;
+    video_plane_frame_view_t diagnostic_frame{};
+    if (control->inspect_video_plane_frame(planes[0].id, diagnostic_frame)
+        || diagnostic_frame.pixels != nullptr)
+    {
+        return 6;
+    }
+    return control->set_video_plane_enabled(99u, false) ? 7 : 0;
 }

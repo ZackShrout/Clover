@@ -78,6 +78,14 @@ namespace clover::frontend
     {
         _console.power_on();
         _console.set_presentation_layer_mask(_visible_layer_mask);
+#if defined(CLOVER_WORKBENCH_PPU_LAYER_CAPTURE)
+        _console.set_raw_background_capture_enabled(true);
+        // Workbench advances the machine through instruction-domain stepping,
+        // so run_frame() does not bracket PPU composition for it.  Its
+        // specialized core keeps composition enabled continuously; the normal
+        // Player build contains neither this definition nor this branch.
+        _console.set_frame_capture_enabled(true);
+#endif
         _machine_running = true;
         _debug_paused = false;
     }
@@ -86,6 +94,10 @@ namespace clover::frontend
     {
         _console.reset();
         _console.set_presentation_layer_mask(_visible_layer_mask);
+#if defined(CLOVER_WORKBENCH_PPU_LAYER_CAPTURE)
+        _console.set_raw_background_capture_enabled(true);
+        _console.set_frame_capture_enabled(true);
+#endif
     }
 
     void snes_emulator_core_t::set_gamepad_state(uint32_t port, const gamepad_state_t& state) noexcept
@@ -106,6 +118,13 @@ namespace clover::frontend
                 .visible_layer_mask = _visible_layer_mask
             });
         }
+    }
+
+    void snes_emulator_core_t::refresh_video_frame() noexcept
+    {
+        _console.refresh_framebuffer({
+            .visible_layer_mask = _visible_layer_mask
+        });
     }
 
     display_info_t snes_emulator_core_t::display_info() const noexcept
@@ -206,6 +225,39 @@ namespace clover::frontend
         return true;
     }
 
+    bool snes_emulator_core_t::inspect_video_plane_frame(
+        video_plane_id_t id,
+        video_plane_frame_view_t& destination
+    ) const noexcept
+    {
+#if defined(CLOVER_WORKBENCH_PPU_LAYER_CAPTURE)
+        const core::framebuffer_t* frame{};
+        uint64_t frame_index{};
+        if (id >= 4u
+            || !_console.raw_background_frame(
+                static_cast<uint8_t>(id), frame, frame_index
+            )
+            || frame == nullptr)
+        {
+            destination = {};
+            return false;
+        }
+        destination = {
+            .pixels = frame->data(),
+            .width = frame->width(),
+            .height = frame->height(),
+            .pitch_bytes = frame->pitch_pixels() * sizeof(uint32_t),
+            .format = pixel_format_t::argb8888,
+            .frame_index = frame_index
+        };
+        return true;
+#else
+        static_cast<void>(id);
+        destination = {};
+        return false;
+#endif
+    }
+
     size_t snes_emulator_core_t::inspect_tile_layers(
         std::span<tile_layer_state_t> destination
     ) const noexcept
@@ -274,6 +326,34 @@ namespace clover::frontend
             };
         }
         return count;
+    }
+
+    bool snes_emulator_core_t::inspect_object_layer(
+        object_layer_state_t& destination
+    ) const noexcept
+    {
+        if (!_machine_running)
+            return false;
+        const core::ppu_object_render_state_t& objects{
+            _console.ppu_render_state().objects
+        };
+        destination = {
+            .active = objects.above_enabled || objects.below_enabled,
+            .oam = { snes_debug::k_oam_space, 0u },
+            .tile_graphics = {
+                snes_debug::k_vram_space,
+                static_cast<uint64_t>(objects.tiledata_address) * 2u
+            },
+            .palette = { snes_debug::k_cgram_space, 256u },
+            .tile_base_word_address = objects.tiledata_address,
+            .name_select = objects.nameselect,
+            .base_size = objects.base_size,
+            .first_sprite = objects.first_sprite,
+            .interlace = objects.interlace,
+            .range_over = objects.range_over,
+            .time_over = objects.time_over
+        };
+        return true;
     }
 
     std::span<const execution_domain_descriptor_t>
@@ -416,6 +496,27 @@ namespace clover::frontend
                     (byte_address & 1u) == 0u
                         ? word & 0x00ffu
                         : word >> 8u
+                );
+            }
+            return {
+                .status = memory_inspection_status_t::complete,
+                .bytes_read = destination.size()
+            };
+        }
+
+        if (address.space == snes_debug::k_oam_space)
+        {
+            if (!in_range(544u))
+            {
+                return {
+                    .status = memory_inspection_status_t::out_of_range
+                };
+            }
+            const auto& oam{ _console.ppu_oam() };
+            for (size_t index{}; index < destination.size(); ++index)
+            {
+                destination[index] = static_cast<std::byte>(
+                    oam[static_cast<size_t>(address.value) + index]
                 );
             }
             return {

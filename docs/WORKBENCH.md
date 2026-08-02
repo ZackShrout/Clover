@@ -49,10 +49,13 @@ Use `--project-root <path>` to override the platform application-data location.
 | G / Shift+G | Open or cycle tile assets / return to disassembly |
 | Arrow keys in tile view | Select a tile |
 | Shift+arrow keys in tile view | Select a pixel within the tile |
-| Ctrl+1 / Ctrl+2 / Ctrl+3 / Ctrl+4 | Bind the corresponding active live BG tile map |
+| Ctrl+1 / Ctrl+2 / Ctrl+3 / Ctrl+4 | Open the corresponding active raw rendered BG frame |
+| R in a live BG view | Toggle raw rendered frame / coherent backing tilemap |
 | H / Shift+H | Open or cycle tile maps / return to disassembly |
 | F in a live tile-map view | Toggle the current scrolled viewport / full backing map |
 | Arrow keys in tile-map view | Select a map entry |
+| O | Open or close the live OAM object viewer |
+| Arrow keys in OAM view | Select one of the 128 object entries |
 | Up / Down | Select an instruction |
 | Enter | Follow a statically known direct target |
 | Page Up / Page Down | Move the linear listing |
@@ -165,10 +168,22 @@ and horizontal/vertical flips. Both 8x8 and 16x16 entries are assembled in the
 viewer.
 
 Press `Tab` to watch the live game output while the debugger runs, then pause
-on the scene to inspect. Press `Ctrl+1` through `Ctrl+4` to bind the
+on the scene to inspect. Workbench's specialized core keeps normal composed
+frame production active during instruction-domain debugger execution, and the
+UI publishes the latest completed frame only while the output view is open.
+This makes the preview current without adding framebuffer copies to the other
+views or changing the Player loop. Press `Ctrl+1` through `Ctrl+4` to bind the
 corresponding active BG layer. The binding reads the PPU's already-decoded render configuration and
 automatically creates or updates its live CGRAM palette, VRAM tile set, and
-tile map, opens that map, and never reads stateful PPU ports. Press `H` to
+tile map, opens the completed raw rendered layer frame, and never reads stateful
+PPU ports. The raw frame records the PPU state that actually applied on every
+scanline, including raster-time scroll and map changes, main-screen enable, and
+the layer's main-screen window mask. Press `R` to switch to
+the coherent backing tilemap snapshot containing the layer configuration, all
+VRAM, and all CGRAM from the same execution boundary. This second view is useful
+for inspecting backing memory but deliberately does not claim to reconstruct
+mid-frame effects.
+Press `H` to
 cycle saved maps and `Shift+H` to return to disassembly. Arrow keys select an entry, and
 the inspector shows its raw word, position, character, palette group, priority,
 and flips. Live bindings open on the PPU's current 256x224 scrolled viewport;
@@ -177,6 +192,24 @@ color-zero pixels use a checkerboard so partially uploaded or sparse maps
 remain legible. Selecting a BG layer that is inactive in the current PPU mode closes
 the previous map instead of leaving stale layer contents visible. Mode 7 is
 intentionally deferred to an affine-specific viewer.
+
+The raw-layer capture is compiled only into the release-optimized Workbench
+core variant. The ordinary Player core is built from the same sources without
+the instrumentation definition and therefore contains no capture branch,
+frame storage, or diagnostic symbols.
+
+## OAM and sprite inspection
+
+Press `O` to inspect all 128 live SNES OAM entries. The grid distinguishes
+entries intersecting the 256x224 viewport from entries positioned outside it;
+arrow keys select an object. The selected object is assembled from its live
+4bpp VRAM tiles and OBJ CGRAM palette with transparent color zero shown as a
+checkerboard. The inspector reports signed screen position, dimensions,
+character and name table, palette, priority, flips, size selection, first
+sprite, and range/time overflow flags. SNES OAM has no enable bit, so a fully
+transparent in-range entry is shown accurately rather than labeled disabled.
+The read-only `snes.oam` debug space does not access `$2138` or disturb its
+address latch.
 
 ## Project storage
 

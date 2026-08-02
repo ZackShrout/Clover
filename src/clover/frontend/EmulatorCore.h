@@ -91,6 +91,16 @@ namespace clover::frontend
         bool enabled{ true };
     };
 
+    struct video_plane_frame_view_t
+    {
+        const void* pixels{ nullptr };
+        uint32_t width{ 0u };
+        uint32_t height{ 0u };
+        size_t pitch_bytes{ 0u };
+        pixel_format_t format{ pixel_format_t::argb8888 };
+        uint64_t frame_index{ 0u };
+    };
+
     struct video_plane_control_t
     {
     public:
@@ -98,6 +108,13 @@ namespace clover::frontend
         [[nodiscard]] virtual std::span<const video_plane_descriptor_t> video_planes() const noexcept = 0;
         [[nodiscard]] virtual bool set_video_plane_enabled(video_plane_id_t id,
                                                            bool enabled) noexcept = 0;
+        [[nodiscard]] virtual bool inspect_video_plane_frame(
+            video_plane_id_t,
+            video_plane_frame_view_t&
+        ) const noexcept
+        {
+            return false;
+        }
     };
 
     enum class tile_layer_format_t : uint8_t
@@ -126,6 +143,21 @@ namespace clover::frontend
         uint16_t vertical_scroll{ 0u };
     };
 
+    struct object_layer_state_t
+    {
+        bool active{ false };
+        debug_address_t oam{};
+        debug_address_t tile_graphics{};
+        debug_address_t palette{};
+        uint16_t tile_base_word_address{ 0u };
+        uint8_t name_select{ 0u };
+        uint8_t base_size{ 0u };
+        uint8_t first_sprite{ 0u };
+        bool interlace{ false };
+        bool range_over{ false };
+        bool time_over{ false };
+    };
+
     struct emulator_core_t
     {
     public:
@@ -137,6 +169,10 @@ namespace clover::frontend
         virtual void reset() noexcept = 0;
         virtual void set_gamepad_state(uint32_t port, const gamepad_state_t& state) noexcept = 0;
         virtual void run_frame() noexcept = 0;
+        // Debugger-driven execution can cross video-frame boundaries without
+        // entering run_frame().  Frontends that expose such execution may use
+        // this hook to publish the most recently completed display frame.
+        virtual void refresh_video_frame() noexcept {}
         [[nodiscard]] virtual display_info_t display_info() const noexcept = 0;
         [[nodiscard]] virtual video_frame_view_t video_frame() const noexcept = 0;
         [[nodiscard]] virtual audio_frame_view_t audio_frame() const noexcept = 0;
@@ -153,6 +189,12 @@ namespace clover::frontend
         ) const noexcept
         {
             return 0u;
+        }
+        [[nodiscard]] virtual bool inspect_object_layer(
+            object_layer_state_t&
+        ) const noexcept
+        {
+            return false;
         }
         [[nodiscard]] virtual debug_target_t* debug_target() noexcept
         {

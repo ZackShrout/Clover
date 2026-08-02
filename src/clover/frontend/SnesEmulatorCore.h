@@ -23,6 +23,7 @@ namespace clover::frontend
         inline constexpr address_space_id_t k_apu_ram_space{ 4u };
         inline constexpr address_space_id_t k_cgram_space{ 5u };
         inline constexpr address_space_id_t k_vram_space{ 6u };
+        inline constexpr address_space_id_t k_oam_space{ 7u };
     }
 
     [[nodiscard]] uint16_t snes_joypad_state(const gamepad_state_t& state) noexcept;
@@ -43,6 +44,7 @@ namespace clover::frontend
         void reset() noexcept override;
         void set_gamepad_state(uint32_t port, const gamepad_state_t& state) noexcept override;
         void run_frame() noexcept override;
+        void refresh_video_frame() noexcept override;
         [[nodiscard]] display_info_t display_info() const noexcept override;
         [[nodiscard]] video_frame_view_t video_frame() const noexcept override;
         [[nodiscard]] audio_frame_view_t audio_frame() const noexcept override;
@@ -55,8 +57,15 @@ namespace clover::frontend
         [[nodiscard]] std::span<const video_plane_descriptor_t> video_planes() const noexcept override;
         [[nodiscard]] bool set_video_plane_enabled(video_plane_id_t id,
                                                    bool enabled) noexcept override;
+        [[nodiscard]] bool inspect_video_plane_frame(
+            video_plane_id_t id,
+            video_plane_frame_view_t& destination
+        ) const noexcept override;
         [[nodiscard]] size_t inspect_tile_layers(
             std::span<tile_layer_state_t> destination
+        ) const noexcept override;
+        [[nodiscard]] bool inspect_object_layer(
+            object_layer_state_t& destination
         ) const noexcept override;
         [[nodiscard]] std::span<const execution_domain_descriptor_t>
             execution_domains() const noexcept override;
@@ -134,7 +143,7 @@ namespace clover::frontend
                 processor_architecture_t::sony_spc700
             }
         };
-        std::array<address_space_descriptor_t, 6> _address_spaces{
+        std::array<address_space_descriptor_t, 7> _address_spaces{
             address_space_descriptor_t{
                 snes_debug::k_cpu_bus_space,
                 "snes.cpu-bus",
@@ -182,6 +191,14 @@ namespace clover::frontend
                 address_space_kind_t::memory,
                 16u,
                 65536u
+            },
+            address_space_descriptor_t{
+                snes_debug::k_oam_space,
+                "snes.oam",
+                "PPU OAM",
+                address_space_kind_t::memory,
+                10u,
+                544u
             }
         };
         std::array<processor_register_descriptor_t, 10> _main_cpu_registers{

@@ -159,9 +159,23 @@ priority, and horizontal/vertical flip attributes. Inactive BG selections
 clear the map view so a previously selected layer cannot masquerade as the
 requested one. `Tab` provides a live game-output preview so a debugger pause
 and BG capture can be tied to a visible scene instead of an arbitrary upload.
+That preview publishes completed composed frames produced during Workbench's
+instruction-domain execution; it is not a separate renderer.
 Live maps default to the current scrolled viewport; `F` toggles the complete
-backing map. Normal `F5` uses exact core-side fast Continue; `Shift+F5` opts
+backing map. `Ctrl+1` through `Ctrl+4` now default to the selected layer's
+completed raw rendered frame, captured with the PPU state that actually applied
+on every scanline; `R` switches to the coherent layer-register/VRAM/CGRAM
+backing-map snapshot. The raster capture exists only in the separately compiled,
+release-optimized Workbench core variant. The Player core contains neither its
+capture branch nor its storage. Normal `F5` uses
+exact core-side fast Continue; `Shift+F5` opts
 into slower per-instruction tracing when runtime analysis evidence is needed.
+
+Stage 5.5 adds a read-only live OAM boundary and independent decoding of all
+128 SNES object entries. Press `O` to select sprites, inspect their position,
+size, tile, palette, priority, and flips, and render the selected object from
+live 4bpp VRAM and OBJ CGRAM. Off-viewport entries are identified without
+inventing an enable bit that SNES OAM does not provide.
 
 ## SDL Desktop App
 

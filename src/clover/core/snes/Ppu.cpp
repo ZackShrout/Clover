@@ -658,6 +658,9 @@ namespace clover::core
         _presented_frame.clear();
         _presentation_composed_frame.clear();
         _presentation_presented_frame.clear();
+#if defined(CLOVER_WORKBENCH_PPU_LAYER_CAPTURE)
+        clear_raw_background_frames();
+#endif
         _frame_high_geometry = false;
         _completed_frames.clear();
         std::fill(_registers.begin(), _registers.end(), 0);
@@ -840,6 +843,36 @@ namespace clover::core
         synchronize_pipeline();
         _frame_capture_enabled = enabled;
     }
+
+#if defined(CLOVER_WORKBENCH_PPU_LAYER_CAPTURE)
+    void ppu_t::set_raw_background_capture_enabled(bool enabled) noexcept
+    {
+        synchronize_pipeline();
+        if (_raw_background_capture_enabled == enabled)
+            return;
+        _raw_background_capture_enabled = enabled;
+        clear_raw_background_frames();
+    }
+
+    bool ppu_t::raw_background_frame(
+        uint8_t background_index,
+        const framebuffer_t*& frame,
+        uint64_t& frame_index
+    ) const noexcept
+    {
+        if (!_raw_background_frame_valid || background_index >= 4u)
+        {
+            frame = nullptr;
+            frame_index = 0u;
+            return false;
+        }
+        frame = &_raw_background_frames[_raw_background_completed_set][
+            background_index
+        ];
+        frame_index = _raw_background_frame_index;
+        return true;
+    }
+#endif
 
     void ppu_t::set_completed_frame_queue_enabled(bool enabled) noexcept
     {
@@ -2602,6 +2635,130 @@ namespace clover::core
                             halve);
     }
 
+#if defined(CLOVER_WORKBENCH_PPU_LAYER_CAPTURE)
+    void ppu_t::clear_raw_background_frames() noexcept
+    {
+        for (auto& frame_set : _raw_background_frames)
+        {
+            for (framebuffer_t& frame : frame_set)
+            {
+                frame.set_geometry(
+                    framebuffer_t::k_width,
+                    framebuffer_t::k_height
+                );
+                frame.clear(0u);
+            }
+        }
+        _raw_background_write_set = 0u;
+        _raw_background_completed_set = 0u;
+        _raw_background_frame_index = 0u;
+        _raw_background_frame_valid = false;
+    }
+
+    void ppu_t::prepare_raw_background_frames(bool high_geometry) noexcept
+    {
+        for (framebuffer_t& frame
+             : _raw_background_frames[_raw_background_write_set])
+        {
+            frame.set_geometry(
+                high_geometry ? framebuffer_t::k_max_width
+                              : framebuffer_t::k_width,
+                high_geometry ? framebuffer_t::k_max_height
+                              : framebuffer_t::k_height
+            );
+            frame.clear(0u);
+        }
+    }
+
+    void ppu_t::publish_raw_background_frames() noexcept
+    {
+        if (!_raw_background_capture_enabled)
+            return;
+        _raw_background_completed_set = _raw_background_write_set;
+        _raw_background_frame_index = _frame_counter;
+        _raw_background_frame_valid = true;
+        _raw_background_write_set ^= 1u;
+    }
+
+    void ppu_t::capture_raw_background_pixel(
+        uint16_t scanline,
+        uint16_t x
+    ) noexcept
+    {
+        if (!_raw_background_capture_enabled)
+            return;
+
+        constexpr size_t k_non_overscan_top_border{ 8u };
+        const size_t row_index{
+            static_cast<size_t>(scanline - 1u)
+                + (_display_overscan ? 0u : k_non_overscan_top_border)
+        };
+        if (row_index >= framebuffer_t::k_height)
+            return;
+
+        const size_t sample_x{ static_cast<size_t>(x) };
+        const size_t output_x{
+            _frame_high_geometry && !_screen_state.hires ? sample_x * 2u
+                                                         : sample_x
+        };
+        const size_t output_y{
+            _frame_high_geometry
+                ? row_index * 2u
+                    + (_display_interlace && _counter.odd_field ? 1u : 0u)
+                : row_index
+        };
+
+        for (uint8_t background_index{}; background_index < 4u;
+             ++background_index)
+        {
+            // Capture the isolated layer as the PPU admits it to the main
+            // screen. This retains raster-time map/scroll state while also
+            // honoring TM and the layer's main-screen window mask. Capturing
+            // the earlier tile candidate leaks offscreen dialogue buffers and
+            // other content the game deliberately masks from presentation.
+            const ppu_pixel_candidate_t candidate{
+                _compositor_state.backgrounds[background_index]
+                    .above_samples[sample_x]
+            };
+            uint32_t rgba8{};
+            if (candidate.priority != 0u)
+            {
+                const uint16_t color{
+                    _color_math_state.direct_color
+                        && candidate.source
+                            == ppu_pixel_source_t::background_1
+                        && (_bg_state.mode == 3u || _bg_state.mode == 4u
+                            || _bg_state.mode == 7u)
+                        ? direct_color(
+                            candidate.palette, candidate.palette_group
+                        )
+                        : _cgram[candidate.palette]
+                };
+                rgba8 = snes_color_to_rgba8(color, _display.brightness);
+            }
+
+            framebuffer_t& frame{
+                _raw_background_frames[_raw_background_write_set][
+                    background_index
+                ]
+            };
+            const size_t pitch{ frame.pitch_pixels() };
+            frame.data()[output_y * pitch + output_x] = rgba8;
+            if (_frame_high_geometry && !_screen_state.hires)
+                frame.data()[output_y * pitch + output_x + 1u] = rgba8;
+            if (_frame_high_geometry && !_display_interlace)
+            {
+                frame.data()[(output_y + 1u) * pitch + output_x] = rgba8;
+                if (!_screen_state.hires)
+                {
+                    frame.data()[(output_y + 1u) * pitch + output_x + 1u]
+                        = rgba8;
+                }
+            }
+        }
+    }
+#endif
+
     void ppu_t::promote_framebuffer_geometry() noexcept
     {
         if (_frame_high_geometry)
@@ -2632,6 +2789,16 @@ namespace clover::core
         else
             _presentation_composed_frame.set_geometry(framebuffer_t::k_max_width,
                                                        framebuffer_t::k_max_height);
+#if defined(CLOVER_WORKBENCH_PPU_LAYER_CAPTURE)
+        if (_raw_background_capture_enabled)
+        {
+            for (framebuffer_t& frame
+                 : _raw_background_frames[_raw_background_write_set])
+            {
+                promote(frame);
+            }
+        }
+#endif
         _frame_high_geometry = true;
     }
 
@@ -2732,6 +2899,10 @@ namespace clover::core
             _compositor_state.objects.above = _compositor_state.objects.above_samples[0];
             _compositor_state.objects.below = _compositor_state.objects.below_samples[0];
         }
+
+#if defined(CLOVER_WORKBENCH_PPU_LAYER_CAPTURE)
+        capture_raw_background_pixel(scanline, x);
+#endif
 
         if (!_frame_capture_enabled)
             return;
@@ -4295,6 +4466,9 @@ namespace clover::core
             // its odd/even state was still current.
             synchronize_pipeline();
             ++_frame_counter;
+#if defined(CLOVER_WORKBENCH_PPU_LAYER_CAPTURE)
+            publish_raw_background_frames();
+#endif
             _presented_frame = _composed_frame;
             if (_presentation_layer_mask != ppu_presentation_options_t::k_all_layers_visible)
                 _presentation_presented_frame = _presentation_composed_frame;
@@ -4324,6 +4498,10 @@ namespace clover::core
                 _presentation_composed_frame.set_geometry(_composed_frame.width(),
                                                           _composed_frame.height());
             }
+#if defined(CLOVER_WORKBENCH_PPU_LAYER_CAPTURE)
+            if (_raw_background_capture_enabled)
+                prepare_raw_background_frames(_frame_high_geometry);
+#endif
             result.frame_complete = true;
             result.frames_completed = 1;
         }
@@ -4903,6 +5081,9 @@ namespace clover::core
         _oam_write_trace = {};
         _oam_write_trace_count = 0;
         _completed_frames.clear();
+#if defined(CLOVER_WORKBENCH_PPU_LAYER_CAPTURE)
+        clear_raw_background_frames();
+#endif
         return true;
     }
 

@@ -450,6 +450,24 @@ namespace clover::core
         return _ppu.compositor_snapshot();
     }
 
+#if defined(CLOVER_WORKBENCH_PPU_LAYER_CAPTURE)
+    void console_t::set_raw_background_capture_enabled(bool enabled) noexcept
+    {
+        _ppu.set_raw_background_capture_enabled(enabled);
+    }
+
+    bool console_t::raw_background_frame(
+        uint8_t background_index,
+        const framebuffer_t*& frame,
+        uint64_t& frame_index
+    ) const noexcept
+    {
+        return _ppu.raw_background_frame(
+            background_index, frame, frame_index
+        );
+    }
+#endif
+
     std::size_t console_t::ppu_cgram_write_trace_count() const noexcept
     {
         return _ppu.cgram_write_trace_count();

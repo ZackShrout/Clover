@@ -375,6 +375,14 @@ namespace clover::core
                      const ppu_presentation_options_t& options = {}) const noexcept;
         void set_presentation_layer_mask(uint8_t visible_layer_mask) noexcept;
         void set_frame_capture_enabled(bool enabled) noexcept;
+#if defined(CLOVER_WORKBENCH_PPU_LAYER_CAPTURE)
+        void set_raw_background_capture_enabled(bool enabled) noexcept;
+        [[nodiscard]] bool raw_background_frame(
+            uint8_t background_index,
+            const framebuffer_t*& frame,
+            uint64_t& frame_index
+        ) const noexcept;
+#endif
         void set_completed_frame_queue_enabled(bool enabled) noexcept;
         [[nodiscard]] bool pop_completed_frame(framebuffer_t& framebuffer) noexcept;
         void set_entropy_mode(ppu_entropy_mode_t mode) noexcept;
@@ -467,6 +475,12 @@ namespace clover::core
         void promote_framebuffer_geometry() noexcept;
         void render_scanline(uint16_t scanline) noexcept;
         void render_placeholder_frame() noexcept;
+#if defined(CLOVER_WORKBENCH_PPU_LAYER_CAPTURE)
+        void capture_raw_background_pixel(uint16_t scanline, uint16_t x) noexcept;
+        void publish_raw_background_frames() noexcept;
+        void prepare_raw_background_frames(bool high_geometry) noexcept;
+        void clear_raw_background_frames() noexcept;
+#endif
 
         struct ppu_display_state_t
         {
@@ -773,6 +787,14 @@ namespace clover::core
         framebuffer_t _presented_frame{};
         framebuffer_t _presentation_composed_frame{};
         framebuffer_t _presentation_presented_frame{};
+#if defined(CLOVER_WORKBENCH_PPU_LAYER_CAPTURE)
+        std::array<std::array<framebuffer_t, 4>, 2> _raw_background_frames{};
+        uint8_t _raw_background_write_set{ 0u };
+        uint8_t _raw_background_completed_set{ 0u };
+        uint64_t _raw_background_frame_index{ 0u };
+        bool _raw_background_capture_enabled{ false };
+        bool _raw_background_frame_valid{ false };
+#endif
         bool _frame_high_geometry{ false };
         uint8_t _presentation_layer_mask{ ppu_presentation_options_t::k_all_layers_visible };
         std::array<uint8_t, 0x40> _registers{};

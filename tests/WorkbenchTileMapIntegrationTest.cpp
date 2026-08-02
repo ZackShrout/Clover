@@ -7,6 +7,7 @@
 #include "clover/analysis/TileMap.h"
 #include "clover/frontend/EmulatorCore.h"
 #include "clover/frontend/SnesEmulatorCore.h"
+#include "clover/workbench/LivePpuSnapshot.h"
 #include "clover/workbench/SnesDebugger.h"
 
 #include <array>
@@ -49,6 +50,16 @@ namespace
             0x8du, 0x17u, 0x21u,      // STA $2117: map address high
             0xa9u, 0x00u,             // LDA #$00
             0x8du, 0x18u, 0x21u,      // STA $2118: character 0
+            0x8du, 0x19u, 0x21u,      // STA $2119: attributes 0
+            0xa9u, 0x24u,             // LDA #$24
+            0x8du, 0x07u, 0x21u,      // STA $2107: BG1 map at word $2400
+            0xa9u, 0x00u,             // LDA #$00
+            0x8du, 0x16u, 0x21u,      // STA $2116: new map address low
+            0xa9u, 0x24u,             // LDA #$24
+            0x8du, 0x17u, 0x21u,      // STA $2117: new map address high
+            0xa9u, 0x01u,             // LDA #$01
+            0x8du, 0x18u, 0x21u,      // STA $2118: character 1
+            0xa9u, 0x00u,             // LDA #$00
             0x8du, 0x19u, 0x21u,      // STA $2119: attributes 0
             0x80u, 0xfeu              // BRA *
         };
@@ -97,7 +108,7 @@ int main()
     std::string error{};
     if (target == nullptr || !debugger.initialize(*target, error))
         return fail("debugger", error);
-    for (size_t step{}; step < 24u; ++step)
+    for (size_t step{}; step < 23u; ++step)
     {
         if (!debugger.step_instruction(error))
             return fail("execute_upload", error);
@@ -117,52 +128,29 @@ int main()
     {
         return fail("live_layer_snapshot");
     }
-    const auto reader{
-        [target](const analysis::address_t& address) -> std::optional<uint8_t>
+    workbench::live_ppu_snapshot_t first_snapshot{};
+    if (!workbench::capture_live_ppu_snapshot(
+            *emulator, *target, 0u, first_snapshot, error
+        ))
+    {
+        return fail("capture_first", error);
+    }
+    const auto first_assets{
+        workbench::make_live_bg_assets(first_snapshot.layer)
+    };
+    if (!first_assets.has_value())
+        return fail("first_assets");
+    const auto first_reader{
+        [&first_snapshot](const analysis::address_t& address)
         {
-            if (address.address_space != "snes.vram")
-                return std::nullopt;
-            std::byte byte{};
-            const frontend::memory_inspection_result_t result{
-                target->inspect_memory(
-                    {
-                        frontend::snes_debug::k_vram_space,
-                        address.address
-                    },
-                    std::span<std::byte>{ &byte, 1u }
-                )
-            };
-            return result.status
-                    == frontend::memory_inspection_status_t::complete
-                ? std::optional<uint8_t>{ std::to_integer<uint8_t>(byte) }
-                : std::nullopt;
+            return first_snapshot.inspect_byte(address);
         }
     };
     const analysis::decoded_tile_set_t tiles{
-        analysis::decode_tiles(
-            {
-                .stable_id = "tiles",
-                .name = "Tiles",
-                .location = { "snes.vram", 0u },
-                .tile_count = 1u,
-                .format = analysis::tile_format_t::snes_4bpp
-            },
-            reader
-        )
+        analysis::decode_tiles(first_assets->tiles, first_reader)
     };
     const analysis::decoded_tile_map_t map{
-        analysis::decode_tile_map(
-            {
-                .stable_id = "map",
-                .name = "Map",
-                .location = { "snes.vram", 0x4000u },
-                .screen_size = 0u,
-                .tile_size = 8u,
-                .tile_asset_id = "tiles",
-                .palette_id = "palette"
-            },
-            reader
-        )
+        analysis::decode_tile_map(first_assets->map, first_reader)
     };
     if (!tiles.complete() || tiles.tiles.front().pixels[0] != 1u
         || !map.complete() || map.entries.front().character != 0u
@@ -171,9 +159,46 @@ int main()
         return fail("live_map_decode");
     }
 
+    for (size_t step{}; step < 10u; ++step)
+    {
+        if (!debugger.step_instruction(error))
+            return fail("execute_rebind", error);
+    }
+    workbench::live_ppu_snapshot_t second_snapshot{};
+    if (!workbench::capture_live_ppu_snapshot(
+            *emulator, *target, 0u, second_snapshot, error
+        ))
+    {
+        return fail("capture_second", error);
+    }
+    const auto second_assets{
+        workbench::make_live_bg_assets(second_snapshot.layer)
+    };
+    if (!second_assets.has_value())
+        return fail("second_assets");
+    const auto second_reader{
+        [&second_snapshot](const analysis::address_t& address)
+        {
+            return second_snapshot.inspect_byte(address);
+        }
+    };
+    const analysis::decoded_tile_map_t second_map{
+        analysis::decode_tile_map(second_assets->map, second_reader)
+    };
+    const analysis::decoded_tile_map_t retained_first_map{
+        analysis::decode_tile_map(first_assets->map, first_reader)
+    };
+    if (first_snapshot.layer.tile_map.value != 0x4000u
+        || second_snapshot.layer.tile_map.value != 0x4800u
+        || retained_first_map.entries.front().raw_value != 0u
+        || second_map.entries.front().raw_value != 1u)
+    {
+        return fail("coherent_snapshot_rebind");
+    }
+
     std::printf(
         "Workbench tile-map integration passed: PPU BG configuration and "
-        "CPU uploads -> live layer snapshot -> decoded map and tile\n"
+        "CPU uploads -> coherent live PPU snapshots -> decoded map and tile\n"
     );
     return 0;
 }

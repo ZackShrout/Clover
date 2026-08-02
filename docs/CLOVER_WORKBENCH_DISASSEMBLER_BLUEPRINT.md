@@ -59,9 +59,9 @@ The disassembler is the first major view into that system, but it is only one vi
 ## Document Status and Planning Horizons
 
 This document is a product north star and architectural direction. Section 28
-also serves as the authoritative delivery ledger. As of July 30, 2026, Stages
-0 through 4 and the Stage 5.1-5.4 typed-data, palette, tile-graphics, and
-tile-map foundations are complete: Clover has the inspection and checkpoint
+also serves as the authoritative delivery ledger. As of August 1, 2026, Stages
+0 through 4 and the Stage 5.1-5.5 typed-data, palette, tile-graphics,
+tile-map, and OAM foundations are complete: Clover has the inspection and checkpoint
 substrate, the structured decoder, the persistent Workbench, live debugger
 integration, the hybrid analyzer, durable typed definitions and object
 bindings, and persistent palette, tile, and background-map inspection.
@@ -3394,6 +3394,14 @@ source range as data; live VRAM maps remain device-space facts.
 The Workbench binds an active BG layer and its live CGRAM/tile dependencies in
 one action, assembles 8x8 and 16x16 entries with palette groups and flips, and
 provides entry navigation plus raw character/palette/priority/flip inspection.
+Backing-map rendering consumes a single Workbench-owned capture of layer
+metadata, VRAM, and CGRAM. It revalidates the layer metadata after copying
+memory and rejects any capture that changed during collection. The default raw
+rendered BG view comes from a separate release-optimized Workbench core variant
+that captures each layer after its main-screen enable and window mask with the
+PPU state active on every scanline, so raster effects and mid-frame map/scroll
+changes are represented without exposing hidden backing-map buffers. The
+normal Player core compiles out both the capture path and its storage.
 Mode 7 remains reserved for its affine-specific viewer.
 
 Normal Continue is a core-side batch operation with exact breakpoint,
@@ -3408,13 +3416,39 @@ atomic invalid-link rejection. `clover_analysis_boundary_test` guards the
 system-neutral live layer snapshot.
 `clover_workbench_tile_map_integration_test` executes real PPU configuration,
 tile, and map uploads and follows them through live layer discovery and both
-decoders.
+decoders. Its coherent-snapshot regression changes the live map base and map
+contents between two captures and proves that each capture retains the correct
+matching metadata and bytes. `clover_workbench_layer_frame_integration_test`
+runs through the optimized debugger Continue path and proves a completed raw
+BG frame contains both opaque rendered pixels and transparent layer pixels.
+
+### Stage 5.5: OAM and sprite inspection
+
+Expose the PPU's 544-byte OAM array as a read-only debug address space and a
+system-neutral live object-layer configuration snapshot. Inspection must not
+touch `$2138`, alter the OAM address latch, or expose the PPU object itself.
+
+Decode all 128 native SNES OAM records independently in the analysis layer,
+including the high-table X and size bits, signed screen X, every OBJ size
+pair, character/name selection, palette, priority, flips, interlace sizing,
+viewport intersection, and wrapping VRAM tile addressing. The Workbench OAM
+view shows the complete entry set and renders the selected object from live
+4bpp VRAM and the OBJ half of CGRAM. OAM has no enable bit; entries outside
+the viewport are identified explicitly, while transparent graphics remain a
+checkerboard rather than being mislabeled as disabled.
+
+**Implementation status:** complete on August 1, 2026.
+`clover_oam_test` covers entry bits, size pairs, signed coordinates, flips,
+tile selection, VRAM wrapping, validation, and truncated sources.
+`clover_analysis_boundary_test` guards the side-effect-free OAM address space
+and object-layer snapshot. `clover_workbench_oam_integration_test` executes
+real `$2101/$2104`, VRAM, and CGRAM writes and follows them through the
+frontend boundary to decoded object graphics.
 
 ### Remaining Stage 5 work
 
 Implement:
 
-- OAM inspection;
 - DMA source tracking;
 - asset definitions;
 - script definitions;

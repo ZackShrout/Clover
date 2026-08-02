@@ -120,6 +120,14 @@ namespace clover::core
         [[nodiscard]] hardware_timing_snapshot_t capture_timing_snapshot() const noexcept;
         [[nodiscard]] ppu_render_state_snapshot_t ppu_render_state() const noexcept;
         [[nodiscard]] ppu_compositor_snapshot_t ppu_compositor_state() const noexcept;
+#if defined(CLOVER_WORKBENCH_PPU_LAYER_CAPTURE)
+        void set_raw_background_capture_enabled(bool enabled) noexcept;
+        [[nodiscard]] bool raw_background_frame(
+            uint8_t background_index,
+            const framebuffer_t*& frame,
+            uint64_t& frame_index
+        ) const noexcept;
+#endif
         [[nodiscard]] std::size_t ppu_cgram_write_trace_count() const noexcept;
         [[nodiscard]] const std::array<ppu_cgram_write_trace_t, ppu_cgram_write_trace_capacity>&
             ppu_cgram_write_trace() const noexcept;

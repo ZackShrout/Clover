@@ -156,6 +156,27 @@ tile-layer snapshot translates the PPU's already-decoded render state into map
 and tile addresses, dimensions, bit depth, and tile size. It does not expose
 the PPU object itself or read stateful registers. Schema v8 persists maps,
 validates their links before commit, and classifies CPU-bus sources as data.
+For backing-map inspection, Workbench copies that configuration, VRAM, and
+CGRAM into one frontend-owned snapshot at an execution boundary and decodes
+only from the copy. A second configuration read rejects a capture if state
+changed during the memory copies. This view intentionally describes backing
+memory and cannot represent HDMA or other mid-frame register changes.
+
+Raster-accurate raw BG inspection uses a distinct release-optimized
+`clover_core_workbench` target. A compile-time definition adds double-buffered
+per-BG diagnostic frames and captures each background after its main-screen
+enable and window mask, using the PPU state active on that scanline. Completed
+frame sets are published by index swap, without copying. The normal
+`clover_core` target is compiled without the definition, so the Player has no
+diagnostic object storage, hot-path condition, or diagnostic symbols. The two
+views remain separate in the frontend: isolated rendered frame by default,
+coherent backing tilemap on request.
+
+OAM inspection follows the same separation. The SNES frontend exposes the
+PPU-owned 544-byte OAM array read-only plus a small object-layer configuration
+snapshot; the analysis module independently decodes entries and resolves OBJ
+tile addresses. The UI assembles selected sprites through the existing VRAM
+tile and CGRAM palette readers and never receives a PPU implementation object.
 
 The project schema publishes a complete program model as one analysis
 generation transaction. A candidate is built outside SQLite; the prior
@@ -332,6 +353,12 @@ frontend capabilities. The SNES plane implementation recomposites BG1–BG4 and
 OBJ visibility in a separate presentation framebuffer. It does not write PPU
 registers or alter the canonical all-layers output, so diagnostic convenience
 does not become emulated hardware state.
+
+Instruction-domain debugging does not enter `run_frame()`. The specialized
+Workbench core therefore keeps composed-frame production enabled while the
+debugger advances hardware, and Workbench explicitly publishes the latest
+completed frame when its live-output view is visible. The ordinary Player uses
+the unchanged `run_frame()` presentation path and pays no diagnostic cost.
 
 This separation is important: a host slowdown must not become an emulated
 timing change, and a future renderer or offline tool must be able to consume

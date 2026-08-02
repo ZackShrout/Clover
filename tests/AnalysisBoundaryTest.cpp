@@ -590,14 +590,16 @@ int main()
     const std::span<const frontend::address_space_descriptor_t> spaces{
         target->address_spaces()
     };
-    if (spaces.size() != 6u
+    if (spaces.size() != 7u
         || spaces[0].stable_id != std::string_view{ "snes.cpu-bus" }
         || spaces[2].stable_id != std::string_view{ "media.canonical" }
         || spaces[2].size_bytes != 0x8000u
         || spaces[4].stable_id != std::string_view{ "snes.cgram" }
         || spaces[4].size_bytes != 512u
         || spaces[5].stable_id != std::string_view{ "snes.vram" }
-        || spaces[5].size_bytes != 65536u)
+        || spaces[5].size_bytes != 65536u
+        || spaces[6].stable_id != std::string_view{ "snes.oam" }
+        || spaces[6].size_bytes != 544u)
     {
         return fail("address_space_descriptors");
     }
@@ -614,6 +616,17 @@ int main()
     {
         return fail("tile_layer_snapshot_boundary");
     }
+    frontend::object_layer_state_t object_layer{};
+    if (!emulator->inspect_object_layer(object_layer)
+        || object_layer.oam.space != frontend::snes_debug::k_oam_space
+        || object_layer.tile_graphics.space
+            != frontend::snes_debug::k_vram_space
+        || object_layer.palette.space
+            != frontend::snes_debug::k_cgram_space
+        || object_layer.palette.value != 256u)
+    {
+        return fail("object_layer_snapshot_boundary");
+    }
 
     std::array<std::byte, 2> bytes{};
     const frontend::memory_inspection_result_t canonical_result{
@@ -628,6 +641,22 @@ int main()
         || bytes[1] != std::byte{ 0x24u })
     {
         return fail("canonical_space_inspection");
+    }
+    std::array<std::byte, 544> oam_bytes{};
+    const frontend::memory_inspection_result_t oam_result{
+        target->inspect_memory(
+            { frontend::snes_debug::k_oam_space, 0u },
+            oam_bytes
+        )
+    };
+    if (oam_result.status != frontend::memory_inspection_status_t::complete
+        || oam_result.bytes_read != oam_bytes.size()
+        || target->inspect_memory(
+            { frontend::snes_debug::k_oam_space, 543u },
+            bytes
+        ).status != frontend::memory_inspection_status_t::out_of_range)
+    {
+        return fail("oam_space_inspection");
     }
 
     bytes.fill(std::byte{ 0 });

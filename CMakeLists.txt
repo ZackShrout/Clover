@@ -132,12 +132,23 @@ target_include_directories(clover_utils PUBLIC src)
 add_library(clover_core STATIC ${CLOVER_CORE_SOURCES})
 target_include_directories(clover_core PUBLIC src)
 
+# Workbench uses a separately compiled release-optimized core whose PPU can
+# retain diagnostic layer frames.  The ordinary Player core is deliberately
+# compiled without this definition, so its hot paths and object layout contain
+# no Workbench capture code or storage.
+add_library(clover_core_workbench STATIC ${CLOVER_CORE_SOURCES})
+target_include_directories(clover_core_workbench PUBLIC src)
+target_compile_definitions(clover_core_workbench PUBLIC
+    CLOVER_WORKBENCH_PPU_LAYER_CAPTURE=1
+)
+
 add_library(clover_media_identity STATIC
     src/clover/frontend/MediaIdentity.cpp
 )
 target_include_directories(clover_media_identity PUBLIC src)
 
 add_library(clover_analysis STATIC
+    src/clover/analysis/Oam.cpp
     src/clover/analysis/Palette.cpp
     src/clover/analysis/TileGraphics.cpp
     src/clover/analysis/TileMap.cpp
@@ -163,6 +174,7 @@ target_link_libraries(clover_workbench_project PUBLIC
 )
 
 add_library(clover_workbench_debugger STATIC
+    src/clover/workbench/LivePpuSnapshot.cpp
     src/clover/workbench/SnesDebugger.cpp
 )
 target_include_directories(clover_workbench_debugger PUBLIC src)
@@ -175,6 +187,15 @@ add_library(clover_snes_checkpoint STATIC
 )
 target_include_directories(clover_snes_checkpoint PUBLIC src)
 target_link_libraries(clover_snes_checkpoint PUBLIC clover_core clover_media_identity)
+
+add_library(clover_snes_checkpoint_workbench STATIC
+    src/clover/frontend/SnesCheckpoint.cpp
+)
+target_include_directories(clover_snes_checkpoint_workbench PUBLIC src)
+target_link_libraries(clover_snes_checkpoint_workbench PUBLIC
+    clover_core_workbench
+    clover_media_identity
+)
 
 add_executable(clover ${CLOVER_APP_SOURCES})
 target_include_directories(clover PRIVATE src)
@@ -265,8 +286,8 @@ if(CLOVER_BUILD_SDL_FRONTEND)
     )
     target_include_directories(clover_workbench PRIVATE src)
     target_link_libraries(clover_workbench PRIVATE
-        clover_core
-        clover_snes_checkpoint
+        clover_core_workbench
+        clover_snes_checkpoint_workbench
         clover_workbench_debugger
         clover_workbench_project
         clover_utils
@@ -431,6 +452,12 @@ add_executable(clover_tile_map_test
 target_include_directories(clover_tile_map_test PRIVATE src)
 target_link_libraries(clover_tile_map_test PRIVATE clover_analysis)
 
+add_executable(clover_oam_test
+    tests/OamTest.cpp
+)
+target_include_directories(clover_oam_test PRIVATE src)
+target_link_libraries(clover_oam_test PRIVATE clover_analysis)
+
 add_executable(clover_machine_state_test
     tests/MachineStateTest.cpp
 )
@@ -571,6 +598,35 @@ add_executable(clover_workbench_tile_map_integration_test
     src/clover/frontend/EmulatorCore.cpp
     src/clover/frontend/SnesEmulatorCore.cpp
 )
+
+add_executable(clover_workbench_oam_integration_test
+    tests/WorkbenchOamIntegrationTest.cpp
+    src/clover/frontend/EmulatorCore.cpp
+    src/clover/frontend/SnesEmulatorCore.cpp
+)
+target_include_directories(
+    clover_workbench_oam_integration_test PRIVATE src
+)
+target_link_libraries(clover_workbench_oam_integration_test PRIVATE
+    clover_analysis
+    clover_core
+    clover_snes_checkpoint
+    clover_workbench_debugger
+)
+
+add_executable(clover_workbench_layer_frame_integration_test
+    tests/WorkbenchLayerFrameIntegrationTest.cpp
+    src/clover/frontend/EmulatorCore.cpp
+    src/clover/frontend/SnesEmulatorCore.cpp
+)
+target_include_directories(
+    clover_workbench_layer_frame_integration_test PRIVATE src
+)
+target_link_libraries(clover_workbench_layer_frame_integration_test PRIVATE
+    clover_core_workbench
+    clover_snes_checkpoint_workbench
+    clover_workbench_debugger
+)
 target_include_directories(
     clover_workbench_tile_map_integration_test PRIVATE src
 )
@@ -595,6 +651,7 @@ if(MSVC)
         clover_palette_test
         clover_tile_graphics_test
         clover_tile_map_test
+        clover_oam_test
         clover_machine_state_test
         clover_checkpoint_test
         clover_local_rom_regression_test
@@ -606,6 +663,8 @@ if(MSVC)
         clover_workbench_palette_integration_test
         clover_workbench_tile_graphics_integration_test
         clover_workbench_tile_map_integration_test
+        clover_workbench_oam_integration_test
+        clover_workbench_layer_frame_integration_test
     )
     if(TARGET clover_rom_library_test)
         list(APPEND CLOVER_TEST_TARGETS clover_rom_library_test)
@@ -628,6 +687,7 @@ add_test(NAME clover_typed_data_test COMMAND clover_typed_data_test)
 add_test(NAME clover_palette_test COMMAND clover_palette_test)
 add_test(NAME clover_tile_graphics_test COMMAND clover_tile_graphics_test)
 add_test(NAME clover_tile_map_test COMMAND clover_tile_map_test)
+add_test(NAME clover_oam_test COMMAND clover_oam_test)
 add_test(NAME clover_machine_state_test COMMAND clover_machine_state_test)
 add_test(NAME clover_checkpoint_test COMMAND clover_checkpoint_test)
 add_test(NAME clover_checkpoint_replay_test COMMAND clover_checkpoint_replay_test)
@@ -651,6 +711,14 @@ add_test(
 add_test(
     NAME clover_workbench_tile_map_integration_test
     COMMAND clover_workbench_tile_map_integration_test
+)
+add_test(
+    NAME clover_workbench_oam_integration_test
+    COMMAND clover_workbench_oam_integration_test
+)
+add_test(
+    NAME clover_workbench_layer_frame_integration_test
+    COMMAND clover_workbench_layer_frame_integration_test
 )
 if(CLOVER_BUILD_SDL_FRONTEND)
     add_test(NAME clover_rom_library_test COMMAND clover_rom_library_test)

@@ -6,6 +6,7 @@
 
 #include "clover/analysis/snes/StaticListing.h"
 #include "clover/frontend/SnesEmulatorCore.h"
+#include "clover/workbench/snes/SnesInstructionServices.h"
 
 #include <algorithm>
 #include <array>
@@ -37,18 +38,6 @@ namespace
         return (mask & bit) != 0u;
     }
 
-    [[nodiscard]] uint64_t register_value(
-        const clover::workbench::live_processor_state_t& state,
-        std::string_view stable_id
-    ) noexcept
-    {
-        for (size_t index{ 0 }; index < state.descriptors.size(); ++index)
-        {
-            if (state.descriptors[index].stable_id == stable_id)
-                return state.values[index].value;
-        }
-        return 0u;
-    }
 }
 
 namespace clover::workbench
@@ -260,7 +249,7 @@ namespace clover::workbench
             analysis::snes::decode_instruction(
                 *_source,
                 static_cast<uint32_t>(before_state.instruction_address.value),
-                before_state.decode_context
+                snes::decode_context(before_state)
             )
         };
         if (instruction.control_flow != analysis::snes::control_flow_kind_t::call)
@@ -317,23 +306,6 @@ namespace clover::workbench
             return false;
         }
         state.instruction_address = result.instruction_address;
-        const uint8_t status{
-            static_cast<uint8_t>(register_value(state, "p"))
-        };
-        const bool emulation{ register_value(state, "e") != 0u };
-        state.decode_context = {
-            .emulation = emulation
-                ? analysis::snes::bit_state_t::set
-                : analysis::snes::bit_state_t::clear,
-            .accumulator_width = (status & 0x20u) != 0u
-                ? analysis::snes::bit_state_t::set
-                : analysis::snes::bit_state_t::clear,
-            .index_width = (status & 0x10u) != 0u
-                ? analysis::snes::bit_state_t::set
-                : analysis::snes::bit_state_t::clear,
-            .direct_page = static_cast<uint16_t>(register_value(state, "d")),
-            .data_bank = static_cast<uint8_t>(register_value(state, "db"))
-        };
         return true;
     }
 
@@ -363,7 +335,7 @@ namespace clover::workbench
         return analysis::snes::decode_instruction(
             *_source,
             static_cast<uint32_t>(state.instruction_address.value),
-            state.decode_context
+            snes::decode_context(state)
         );
     }
 
@@ -424,7 +396,7 @@ namespace clover::workbench
             analysis::snes::decode_instruction(
                 *_source,
                 static_cast<uint32_t>(before_state.instruction_address.value),
-                before_state.decode_context
+                snes::decode_context(before_state)
             )
         };
         _observations->clear_observations();
@@ -827,10 +799,16 @@ namespace clover::workbench
         const uint32_t to{
             static_cast<uint32_t>(after.instruction_address.value) & 0x00ffffffu
         };
+        const analysis::snes::cpu_decode_context_t context_before{
+            snes::decode_context(before)
+        };
+        const analysis::snes::cpu_decode_context_t context_after{
+            snes::decode_context(after)
+        };
         const std::string key{
             std::to_string(from) + ">" + std::to_string(to) + "|"
-            + analysis::snes::context_signature(before.decode_context) + "|"
-            + analysis::snes::context_signature(after.decode_context) + "|"
+            + analysis::snes::context_signature(context_before) + "|"
+            + analysis::snes::context_signature(context_after) + "|"
             + _analysis_session
         };
         if (const auto found{ _runtime_edge_indexes.find(key) };
@@ -871,8 +849,8 @@ namespace clover::workbench
         _runtime_edges.push_back({
             .from = from,
             .to = to,
-            .context_before = before.decode_context,
-            .context_after = after.decode_context,
+            .context_before = context_before,
+            .context_after = context_after,
             .from_identity = identity(before.instruction_address),
             .to_identity = identity(after.instruction_address),
             .session = _analysis_session,

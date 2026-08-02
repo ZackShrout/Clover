@@ -174,9 +174,25 @@ target_link_libraries(clover_workbench_project PUBLIC
     SQLite::SQLite3
 )
 
+add_library(clover_workbench_model STATIC
+    src/clover/workbench/ToolRegistry.cpp
+)
+target_include_directories(clover_workbench_model PUBLIC src)
+
+add_library(clover_workbench_support STATIC
+    src/clover/workbench/WorkbenchTargetSupport.cpp
+    src/clover/workbench/snes/SnesWorkbenchSupport.cpp
+)
+target_include_directories(clover_workbench_support PUBLIC src)
+target_link_libraries(clover_workbench_support PUBLIC
+    clover_workbench_model
+    clover_workbench_project
+)
+
 add_library(clover_workbench_debugger STATIC
     src/clover/workbench/LivePpuSnapshot.cpp
     src/clover/workbench/SnesDebugger.cpp
+    src/clover/workbench/snes/SnesInstructionServices.cpp
 )
 target_include_directories(clover_workbench_debugger PUBLIC src)
 target_link_libraries(clover_workbench_debugger PUBLIC
@@ -290,6 +306,7 @@ if(CLOVER_BUILD_SDL_FRONTEND)
         clover_core_workbench
         clover_snes_checkpoint_workbench
         clover_workbench_debugger
+        clover_workbench_support
         clover_workbench_project
         clover_utils
         SDL3::SDL3
@@ -537,6 +554,14 @@ target_link_libraries(clover_workbench_project_test PRIVATE
     clover_workbench_project
 )
 
+add_executable(clover_workbench_model_test
+    tests/WorkbenchModelTest.cpp
+)
+target_include_directories(clover_workbench_model_test PRIVATE src)
+target_link_libraries(clover_workbench_model_test PRIVATE
+    clover_workbench_model
+)
+
 add_executable(clover_workbench_debugger_test
     tests/WorkbenchDebuggerTest.cpp
     src/clover/frontend/EmulatorCore.cpp
@@ -547,6 +572,7 @@ target_link_libraries(clover_workbench_debugger_test PRIVATE
     clover_core
     clover_snes_checkpoint
     clover_workbench_debugger
+    clover_workbench_support
 )
 
 add_executable(clover_workbench_analysis_integration_test
@@ -672,6 +698,7 @@ if(MSVC)
         clover_sdl_audio_pacing_test
         clover_file_system_test
         clover_workbench_project_test
+        clover_workbench_model_test
         clover_workbench_debugger_test
         clover_workbench_analysis_integration_test
         clover_workbench_palette_integration_test
@@ -710,6 +737,7 @@ add_test(NAME clover_local_rom_regression_test COMMAND clover_local_rom_regressi
 add_test(NAME clover_sdl_audio_pacing_test COMMAND clover_sdl_audio_pacing_test)
 add_test(NAME clover_file_system_test COMMAND clover_file_system_test)
 add_test(NAME clover_workbench_project_test COMMAND clover_workbench_project_test)
+add_test(NAME clover_workbench_model_test COMMAND clover_workbench_model_test)
 add_test(NAME clover_workbench_debugger_test COMMAND clover_workbench_debugger_test)
 add_test(
     NAME clover_workbench_analysis_integration_test

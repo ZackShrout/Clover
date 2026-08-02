@@ -6,6 +6,8 @@
 #include "clover/frontend/EmulatorCore.h"
 #include "clover/frontend/SnesEmulatorCore.h"
 #include "clover/workbench/SnesDebugger.h"
+#include "clover/workbench/WorkbenchTargetSupport.h"
+#include "clover/workbench/snes/SnesInstructionServices.h"
 
 #include <array>
 #include <cstddef>
@@ -62,8 +64,11 @@ int main()
     using namespace clover;
     using namespace clover::workbench;
 
+    std::unique_ptr<workbench_target_support_t> support{
+        create_workbench_target_support(frontend::system_id_t::snes)
+    };
     std::unique_ptr<frontend::emulator_core_t> emulator{
-        frontend::create_emulator_core(frontend::system_id_t::snes)
+        support == nullptr ? nullptr : support->create_core()
     };
     const std::vector<std::byte> rom{ make_debug_rom() };
     if (emulator == nullptr || !emulator->load_media(rom))
@@ -72,18 +77,30 @@ int main()
 
     frontend::debug_target_t* const target{ emulator->debug_target() };
     std::string error{};
-    snes_debugger_t debugger{};
-    if (target == nullptr || !debugger.initialize(*target, error))
+    std::unique_ptr<debugger_t> debugger_owner{
+        support == nullptr ? nullptr : support->create_debugger()
+    };
+    auto* const snes_debugger{
+        dynamic_cast<snes_debugger_t*>(debugger_owner.get())
+    };
+    if (target == nullptr
+        || snes_debugger == nullptr
+        || !debugger_owner->initialize(*target, error))
         return fail("initialize", error);
+    snes_debugger_t& debugger{ *snes_debugger };
 
     live_processor_state_t state{};
-    if (!debugger.live_state(state, error)
-        || state.instruction_address.value != 0x008000u
-        || state.decode_context.emulation
+    if (!debugger.live_state(state, error))
+        return fail("runtime_state", error);
+    const analysis::snes::cpu_decode_context_t decode_context{
+        workbench::snes::decode_context(state)
+    };
+    if (state.instruction_address.value != 0x008000u
+        || decode_context.emulation
             != analysis::snes::bit_state_t::set
-        || state.decode_context.accumulator_width
+        || decode_context.accumulator_width
             != analysis::snes::bit_state_t::set
-        || state.decode_context.index_width
+        || decode_context.index_width
             != analysis::snes::bit_state_t::set)
     {
         return fail("runtime_decode_context", error);

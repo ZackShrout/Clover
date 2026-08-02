@@ -4,6 +4,11 @@ Clover Workbench is a separate desktop analysis application built on the same
 SNES core as Clover Player. It does not add analysis UI or project dependencies
 to the Player.
 
+The current application targets SNES, while its next refactor establishes a
+system-neutral host, reusable processor-architecture services, and
+system-specific support toolkits. See the
+[multi-system architecture and refactor plan](WORKBENCH_MULTI_SYSTEM_ARCHITECTURE.md).
+
 ## Build and launch
 
 ```bash

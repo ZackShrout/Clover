@@ -19,6 +19,10 @@
 #include "clover/workbench/LivePpuSnapshot.h"
 #include "clover/workbench/Project.h"
 #include "clover/workbench/SnesDebugger.h"
+#include "clover/workbench/ToolRegistry.h"
+#include "clover/workbench/WorkbenchTargetSupport.h"
+#include "clover/workbench/snes/SnesWorkbenchSupport.h"
+#include "clover/workbench/snes/SnesInstructionServices.h"
 
 #include <SDL3/SDL.h>
 
@@ -429,8 +433,16 @@ namespace clover::platform
             return 1;
         }
 
+        std::unique_ptr<workbench::workbench_target_support_t> target_support{
+            workbench::create_workbench_target_support(frontend::system_id_t::snes)
+        };
+        if (target_support == nullptr)
+        {
+            std::fprintf(stderr, "No Workbench support is registered for this system.\n");
+            return 1;
+        }
         std::unique_ptr<frontend::emulator_core_t> core{
-            frontend::create_emulator_core(frontend::system_id_t::snes)
+            target_support->create_core()
         };
         if (core == nullptr || !core->load_media(media))
         {
@@ -462,13 +474,12 @@ namespace clover::platform
 
         workbench::project_t project{};
         std::string error{};
-        if (!project.open(
+        if (!target_support->prepare_project(
+                project,
                 project_root,
-                frontend::system_id_t::snes,
                 media,
                 error
-            )
-            || !project.import_snes_hardware_symbols(error))
+            ))
         {
             std::fprintf(stderr, "Unable to open Workbench project: %s\n", error.c_str());
             return 1;
@@ -490,7 +501,18 @@ namespace clover::platform
         }
 
         core->power_on();
-        workbench::snes_debugger_t debugger{};
+        std::unique_ptr<workbench::debugger_t> debugger_owner{
+            target_support->create_debugger()
+        };
+        workbench::snes_debugger_t* const snes_debugger{
+            dynamic_cast<workbench::snes_debugger_t*>(debugger_owner.get())
+        };
+        if (debugger_owner == nullptr || snes_debugger == nullptr)
+        {
+            std::fprintf(stderr, "Workbench debugger composition failed.\n");
+            return 1;
+        }
+        workbench::debugger_t& debugger{ *debugger_owner };
         if (!debugger.initialize(*target, error))
         {
             std::fprintf(stderr, "Unable to attach debugger: %s\n", error.c_str());
@@ -616,16 +638,31 @@ namespace clover::platform
         bool refresh_facts{ true };
         bool running{ true };
         bool traced_continue{ false };
-        bool output_view{ false };
-        bool palette_view{ false };
+        workbench::tool_registry_t tools{};
+        target_support->register_tools(tools);
+        workbench::active_tool_t active_tool{};
+        workbench::tool_active_flag_t output_view{
+            active_tool,
+            workbench::snes::k_output_tool_id
+        };
+        workbench::tool_active_flag_t palette_view{
+            active_tool,
+            workbench::snes::k_palette_tool_id
+        };
         size_t palette_index{ 0u };
         uint16_t selected_color{ 0u };
-        bool graphics_view{ false };
+        workbench::tool_active_flag_t graphics_view{
+            active_tool,
+            workbench::snes::k_tile_graphics_tool_id
+        };
         size_t tile_asset_index{ 0u };
         uint32_t selected_tile{ 0u };
         uint8_t selected_pixel_x{ 0u };
         uint8_t selected_pixel_y{ 0u };
-        bool tile_map_view{ false };
+        workbench::tool_active_flag_t tile_map_view{
+            active_tool,
+            workbench::snes::k_tile_map_tool_id
+        };
         bool rendered_bg_view{ false };
         size_t tile_map_index{ 0u };
         uint16_t selected_map_x{ 0u };
@@ -634,9 +671,15 @@ namespace clover::platform
         std::optional<size_t> live_map_layer_index{};
         std::optional<workbench::live_ppu_snapshot_t> live_ppu_snapshot{};
         bool tile_map_full_view{ false };
-        bool object_view{ false };
+        workbench::tool_active_flag_t object_view{
+            active_tool,
+            workbench::snes::k_object_tool_id
+        };
         uint8_t selected_object{ 0u };
-        bool dma_view{ false };
+        workbench::tool_active_flag_t dma_view{
+            active_tool,
+            workbench::snes::k_dma_tool_id
+        };
         std::array<frontend::dma_transfer_record_t, 512u> dma_transfers{};
         frontend::dma_transfer_inspection_result_t dma_inspection{};
         size_t selected_dma_transfer{ 0u };
@@ -773,7 +816,7 @@ namespace clover::platform
                     });
                 }
             }
-            options.runtime_edges = debugger.runtime_edges();
+            options.runtime_edges = snes_debugger->runtime_edges();
             const analysis::snes::hybrid_analysis_result_t analyzed{
                 analysis::snes::analyze_program(source, options)
             };
@@ -877,7 +920,7 @@ namespace clover::platform
             {
                 error.clear();
                 if (debugger.live_state(live_state, error))
-                    context = live_state.decode_context;
+                    context = workbench::snes::decode_context(live_state);
                 listing = analysis::snes::build_static_listing(
                     source,
                     {
@@ -1137,7 +1180,10 @@ namespace clover::platform
                     running = false;
                 else if (event.key.scancode == SDL_SCANCODE_TAB)
                 {
-                    output_view = !output_view;
+                    static_cast<void>(tools.activate_command(
+                        "workbench.output.toggle",
+                        active_tool
+                    ));
                     if (output_view)
                     {
                         palette_view = false;
@@ -1260,7 +1306,10 @@ namespace clover::platform
                             palette_index = (palette_index + 1u) % palettes.size();
                         else
                         {
-                            palette_view = true;
+                            static_cast<void>(tools.activate_command(
+                                "snes.palette.toggle",
+                                active_tool
+                            ));
                             output_view = false;
                             graphics_view = false;
                             tile_map_view = false;
@@ -1324,7 +1373,10 @@ namespace clover::platform
                         }
                         else
                         {
-                            graphics_view = true;
+                            static_cast<void>(tools.activate_command(
+                                "snes.tiles.toggle",
+                                active_tool
+                            ));
                             output_view = false;
                             palette_view = false;
                             tile_map_view = false;
@@ -1359,7 +1411,10 @@ namespace clover::platform
                         }
                         else
                         {
-                            tile_map_view = true;
+                            static_cast<void>(tools.activate_command(
+                                "snes.tile-map.toggle",
+                                active_tool
+                            ));
                             output_view = false;
                             palette_view = false;
                             graphics_view = false;
@@ -1381,7 +1436,10 @@ namespace clover::platform
                 }
                 else if (event.key.scancode == SDL_SCANCODE_O)
                 {
-                    object_view = !object_view;
+                    static_cast<void>(tools.activate_command(
+                        "snes.objects.toggle",
+                        active_tool
+                    ));
                     if (object_view)
                     {
                         output_view = false;
@@ -1408,7 +1466,10 @@ namespace clover::platform
                     }
                     else
                     {
-                        dma_view = !dma_view;
+                        static_cast<void>(tools.activate_command(
+                            "snes.dma.toggle",
+                            active_tool
+                        ));
                         if (dma_view)
                         {
                             output_view = false;
@@ -2032,7 +2093,9 @@ namespace clover::platform
                 else if (event.key.scancode == SDL_SCANCODE_H)
                 {
                     error.clear();
-                    const bool imported{ project.import_snes_hardware_symbols(error) };
+                    const bool imported{
+                        target_support->refresh_hardware_symbols(project, error)
+                    };
                     status = imported ? "Hardware symbols refreshed" : error;
                     refresh_facts = imported;
                 }

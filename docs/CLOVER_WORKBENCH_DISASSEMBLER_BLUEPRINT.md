@@ -68,6 +68,12 @@ bindings, and persistent palette, tile, and background-map inspection.
 Descriptions outside Section 28 define the target experience unless they
 explicitly describe the current implementation.
 
+The concrete ownership boundaries, migration slices, acceptance gates, and
+non-goals for the upcoming multi-system refactor are defined in
+[`WORKBENCH_MULTI_SYSTEM_ARCHITECTURE.md`](WORKBENCH_MULTI_SYSTEM_ARCHITECTURE.md).
+This Blueprint remains authoritative for product scope and delivery status;
+the architecture document is authoritative for that refactor.
+
 The capabilities described here fall into four planning horizons:
 
 ```text
@@ -2346,6 +2352,11 @@ content into an authored overlay must be an explicit operation.
 ---
 
 # 24. Multi-System Design
+
+The implementation contract for this direction is maintained in
+[`WORKBENCH_MULTI_SYSTEM_ARCHITECTURE.md`](WORKBENCH_MULTI_SYSTEM_ARCHITECTURE.md).
+The section below establishes the product-level model; the linked document
+defines the current refactor boundaries and deliberately deferred work.
 
 Clover currently has an SNES core, but Workbench should be architected so that
 additional systems can contribute system-specific analysis capabilities. The

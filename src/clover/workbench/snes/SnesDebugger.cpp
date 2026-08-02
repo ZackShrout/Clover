@@ -1,8 +1,9 @@
 //
+// Created by Zack Shrout on 8/1/26.
 // Copyright (c) 2026 BunnySoft. All rights reserved.
 //
 
-#include "clover/workbench/SnesDebugger.h"
+#include "clover/workbench/snes/SnesDebugger.h"
 
 #include "clover/analysis/snes/StaticListing.h"
 #include "clover/frontend/SnesEmulatorCore.h"
@@ -40,8 +41,22 @@ namespace
 
 }
 
-namespace clover::workbench
+namespace clover::workbench::snes
 {
+    snes_debugger_t::snes_debugger_t()
+        : snes_debugger_t(
+            std::make_unique<snes::snes_instruction_services_t>()
+        )
+    {
+    }
+
+    snes_debugger_t::snes_debugger_t(
+        std::unique_ptr<instruction_services_t> instruction_services
+    )
+        : _instruction_services{ std::move(instruction_services) }
+    {
+    }
+
     snes_debugger_t::~snes_debugger_t()
     {
         shutdown();
@@ -75,7 +90,10 @@ namespace clover::workbench
         _execution = target.execution_control();
         _observations = target.observation_control();
         _session = target.debug_session_control();
-        if (_execution == nullptr || _observations == nullptr || _session == nullptr)
+        if (_instruction_services == nullptr
+            || _execution == nullptr
+            || _observations == nullptr
+            || _session == nullptr)
         {
             error = "Debug target lacks required run-control capabilities";
             shutdown();
@@ -214,8 +232,7 @@ namespace clover::workbench
                                  std::string& error)
     {
         error.clear();
-        if (address.space != frontend::snes_debug::k_cpu_bus_space
-            || address.value > 0x00ffffffu)
+        if (!_instruction_services->valid_instruction_address(address))
         {
             error = "Run-to address is outside the SNES CPU bus";
             return false;
@@ -243,20 +260,22 @@ namespace clover::workbench
             return false;
         }
         live_processor_state_t before_state{};
-        if (!snapshot(before_state, error) || _source == nullptr)
+        if (!snapshot(before_state, error) || _target == nullptr)
             return false;
-        const analysis::snes::decoded_instruction_t instruction{
-            analysis::snes::decode_instruction(
-                *_source,
-                static_cast<uint32_t>(before_state.instruction_address.value),
-                snes::decode_context(before_state)
-            )
-        };
-        if (instruction.control_flow != analysis::snes::control_flow_kind_t::call)
+        instruction_semantics_t instruction{};
+        if (!_instruction_services->decode_semantics(
+                *_target,
+                before_state,
+                instruction,
+                error
+            ))
+        {
+            return false;
+        }
+        if (instruction.control_flow != instruction_control_flow_t::call)
             return execute_one(debugger_stop_reason_t::step_over, error);
         const frontend::debug_address_t return_address{
-            frontend::snes_debug::k_cpu_bus_space,
-            analysis::snes::advance_program_address(
+            _instruction_services->advance_address(
                 instruction.address,
                 instruction.encoded_size
             )
@@ -285,7 +304,9 @@ namespace clover::workbench
             return false;
         }
         const auto descriptors{
-            _target->processor_registers(frontend::snes_debug::k_main_cpu_domain)
+            _target->processor_registers(
+                _instruction_services->execution_domain()
+            )
         };
         if (descriptors.empty())
         {
@@ -296,7 +317,7 @@ namespace clover::workbench
         state.values.resize(descriptors.size());
         const frontend::processor_state_result_t result{
             _target->inspect_processor_state(
-                frontend::snes_debug::k_main_cpu_domain,
+                _instruction_services->execution_domain(),
                 state.values
             )
         };
@@ -387,22 +408,25 @@ namespace clover::workbench
         if (known_before == nullptr
             && !snapshot(captured_before, error))
             return false;
-        if (_source == nullptr)
+        if (_target == nullptr)
             return false;
         const live_processor_state_t& before_state{
             known_before != nullptr ? *known_before : captured_before
         };
-        const analysis::snes::decoded_instruction_t instruction{
-            analysis::snes::decode_instruction(
-                *_source,
-                static_cast<uint32_t>(before_state.instruction_address.value),
-                snes::decode_context(before_state)
-            )
-        };
+        instruction_semantics_t instruction{};
+        if (!_instruction_services->decode_semantics(
+                *_target,
+                before_state,
+                instruction,
+                error
+            ))
+        {
+            return false;
+        }
         _observations->clear_observations();
         const frontend::execution_step_result_t step{
             _execution->step_execution_domain(
-                frontend::snes_debug::k_main_cpu_domain
+                _instruction_services->execution_domain()
             )
         };
         if (step.status != frontend::execution_step_status_t::complete)
@@ -629,7 +653,7 @@ namespace clover::workbench
 
         const frontend::execution_run_result_t result{
             _execution->run_execution_domain(
-                frontend::snes_debug::k_main_cpu_domain,
+                _instruction_services->execution_domain(),
                 instruction_budget - executed,
                 breakpoints,
                 watchpoints
@@ -754,20 +778,19 @@ namespace clover::workbench
     }
 
     void snes_debugger_t::observe_control_flow(
-        const analysis::snes::decoded_instruction_t& instruction,
+        const instruction_semantics_t& instruction,
         frontend::debug_address_t after
     )
     {
         std::optional<control_flow_observation_kind_t> kind{};
-        if (instruction.control_flow == analysis::snes::control_flow_kind_t::call)
+        if (instruction.control_flow == instruction_control_flow_t::call)
         {
             kind = control_flow_observation_kind_t::call;
             ++_observed_calls;
             if (_operation == operation_t::step_out)
                 ++_step_out_depth;
         }
-        else if (instruction.control_flow
-                 == analysis::snes::control_flow_kind_t::return_)
+        else if (instruction.control_flow == instruction_control_flow_t::return_)
         {
             kind = control_flow_observation_kind_t::return_;
             ++_observed_returns;
@@ -778,10 +801,7 @@ namespace clover::workbench
             return;
         _control_flow.push_back({
             .kind = *kind,
-            .from = {
-                frontend::snes_debug::k_cpu_bus_space,
-                instruction.address
-            },
+            .from = instruction.address,
             .to = after
         });
         if (_control_flow.size() > 512u)

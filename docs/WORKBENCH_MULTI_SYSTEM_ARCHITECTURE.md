@@ -2,7 +2,8 @@
 
 ## Status
 
-This document is the architectural contract for the next Workbench refactor.
+This document is the architectural contract implemented by the Workbench
+multi-system refactor.
 It turns the multi-system direction in the
 [Workbench Blueprint](CLOVER_WORKBENCH_DISASSEMBLER_BLUEPRINT.md#24-multi-system-design)
 into concrete ownership boundaries and a behavior-preserving migration plan.
@@ -14,7 +15,7 @@ Genesis inspectors, source editing, or IDE language support.
 
 ### Implementation status
 
-The first behavior-preserving implementation pass now provides:
+The behavior-preserving implementation passes now provide:
 
 - a generic tool and command registry with one authoritative active-tool
   identity;
@@ -24,14 +25,31 @@ The first behavior-preserving implementation pass now provides:
   OAM, and DMA surfaces using stable identities;
 - a system-neutral debugger contract and model for execution control,
   breakpoints, watchpoints, registers, memory, and stops; and
-- a 65C816 adapter that derives SNES decode context from generic register
-  metadata.
+- a 65C816 instruction service that derives decode context from generic
+  register metadata and injects instruction length plus call/return semantics
+  into debugger stepping policy;
+- SNES-owned analysis services for reset-vector discovery, static listings,
+  hybrid-analysis composition, fingerprints, and project publication;
+- an SNES presentation model that owns palette, tile, tile-map, live-PPU,
+  object, and DMA selection/capture state plus tool navigation outside the SDL
+  shell;
+- an SNES SDL application and presentation adapter that own all SNES command
+  bindings, inspection assembly, and palette, tile, tile-map, rendered-plane,
+  OAM, and DMA drawing, leaving the shared shell responsible only for media
+  loading and application dispatch;
+- all SNES graphics analysis (palette, tile, tile-map, and OAM) located in the
+  SNES analyzer module rather than presented as system-neutral concepts; and
+- SNES-only tile-layer, object/OAM, and DMA diagnostic contracts located in a
+  system namespace and compiled into `snes_emulator_core_t` only for the
+  specialized Workbench build; and
+- a deliberately non-SNES boundary test using a 32-bit Motorola 68000-shaped
+  CPU domain, address space, register set, instruction encoding, execution
+  step, and registered diagnostic tool without SNES headers.
 
-The SDL shell still contains the mature SNES presentation and analysis code.
-Moving those controllers and renderers behind registered tools, injecting
-instruction semantics into generic stepping policy, cleaning up optional core
-capabilities, and proving a second system shape remain later slices. This
-status is intentionally narrower than the acceptance gates below.
+The only SNES references outside the toolkit/application module are in the
+compile-time composition roots that select a registered system implementation.
+The second-system proof validates the generic contracts; it is intentionally
+not a placeholder Genesis emulator.
 
 ## Product direction
 
@@ -211,10 +229,12 @@ for every console-specific inspector. Diagnostics should be grouped behind
 optional, narrowly scoped providers at tooling boundaries, such as rendered
 layers, backing graphics memory, objects, transfers, or audio state.
 
-A common event envelope may contain stable source/destination addresses,
-timing, size, engine, and initiator information. Native details remain owned
-by the system provider and are translated by its toolkit. SNES A-bus/B-bus and
-HDMA terminology must not become mandatory fields for Genesis VDP transfers.
+A common event envelope may eventually contain stable source/destination
+addresses, timing, size, engine, and initiator information. Native details
+remain owned by the system provider and are translated by its toolkit. The
+current SNES tile, OAM, and DMA contracts therefore live under
+`frontend::snes`; A-bus/B-bus and HDMA terminology are not imposed on future
+Genesis VDP transfers.
 
 System-neutral virtual dispatch belongs at media, frame, session, and tooling
 boundaries—not in instruction, pixel, transfer-byte, or audio-sample hot
@@ -239,6 +259,12 @@ bare integers.
 The current SNES project remains compatible. The refactor may migrate internal
 ownership, but it must not silently reinterpret existing facts or manufacture
 generic identities that lose their SNES meaning.
+
+The existing palette, tile, tile-map, and related SQLite records remain an
+SNES compatibility schema for this refactor. Their models and interpretation
+live in the SNES analysis toolkit. A future system may add its own native asset
+schema or motivate a genuinely shared abstraction; this refactor does not
+rename SNES concepts into misleading universal ones.
 
 ## Specialized Workbench cores
 
@@ -315,6 +341,10 @@ remain separate; authored files are never silently regenerated.
 - Introduce an instruction-services contract.
 - Adapt the current 65C816 implementation without changing its results.
 
+Implemented for the instruction-semantics boundary. The existing SNES
+debugger retains SNES runtime-evidence extensions while generic run policy no
+longer recognizes 65C816 opcodes directly.
+
 ### Slice 3: SNES system toolkit
 
 - Move SNES core creation, reset-vector policy, hardware symbols, analyzer
@@ -323,12 +353,24 @@ remain separate; authored files are never silently regenerated.
   SNES support.
 - Keep the existing project and controls working.
 
+Implemented. Core creation, symbols, reset-vector and analyzer policy,
+graphics selection state, live BG capture, DMA selection, SDL command routing,
+inspection assembly, and system-specific drawing now live in the SNES toolkit
+and application adapter.
+
 ### Slice 4: Optional capability cleanup
 
 - Split console-specific inspection methods away from an expanding base core
   interface.
 - Preserve the specialized release-optimized Workbench instrumentation model.
 - Re-run correctness and Player non-interference checks.
+
+Implemented. The ordinary `emulator_core_t` has no tile, OAM, or DMA inspection
+methods. SNES owns those optional capability contracts, and
+`snes_emulator_core_t` inherits and compiles them only when
+`CLOVER_WORKBENCH_DIAGNOSTICS` selects the separately built
+`clover_core_workbench` variant. The normal Player core contains no diagnostic
+interfaces, methods, storage, or capture branches.
 
 ### Slice 5: Multi-system boundary proof
 
@@ -338,13 +380,19 @@ remain separate; authored files are never silently regenerated.
   without SNES includes or branches in the host.
 - Do not implement a placeholder Genesis emulator merely to satisfy this gate.
 
+Implemented by `clover_workbench_target_boundary_test`. Its fake target uses
+different domain and address-space identities, a 32-bit 68000 processor shape,
+generic memory/register inspection, injected six-byte call semantics, generic
+execution stepping, and a non-SNES registered tool.
+
 ## Acceptance gates
 
-The refactor is complete when:
+The completed implementation satisfies these gates:
 
 - the generic Workbench host contains no `analysis/snes` dependency;
-- the host does not hard-code SNES system selection, address spaces, symbols,
-  PPU terminology, or specialized shortcuts;
+- shared host policy does not hard-code SNES address spaces, symbols, PPU
+  terminology, or specialized shortcuts; system references are confined to
+  compile-time composition roots and the SNES implementation;
 - generic debugging is driven by execution-domain and address-space
   descriptors;
 - instruction-aware debugger operations use injected architecture services;

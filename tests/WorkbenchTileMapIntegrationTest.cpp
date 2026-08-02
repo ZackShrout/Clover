@@ -3,12 +3,13 @@
 // Copyright (c) 2026 BunnySoft. All rights reserved.
 //
 
-#include "clover/analysis/TileGraphics.h"
-#include "clover/analysis/TileMap.h"
+#include "clover/analysis/snes/TileGraphics.h"
+#include "clover/analysis/snes/TileMap.h"
+#include "clover/frontend/snes/SnesDiagnosticCapabilities.h"
 #include "clover/frontend/EmulatorCore.h"
 #include "clover/frontend/SnesEmulatorCore.h"
-#include "clover/workbench/LivePpuSnapshot.h"
-#include "clover/workbench/SnesDebugger.h"
+#include "clover/workbench/snes/LivePpuSnapshot.h"
+#include "clover/workbench/snes/SnesDebugger.h"
 
 #include <array>
 #include <cstddef>
@@ -104,9 +105,13 @@ int main()
         return fail("load");
     emulator->power_on();
     frontend::debug_target_t* const target{ emulator->debug_target() };
-    workbench::snes_debugger_t debugger{};
+    const auto* const tile_diagnostics{
+        dynamic_cast<const frontend::snes::tile_layer_diagnostics_t*>(emulator.get())
+    };
+    workbench::snes::snes_debugger_t debugger{};
     std::string error{};
-    if (target == nullptr || !debugger.initialize(*target, error))
+    if (target == nullptr || tile_diagnostics == nullptr
+        || !debugger.initialize(*target, error))
         return fail("debugger", error);
     for (size_t step{}; step < 23u; ++step)
     {
@@ -114,29 +119,29 @@ int main()
             return fail("execute_upload", error);
     }
 
-    std::array<frontend::tile_layer_state_t, 4> layers{};
-    if (emulator->inspect_tile_layers(layers) != 4u
+    std::array<frontend::snes::tile_layer_state_t, 4> layers{};
+    if (tile_diagnostics->inspect_tile_layers(layers) != 4u
         || !layers[0].active
-        || layers[0].format != frontend::tile_layer_format_t::indexed_4bpp
+        || layers[0].format != frontend::snes::tile_layer_format_t::indexed_4bpp
         || layers[0].tile_map.value != 0x4000u
         || layers[0].tile_graphics.value != 0u
         || layers[0].width_tiles != 32u || layers[0].height_tiles != 32u
         || layers[0].horizontal_scroll != 0u
         || layers[0].vertical_scroll != 0u
         || layers[3].active
-        || layers[3].format != frontend::tile_layer_format_t::inactive)
+        || layers[3].format != frontend::snes::tile_layer_format_t::inactive)
     {
         return fail("live_layer_snapshot");
     }
-    workbench::live_ppu_snapshot_t first_snapshot{};
-    if (!workbench::capture_live_ppu_snapshot(
-            *emulator, *target, 0u, first_snapshot, error
+    workbench::snes::live_ppu_snapshot_t first_snapshot{};
+    if (!workbench::snes::capture_live_ppu_snapshot(
+            *tile_diagnostics, *target, 0u, first_snapshot, error
         ))
     {
         return fail("capture_first", error);
     }
     const auto first_assets{
-        workbench::make_live_bg_assets(first_snapshot.layer)
+        workbench::snes::make_live_bg_assets(first_snapshot.layer)
     };
     if (!first_assets.has_value())
         return fail("first_assets");
@@ -164,15 +169,15 @@ int main()
         if (!debugger.step_instruction(error))
             return fail("execute_rebind", error);
     }
-    workbench::live_ppu_snapshot_t second_snapshot{};
-    if (!workbench::capture_live_ppu_snapshot(
-            *emulator, *target, 0u, second_snapshot, error
+    workbench::snes::live_ppu_snapshot_t second_snapshot{};
+    if (!workbench::snes::capture_live_ppu_snapshot(
+            *tile_diagnostics, *target, 0u, second_snapshot, error
         ))
     {
         return fail("capture_second", error);
     }
     const auto second_assets{
-        workbench::make_live_bg_assets(second_snapshot.layer)
+        workbench::snes::make_live_bg_assets(second_snapshot.layer)
     };
     if (!second_assets.has_value())
         return fail("second_assets");

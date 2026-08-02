@@ -3,6 +3,7 @@
 // Copyright (c) 2026 BunnySoft. All rights reserved.
 //
 
+#include "clover/frontend/snes/SnesDiagnosticCapabilities.h"
 #include "clover/frontend/EmulatorCore.h"
 
 #include <algorithm>
@@ -95,13 +96,18 @@ int main()
     const std::vector<std::byte> rom{ make_rom() };
     if (emulator == nullptr || !emulator->load_media(rom))
         return fail("load");
+    auto* const dma_diagnostics{
+        dynamic_cast<frontend::snes::dma_transfer_diagnostics_t*>(emulator.get())
+    };
+    if (dma_diagnostics == nullptr)
+        return fail("diagnostics");
     emulator->power_on();
     emulator->run_frame();
     emulator->run_frame();
 
-    std::array<frontend::dma_transfer_record_t, 512u> transfers{};
-    const frontend::dma_transfer_inspection_result_t result{
-        emulator->inspect_dma_transfers(transfers)
+    std::array<frontend::snes::dma_transfer_record_t, 512u> transfers{};
+    const frontend::snes::dma_transfer_inspection_result_t result{
+        dma_diagnostics->inspect_dma_transfers(transfers)
     };
     if (result.record_count < 2u || result.records_dropped != 0u)
     {
@@ -135,9 +141,9 @@ int main()
     const auto mdma_found{ std::find_if(
         transfers.begin(),
         transfers.begin() + static_cast<std::ptrdiff_t>(result.record_count),
-        [](const frontend::dma_transfer_record_t& record)
+        [](const frontend::snes::dma_transfer_record_t& record)
         {
-            return record.kind == frontend::dma_transfer_kind_t::general;
+            return record.kind == frontend::snes::dma_transfer_kind_t::general;
         }
     ) };
     if (mdma_found == transfers.begin()
@@ -145,8 +151,8 @@ int main()
     {
         return fail("mdma_missing");
     }
-    const frontend::dma_transfer_record_t& mdma{ *mdma_found };
-    if (mdma.kind != frontend::dma_transfer_kind_t::general
+    const frontend::snes::dma_transfer_record_t& mdma{ *mdma_found };
+    if (mdma.kind != frontend::snes::dma_transfer_kind_t::general
         || mdma.channel != 0u
         || mdma.channel_mask != 0x01u
         || mdma.control != 0x00u
@@ -167,10 +173,10 @@ int main()
     const auto hdma_found{ std::find_if(
         transfers.begin(),
         transfers.begin() + static_cast<std::ptrdiff_t>(result.record_count),
-        [](const frontend::dma_transfer_record_t& record)
+        [](const frontend::snes::dma_transfer_record_t& record)
         {
             return record.kind
-                    == frontend::dma_transfer_kind_t::horizontal_blank
+                    == frontend::snes::dma_transfer_kind_t::horizontal_blank
                 && record.first_a_bus_address == 0x008201u;
         }
     ) };
@@ -179,8 +185,8 @@ int main()
     {
         return fail("hdma_missing");
     }
-    const frontend::dma_transfer_record_t& hdma{ *hdma_found };
-    if (hdma.kind != frontend::dma_transfer_kind_t::horizontal_blank
+    const frontend::snes::dma_transfer_record_t& hdma{ *hdma_found };
+    if (hdma.kind != frontend::snes::dma_transfer_kind_t::horizontal_blank
         || hdma.channel != 0u
         || hdma.channel_mask != 0x01u
         || hdma.control != 0x00u
@@ -198,8 +204,8 @@ int main()
         return fail("hdma_fields");
     }
 
-    emulator->clear_dma_transfers();
-    if (emulator->inspect_dma_transfers(transfers).record_count != 0u)
+    dma_diagnostics->clear_dma_transfers();
+    if (dma_diagnostics->inspect_dma_transfers(transfers).record_count != 0u)
         return fail("clear");
 
     std::printf(

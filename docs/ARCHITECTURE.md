@@ -113,8 +113,10 @@ the Stage 4 hybrid analyzer, and the SQLite-backed project service.
 Workbench persistence itself lives under `src/clover/workbench/`, is UI
 independent, and is included in the default headless build for testing.
 
-`clover_analysis` owns the system-neutral `ProgramModel`, typed-data, palette,
-and tile-graphics models and decoders, and the SNES analyzer.
+`clover_analysis` owns the system-neutral `ProgramModel` and typed-data model,
+plus system-owned analyzer modules. SNES palette, tile-graphics, tile-map, OAM,
+decoder, and hybrid-analysis code lives under `analysis/snes` rather than in
+the base analysis namespace.
 The analyzer consumes immutable bytes, explicit decode contexts, user
 classifications, and bounded runtime edges. It emits stable instructions,
 basic blocks, many-to-many function ownership, typed control-flow edges,
@@ -148,10 +150,10 @@ the PPU-owned 64 KiB VRAM array read-only, avoiding `$2139/$213A` latch and
 increment side effects. Schema v7 persists tile assets; CPU-bus sources become
 user data classifications while device-space VRAM sources do not.
 
-Tile maps compose those assets without crossing the boundary. A map definition
+Tile maps compose those assets without crossing the boundary. An SNES map definition
 names its geometry, tile size, tile asset, palette, and base color; the generic
 decoder emits character, palette-group, priority, and flip attributes while
-modeling SNES quadrant layout and VRAM wrapping. A system-neutral frontend
+modeling SNES quadrant layout and VRAM wrapping. A Workbench-only SNES frontend
 tile-layer snapshot translates the PPU's already-decoded render state into map
 and tile addresses, dimensions, bit depth, and tile size. It does not expose
 the PPU object itself or read stateful registers. Schema v8 persists maps,
@@ -172,7 +174,7 @@ diagnostic object storage, hot-path condition, or diagnostic symbols. The two
 views remain separate in the frontend: isolated rendered frame by default,
 coherent backing tilemap on request.
 
-OAM inspection follows the same separation. The SNES frontend exposes the
+OAM inspection follows the same separation. The Workbench-only SNES frontend exposes the
 PPU-owned 544-byte OAM array read-only plus a small object-layer configuration
 snapshot; the analysis module independently decodes entries and resolves OBJ
 tile addresses. The UI assembles selected sprites through the existing VRAM
@@ -185,9 +187,9 @@ dispatching instruction through the existing bus observation point, and the
 DMA byte-transfer boundary records the A-bus address, B-bus target, value,
 channel, mode, direction, frame, and raster time that the core actually used.
 MDMA bytes are coalesced into transfer records; HDMA remains separated by
-scanline. The frontend copies these system facts into system-neutral records
-for the Workbench UI. The ordinary `clover_core` compilation excludes the
-types, storage, calls, and capture code entirely.
+scanline. The SNES frontend copies these system facts into SNES diagnostic
+records for the Workbench UI. The ordinary `clover_core` compilation excludes
+the capability interfaces, methods, storage, calls, and capture code entirely.
 
 The project schema publishes a complete program model as one analysis
 generation transaction. A candidate is built outside SQLite; the prior

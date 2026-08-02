@@ -167,7 +167,8 @@ completed raw rendered frame, captured with the PPU state that actually applied
 on every scanline; `R` switches to the coherent layer-register/VRAM/CGRAM
 backing-map snapshot. The raster capture exists only in the separately compiled,
 release-optimized Workbench core variant. The Player core contains neither its
-capture branch nor its storage. Normal `F5` uses
+capture branch, storage, nor Workbench-only diagnostic capability methods.
+Normal `F5` uses
 exact core-side fast Continue; `Shift+F5` opts
 into slower per-instruction tracing when runtime analysis evidence is needed.
 

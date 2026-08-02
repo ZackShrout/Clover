@@ -4,6 +4,7 @@
 //
 
 #include "clover/frontend/EmulatorCore.h"
+#include "clover/frontend/snes/SnesDiagnosticCapabilities.h"
 
 #include <string_view>
 
@@ -42,5 +43,11 @@ int main()
     {
         return 6;
     }
-    return control->set_video_plane_enabled(99u, false) ? 7 : 0;
+    if (dynamic_cast<snes::tile_layer_diagnostics_t*>(core.get()) != nullptr
+        || dynamic_cast<snes::object_layer_diagnostics_t*>(core.get()) != nullptr
+        || dynamic_cast<snes::dma_transfer_diagnostics_t*>(core.get()) != nullptr)
+    {
+        return 7;
+    }
+    return control->set_video_plane_enabled(99u, false) ? 8 : 0;
 }

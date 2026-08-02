@@ -3,6 +3,7 @@
 // Copyright (c) 2026 BunnySoft. All rights reserved.
 //
 
+#include "clover/analysis/snes/HardwareSymbols.h"
 #include "clover/frontend/MediaIdentity.h"
 #include "clover/utils/FileSystem.h"
 #include "clover/workbench/Project.h"
@@ -21,6 +22,26 @@
 
 namespace
 {
+    [[nodiscard]] std::vector<clover::workbench::symbol_t>
+        snes_hardware_symbols()
+    {
+        std::vector<clover::workbench::symbol_t> result{};
+        for (uint32_t address{ 0x2000u }; address <= 0x43ffu; ++address)
+        {
+            const auto symbol{
+                clover::analysis::snes::hardware_symbol(address)
+            };
+            if (!symbol.has_value())
+                continue;
+            result.push_back({
+                .location = { "snes.cpu-bus", address },
+                .name = symbol->name,
+                .description = std::string{ symbol->description }
+            });
+        }
+        return result;
+    }
+
     [[nodiscard]] int fail(const char* checkpoint, const std::string& detail = {})
     {
         std::fprintf(
@@ -129,6 +150,7 @@ int main()
     }
 
     const address_key_t reset_entry{ "snes.cpu-bus", 0x008000u };
+    const std::vector<symbol_t> imported_symbols{ snes_hardware_symbols() };
     if (!project.set_label(reset_entry, "Reset_Entry", error)
         || !project.set_comment(reset_entry, "Console reset entry point", error)
         || !project.add_bookmark(reset_entry, "Startup", error)
@@ -144,7 +166,11 @@ int main()
             "recursive-descent",
             error
         )
-        || !project.import_snes_hardware_symbols(error)
+        || !project.replace_imported_symbols(
+            "clover.snes.hardware.v1",
+            imported_symbols,
+            error
+        )
         || !project.set_debug_breakpoint(reset_entry, true, error)
         || !project.set_debug_watchpoint(
             { "snes.cpu-bus", 0x002100u },
@@ -569,8 +595,8 @@ int main()
     uint64_t published_generation{};
     if (!project.publish_analysis(
             model,
-            k_analyzer_version,
-            k_decoder_version,
+            "fixture-analyzer-1",
+            "fixture-decoder-1",
             "fixture-input",
             published_generation,
             error
@@ -609,8 +635,8 @@ int main()
     error.clear();
     if (project.publish_analysis(
             invalid_model,
-            k_analyzer_version,
-            k_decoder_version,
+            "fixture-analyzer-1",
+            "fixture-decoder-1",
             "invalid",
             rejected_generation,
             error

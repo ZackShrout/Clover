@@ -3,7 +3,7 @@
 // Copyright (c) 2026 BunnySoft. All rights reserved.
 //
 
-#include "clover/analysis/TileGraphics.h"
+#include "clover/analysis/snes/TileGraphics.h"
 
 #include <array>
 #include <cstddef>

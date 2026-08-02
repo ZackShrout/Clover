@@ -2,7 +2,7 @@
 // Copyright (c) 2026 BunnySoft. All rights reserved.
 //
 
-#include "clover/analysis/Oam.h"
+#include "clover/analysis/snes/Oam.h"
 
 #include <array>
 #include <cstddef>

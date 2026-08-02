@@ -258,8 +258,9 @@ namespace clover::frontend
 #endif
     }
 
+#if defined(CLOVER_WORKBENCH_DIAGNOSTICS)
     size_t snes_emulator_core_t::inspect_tile_layers(
-        std::span<tile_layer_state_t> destination
+        std::span<snes::tile_layer_state_t> destination
     ) const noexcept
     {
         static constexpr std::array<std::string_view, 4> labels{
@@ -274,23 +275,23 @@ namespace clover::frontend
             const core::ppu_background_render_state_t& background{
                 snapshot.backgrounds[index]
             };
-            tile_layer_format_t format{ tile_layer_format_t::inactive };
+            snes::tile_layer_format_t format{ snes::tile_layer_format_t::inactive };
             switch (background.mode)
             {
             case core::ppu_background_render_state_t::mode_t::bpp2:
-                format = tile_layer_format_t::indexed_2bpp;
+                format = snes::tile_layer_format_t::indexed_2bpp;
                 break;
             case core::ppu_background_render_state_t::mode_t::bpp4:
-                format = tile_layer_format_t::indexed_4bpp;
+                format = snes::tile_layer_format_t::indexed_4bpp;
                 break;
             case core::ppu_background_render_state_t::mode_t::bpp8:
-                format = tile_layer_format_t::indexed_8bpp;
+                format = snes::tile_layer_format_t::indexed_8bpp;
                 break;
             case core::ppu_background_render_state_t::mode_t::mode7:
-                format = tile_layer_format_t::affine_mode7;
+                format = snes::tile_layer_format_t::affine_mode7;
                 break;
             case core::ppu_background_render_state_t::mode_t::inactive:
-                format = tile_layer_format_t::inactive;
+                format = snes::tile_layer_format_t::inactive;
                 break;
             }
             destination[index] = {
@@ -329,7 +330,7 @@ namespace clover::frontend
     }
 
     bool snes_emulator_core_t::inspect_object_layer(
-        object_layer_state_t& destination
+        snes::object_layer_state_t& destination
     ) const noexcept
     {
         if (!_machine_running)
@@ -356,8 +357,8 @@ namespace clover::frontend
         return true;
     }
 
-    dma_transfer_inspection_result_t snes_emulator_core_t::inspect_dma_transfers(
-        std::span<dma_transfer_record_t> destination
+    snes::dma_transfer_inspection_result_t snes_emulator_core_t::inspect_dma_transfers(
+        std::span<snes::dma_transfer_record_t> destination
     ) const noexcept
     {
 #if defined(CLOVER_WORKBENCH_DMA_PROVENANCE)
@@ -393,8 +394,8 @@ namespace clover::frontend
                 .first_value = source.first_value,
                 .last_value = source.last_value,
                 .kind = source.activity == core::dma_activity_t::general_dma
-                    ? dma_transfer_kind_t::general
-                    : dma_transfer_kind_t::horizontal_blank,
+                    ? snes::dma_transfer_kind_t::general
+                    : snes::dma_transfer_kind_t::horizontal_blank,
                 .direction_to_b_bus = source.direction_to_b_bus,
                 .b_bus_access_valid = source.b_bus_access_valid
             };
@@ -415,6 +416,7 @@ namespace clover::frontend
         _console.clear_dma_provenance_records();
 #endif
     }
+#endif
 
     std::span<const execution_domain_descriptor_t>
         snes_emulator_core_t::execution_domains() const noexcept

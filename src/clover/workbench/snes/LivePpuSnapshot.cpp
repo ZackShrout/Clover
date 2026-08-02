@@ -3,19 +3,19 @@
 // Copyright (c) 2026 BunnySoft. All rights reserved.
 //
 
-#include "clover/workbench/LivePpuSnapshot.h"
+#include "clover/workbench/snes/LivePpuSnapshot.h"
 
 #include <algorithm>
 #include <span>
 #include <string_view>
 
-namespace clover::workbench
+namespace clover::workbench::snes
 {
     namespace
     {
         [[nodiscard]] bool same_layer(
-            const frontend::tile_layer_state_t& left,
-            const frontend::tile_layer_state_t& right
+            const frontend::snes::tile_layer_state_t& left,
+            const frontend::snes::tile_layer_state_t& right
         ) noexcept
         {
             return left.id == right.id
@@ -88,15 +88,15 @@ namespace clover::workbench
     }
 
     bool capture_live_ppu_snapshot(
-        frontend::emulator_core_t& core,
+        const frontend::snes::tile_layer_diagnostics_t& diagnostics,
         frontend::debug_target_t& target,
         size_t layer_index,
         live_ppu_snapshot_t& destination,
         std::string& error
     )
     {
-        std::array<frontend::tile_layer_state_t, 4u> before{};
-        const size_t before_count{ core.inspect_tile_layers(before) };
+        std::array<frontend::snes::tile_layer_state_t, 4u> before{};
+        const size_t before_count{ diagnostics.inspect_tile_layers(before) };
         if (layer_index >= before_count || !before[layer_index].active)
         {
             error = "Selected BG layer is inactive";
@@ -122,8 +122,8 @@ namespace clover::workbench
         // A future asynchronous core must not silently pair memory with PPU
         // registers from a different instant. Reject the capture if metadata
         // changed while the memory copies were being made.
-        std::array<frontend::tile_layer_state_t, 4u> after{};
-        const size_t after_count{ core.inspect_tile_layers(after) };
+        std::array<frontend::snes::tile_layer_state_t, 4u> after{};
+        const size_t after_count{ diagnostics.inspect_tile_layers(after) };
         if (layer_index >= after_count
             || !same_layer(captured.layer, after[layer_index]))
         {
@@ -137,23 +137,23 @@ namespace clover::workbench
     }
 
     std::optional<live_bg_assets_t> make_live_bg_assets(
-        const frontend::tile_layer_state_t& layer
+        const frontend::snes::tile_layer_state_t& layer
     )
     {
         std::optional<analysis::tile_format_t> format{};
         switch (layer.format)
         {
-        case frontend::tile_layer_format_t::indexed_2bpp:
+        case frontend::snes::tile_layer_format_t::indexed_2bpp:
             format = analysis::tile_format_t::snes_2bpp;
             break;
-        case frontend::tile_layer_format_t::indexed_4bpp:
+        case frontend::snes::tile_layer_format_t::indexed_4bpp:
             format = analysis::tile_format_t::snes_4bpp;
             break;
-        case frontend::tile_layer_format_t::indexed_8bpp:
+        case frontend::snes::tile_layer_format_t::indexed_8bpp:
             format = analysis::tile_format_t::snes_8bpp;
             break;
-        case frontend::tile_layer_format_t::affine_mode7:
-        case frontend::tile_layer_format_t::inactive:
+        case frontend::snes::tile_layer_format_t::affine_mode7:
+        case frontend::snes::tile_layer_format_t::inactive:
             return std::nullopt;
         }
         if (layer.tile_map.value >= 65536u

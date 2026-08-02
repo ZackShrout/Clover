@@ -3,7 +3,7 @@
 // Copyright (c) 2026 BunnySoft. All rights reserved.
 //
 
-#include "clover/analysis/TileMap.h"
+#include "clover/analysis/snes/TileMap.h"
 
 #include <cstddef>
 #include <cstdint>

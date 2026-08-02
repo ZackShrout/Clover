@@ -139,6 +139,7 @@ target_include_directories(clover_core PUBLIC src)
 add_library(clover_core_workbench STATIC ${CLOVER_CORE_SOURCES})
 target_include_directories(clover_core_workbench PUBLIC src)
 target_compile_definitions(clover_core_workbench PUBLIC
+    CLOVER_WORKBENCH_DIAGNOSTICS=1
     CLOVER_WORKBENCH_PPU_LAYER_CAPTURE=1
     CLOVER_WORKBENCH_DMA_PROVENANCE=1
 )
@@ -149,10 +150,10 @@ add_library(clover_media_identity STATIC
 target_include_directories(clover_media_identity PUBLIC src)
 
 add_library(clover_analysis STATIC
-    src/clover/analysis/Oam.cpp
-    src/clover/analysis/Palette.cpp
-    src/clover/analysis/TileGraphics.cpp
-    src/clover/analysis/TileMap.cpp
+    src/clover/analysis/snes/Oam.cpp
+    src/clover/analysis/snes/Palette.cpp
+    src/clover/analysis/snes/TileGraphics.cpp
+    src/clover/analysis/snes/TileMap.cpp
     src/clover/analysis/TypedData.cpp
     src/clover/analysis/snes/Decoder.cpp
     src/clover/analysis/snes/Formatter.cpp
@@ -181,6 +182,8 @@ target_include_directories(clover_workbench_model PUBLIC src)
 
 add_library(clover_workbench_support STATIC
     src/clover/workbench/WorkbenchTargetSupport.cpp
+    src/clover/workbench/snes/SnesAnalysisServices.cpp
+    src/clover/workbench/snes/SnesPresentationModel.cpp
     src/clover/workbench/snes/SnesWorkbenchSupport.cpp
 )
 target_include_directories(clover_workbench_support PUBLIC src)
@@ -190,8 +193,8 @@ target_link_libraries(clover_workbench_support PUBLIC
 )
 
 add_library(clover_workbench_debugger STATIC
-    src/clover/workbench/LivePpuSnapshot.cpp
-    src/clover/workbench/SnesDebugger.cpp
+    src/clover/workbench/snes/LivePpuSnapshot.cpp
+    src/clover/workbench/snes/SnesDebugger.cpp
     src/clover/workbench/snes/SnesInstructionServices.cpp
 )
 target_include_directories(clover_workbench_debugger PUBLIC src)
@@ -239,7 +242,7 @@ add_executable(clover_workbench_analyze
 )
 target_include_directories(clover_workbench_analyze PRIVATE src)
 target_link_libraries(clover_workbench_analyze PRIVATE
-    clover_snes_checkpoint
+    clover_snes_checkpoint_workbench
     clover_workbench_debugger
     clover_workbench_project
 )
@@ -299,6 +302,9 @@ if(CLOVER_BUILD_SDL_FRONTEND)
         src/clover/frontend/EmulatorCore.cpp
         src/clover/frontend/SnesEmulatorCore.cpp
         src/clover/platform/sdl/WorkbenchAppShell.cpp
+        src/clover/platform/sdl/SdlWorkbenchApplication.cpp
+        src/clover/platform/sdl/snes/SnesWorkbenchApplication.cpp
+        src/clover/platform/sdl/snes/SnesToolRenderer.cpp
         src/workbench_main.cpp
     )
     target_include_directories(clover_workbench PRIVATE src)
@@ -562,6 +568,25 @@ target_link_libraries(clover_workbench_model_test PRIVATE
     clover_workbench_model
 )
 
+add_executable(clover_workbench_target_boundary_test
+    tests/WorkbenchTargetBoundaryTest.cpp
+)
+
+add_executable(clover_snes_presentation_model_test
+    tests/SnesPresentationModelTest.cpp
+)
+target_include_directories(clover_snes_presentation_model_test PRIVATE src)
+target_link_libraries(clover_snes_presentation_model_test PRIVATE
+    clover_workbench_debugger
+    clover_workbench_support
+)
+target_include_directories(
+    clover_workbench_target_boundary_test PRIVATE src
+)
+target_link_libraries(clover_workbench_target_boundary_test PRIVATE
+    clover_workbench_model
+)
+
 add_executable(clover_workbench_debugger_test
     tests/WorkbenchDebuggerTest.cpp
     src/clover/frontend/EmulatorCore.cpp
@@ -636,8 +661,8 @@ target_include_directories(
 )
 target_link_libraries(clover_workbench_oam_integration_test PRIVATE
     clover_analysis
-    clover_core
-    clover_snes_checkpoint
+    clover_core_workbench
+    clover_snes_checkpoint_workbench
     clover_workbench_debugger
 )
 
@@ -672,8 +697,8 @@ target_include_directories(
 )
 target_link_libraries(clover_workbench_tile_map_integration_test PRIVATE
     clover_analysis
-    clover_core
-    clover_snes_checkpoint
+    clover_core_workbench
+    clover_snes_checkpoint_workbench
     clover_workbench_debugger
 )
 
@@ -699,6 +724,7 @@ if(MSVC)
         clover_file_system_test
         clover_workbench_project_test
         clover_workbench_model_test
+        clover_workbench_target_boundary_test
         clover_workbench_debugger_test
         clover_workbench_analysis_integration_test
         clover_workbench_palette_integration_test
@@ -738,6 +764,14 @@ add_test(NAME clover_sdl_audio_pacing_test COMMAND clover_sdl_audio_pacing_test)
 add_test(NAME clover_file_system_test COMMAND clover_file_system_test)
 add_test(NAME clover_workbench_project_test COMMAND clover_workbench_project_test)
 add_test(NAME clover_workbench_model_test COMMAND clover_workbench_model_test)
+add_test(
+    NAME clover_workbench_target_boundary_test
+    COMMAND clover_workbench_target_boundary_test
+)
+add_test(
+    NAME clover_snes_presentation_model_test
+    COMMAND clover_snes_presentation_model_test
+)
 add_test(NAME clover_workbench_debugger_test COMMAND clover_workbench_debugger_test)
 add_test(
     NAME clover_workbench_analysis_integration_test

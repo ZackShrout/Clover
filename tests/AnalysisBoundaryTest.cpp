@@ -603,31 +603,6 @@ int main()
     {
         return fail("address_space_descriptors");
     }
-    std::array<frontend::tile_layer_state_t, 4> tile_layers{};
-    if (emulator->inspect_tile_layers(tile_layers) != tile_layers.size()
-        || tile_layers[0].id != 1u
-        || tile_layers[0].label != std::string_view{ "BG1" }
-        || tile_layers[0].tile_map.space
-            != frontend::snes_debug::k_vram_space
-        || tile_layers[0].tile_graphics.space
-            != frontend::snes_debug::k_vram_space
-        || tile_layers[0].width_tiles != 32u
-        || tile_layers[0].height_tiles != 32u)
-    {
-        return fail("tile_layer_snapshot_boundary");
-    }
-    frontend::object_layer_state_t object_layer{};
-    if (!emulator->inspect_object_layer(object_layer)
-        || object_layer.oam.space != frontend::snes_debug::k_oam_space
-        || object_layer.tile_graphics.space
-            != frontend::snes_debug::k_vram_space
-        || object_layer.palette.space
-            != frontend::snes_debug::k_cgram_space
-        || object_layer.palette.value != 256u)
-    {
-        return fail("object_layer_snapshot_boundary");
-    }
-
     std::array<std::byte, 2> bytes{};
     const frontend::memory_inspection_result_t canonical_result{
         target->inspect_memory(

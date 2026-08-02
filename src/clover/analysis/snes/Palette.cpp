@@ -3,7 +3,7 @@
 // Copyright (c) 2026 BunnySoft. All rights reserved.
 //
 
-#include "clover/analysis/Palette.h"
+#include "clover/analysis/snes/Palette.h"
 
 #include <limits>
 #include <utility>

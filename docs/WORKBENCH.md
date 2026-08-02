@@ -204,7 +204,8 @@ intentionally deferred to an affine-specific viewer.
 The raw-layer capture is compiled only into the release-optimized Workbench
 core variant. The ordinary Player core is built from the same sources without
 the instrumentation definition and therefore contains no capture branch,
-frame storage, or diagnostic symbols.
+frame storage, diagnostic capability inheritance, inspection methods, or
+diagnostic symbols.
 
 ## OAM and sprite inspection
 

@@ -20,7 +20,9 @@ namespace clover::frontend
     {
         unknown,
         wdc_65c816,
-        sony_spc700
+        sony_spc700,
+        motorola_68000,
+        zilog_z80
     };
 
     enum class address_space_kind_t : uint8_t

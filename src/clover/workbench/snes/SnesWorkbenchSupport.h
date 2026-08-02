@@ -28,6 +28,12 @@ namespace clover::workbench::snes
             create_core() const noexcept override;
         [[nodiscard]] std::unique_ptr<debugger_t>
             create_debugger() const override;
+        [[nodiscard]] std::unique_ptr<instruction_services_t>
+            create_instruction_services() const override;
+        [[nodiscard]] std::unique_ptr<analysis_services_t>
+            create_analysis_services(
+                const frontend::debug_target_t& target
+            ) const override;
         [[nodiscard]] bool prepare_project(
             project_t& project,
             const std::filesystem::path& projects_root,

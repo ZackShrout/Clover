@@ -5,8 +5,51 @@
 
 #include "clover/workbench/snes/SnesWorkbenchSupport.h"
 
+#include "clover/analysis/snes/HardwareSymbols.h"
+#include "clover/workbench/snes/SnesAnalysisServices.h"
 #include "clover/workbench/Project.h"
-#include "clover/workbench/SnesDebugger.h"
+#include "clover/workbench/snes/SnesDebugger.h"
+#include "clover/workbench/snes/SnesInstructionServices.h"
+
+#include <cstdint>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace
+{
+    constexpr std::string_view k_hardware_symbol_source{
+        "clover.snes.hardware.v1"
+    };
+
+    [[nodiscard]] bool import_hardware_symbols(
+        clover::workbench::project_t& project,
+        std::string& error
+    )
+    {
+        std::vector<clover::workbench::symbol_t> symbols{};
+        for (uint32_t address{ 0x2000u }; address <= 0x43ffu; ++address)
+        {
+            const auto symbol{
+                clover::analysis::snes::hardware_symbol(address)
+            };
+            if (!symbol.has_value())
+                continue;
+            symbols.push_back({
+                .location = { "snes.cpu-bus", address },
+                .name = symbol->name,
+                .description = std::string{ symbol->description },
+                .layer = clover::workbench::fact_layer_t::imported,
+                .source = std::string{ k_hardware_symbol_source }
+            });
+        }
+        return project.replace_imported_symbols(
+            k_hardware_symbol_source,
+            symbols,
+            error
+        );
+    }
+}
 
 namespace clover::workbench::snes
 {
@@ -34,7 +77,23 @@ namespace clover::workbench::snes
     std::unique_ptr<debugger_t>
         snes_workbench_support_t::create_debugger() const
     {
-        return std::make_unique<snes_debugger_t>();
+        return std::make_unique<snes_debugger_t>(
+            create_instruction_services()
+        );
+    }
+
+    std::unique_ptr<instruction_services_t>
+        snes_workbench_support_t::create_instruction_services() const
+    {
+        return std::make_unique<snes_instruction_services_t>();
+    }
+
+    std::unique_ptr<analysis_services_t>
+        snes_workbench_support_t::create_analysis_services(
+            const frontend::debug_target_t& target
+        ) const
+    {
+        return std::make_unique<snes_analysis_services_t>(target);
     }
 
     bool snes_workbench_support_t::prepare_project(
@@ -45,7 +104,7 @@ namespace clover::workbench::snes
     ) const
     {
         return project.open(projects_root, system(), media, error)
-            && project.import_snes_hardware_symbols(error);
+            && import_hardware_symbols(project, error);
     }
 
     bool snes_workbench_support_t::refresh_hardware_symbols(
@@ -53,7 +112,7 @@ namespace clover::workbench::snes
         std::string& error
     ) const
     {
-        return project.import_snes_hardware_symbols(error);
+        return import_hardware_symbols(project, error);
     }
 
     void snes_workbench_support_t::register_tools(

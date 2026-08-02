@@ -7,6 +7,9 @@
 
 #include "clover/core/snes/Console.h"
 #include "clover/frontend/EmulatorCore.h"
+#if defined(CLOVER_WORKBENCH_DIAGNOSTICS)
+#include "clover/frontend/snes/SnesDiagnosticCapabilities.h"
+#endif
 
 #include <array>
 #include <memory>
@@ -31,6 +34,11 @@ namespace clover::frontend
     struct snes_emulator_core_t final
         : emulator_core_t
         , video_plane_control_t
+#if defined(CLOVER_WORKBENCH_DIAGNOSTICS)
+        , snes::tile_layer_diagnostics_t
+        , snes::object_layer_diagnostics_t
+        , snes::dma_transfer_diagnostics_t
+#endif
         , debug_target_t
         , execution_control_t
         , observation_control_t
@@ -61,16 +69,18 @@ namespace clover::frontend
             video_plane_id_t id,
             video_plane_frame_view_t& destination
         ) const noexcept override;
+#if defined(CLOVER_WORKBENCH_DIAGNOSTICS)
         [[nodiscard]] size_t inspect_tile_layers(
-            std::span<tile_layer_state_t> destination
+            std::span<snes::tile_layer_state_t> destination
         ) const noexcept override;
         [[nodiscard]] bool inspect_object_layer(
-            object_layer_state_t& destination
+            snes::object_layer_state_t& destination
         ) const noexcept override;
-        [[nodiscard]] dma_transfer_inspection_result_t inspect_dma_transfers(
-            std::span<dma_transfer_record_t> destination
+        [[nodiscard]] snes::dma_transfer_inspection_result_t inspect_dma_transfers(
+            std::span<snes::dma_transfer_record_t> destination
         ) const noexcept override;
         void clear_dma_transfers() noexcept override;
+#endif
         [[nodiscard]] std::span<const execution_domain_descriptor_t>
             execution_domains() const noexcept override;
         [[nodiscard]] std::span<const address_space_descriptor_t>

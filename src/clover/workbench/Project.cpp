@@ -5,7 +5,6 @@
 
 #include "clover/workbench/Project.h"
 
-#include "clover/analysis/snes/HardwareSymbols.h"
 #include "clover/frontend/MediaIdentity.h"
 #include "clover/utils/FileSystem.h"
 
@@ -947,35 +946,68 @@ namespace clover::workbench
         return true;
     }
 
-    bool project_t::import_snes_hardware_symbols(std::string& error)
+    bool project_t::replace_imported_symbols(
+        std::string_view source,
+        std::span<const symbol_t> symbols,
+        std::string& error
+    )
     {
         if (_database == nullptr)
         {
             error = "Workbench project is not open";
             return false;
         }
+        if (source.empty())
+        {
+            error = "Imported symbol source is required";
+            return false;
+        }
+        for (const symbol_t& symbol : symbols)
+        {
+            if (!valid_location(symbol.location) || symbol.name.empty())
+            {
+                error = "Invalid imported symbol";
+                return false;
+            }
+        }
         if (!begin_transaction(_database, error))
             return false;
-        statement_t statement{};
-        static constexpr const char* sql{
+        statement_t remove{};
+        bool success{
+            remove.prepare(
+                _database,
+                "DELETE FROM symbols WHERE layer=1 AND source=?;",
+                error
+            )
+            && bind_text(remove.get(), 1, source, error)
+            && step_done(remove.get(), error)
+        };
+        statement_t insert{};
+        static constexpr const char* insert_sql{
             "INSERT OR REPLACE INTO symbols("
             "address_space,address,name,description,layer,source,analysis_generation)"
-            " VALUES('snes.cpu-bus',?,?,?,1,'clover.snes.hardware.v1',0);"
+            " VALUES(?,?,?,?,1,?,0);"
         };
-        bool success{ statement.prepare(_database, sql, error) };
-        for (uint32_t address{ 0x2000u }; success && address <= 0x43ffu; ++address)
+        success = success && insert.prepare(_database, insert_sql, error);
+        for (const symbol_t& symbol : symbols)
         {
-            const std::optional<analysis::snes::hardware_symbol_t> symbol{
-                analysis::snes::hardware_symbol(address)
-            };
-            if (!symbol.has_value())
-                continue;
-            sqlite3_reset(statement.get());
-            sqlite3_clear_bindings(statement.get());
-            sqlite3_bind_int64(statement.get(), 1, address);
-            success = bind_text(statement.get(), 2, symbol->name, error)
-                && bind_text(statement.get(), 3, symbol->description, error)
-                && sqlite3_step(statement.get()) == SQLITE_DONE;
+            if (!success)
+                break;
+            sqlite3_reset(insert.get());
+            sqlite3_clear_bindings(insert.get());
+            success = bind_text(
+                    insert.get(), 1, symbol.location.address_space, error
+                );
+            sqlite3_bind_int64(
+                insert.get(),
+                2,
+                static_cast<sqlite3_int64>(symbol.location.address)
+            );
+            success = success
+                && bind_text(insert.get(), 3, symbol.name, error)
+                && bind_text(insert.get(), 4, symbol.description, error)
+                && bind_text(insert.get(), 5, source, error)
+                && sqlite3_step(insert.get()) == SQLITE_DONE;
             if (!success && error.empty())
                 error = sqlite3_errmsg(_database);
         }

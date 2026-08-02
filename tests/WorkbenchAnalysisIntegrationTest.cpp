@@ -8,7 +8,8 @@
 #include "clover/frontend/EmulatorCore.h"
 #include "clover/frontend/SnesEmulatorCore.h"
 #include "clover/workbench/Project.h"
-#include "clover/workbench/SnesDebugger.h"
+#include "clover/workbench/snes/SnesAnalysisServices.h"
+#include "clover/workbench/snes/SnesDebugger.h"
 
 #include <algorithm>
 #include <chrono>
@@ -82,7 +83,7 @@ int main()
     };
 
     emulator->power_on();
-    workbench::snes_debugger_t debugger{};
+    workbench::snes::snes_debugger_t debugger{};
     std::string error{};
     if (!debugger.initialize(*target, error, "integration-session")
         || !debugger.resume(error)
@@ -220,8 +221,8 @@ int main()
     uint64_t generation{};
     if (!project.publish_analysis(
             analyzed.model,
-            workbench::k_analyzer_version,
-            workbench::k_decoder_version,
+            workbench::snes::k_snes_analyzer_version,
+            workbench::snes::k_snes_decoder_version,
             analysis::snes::hybrid_analysis_fingerprint(
                 project.identity().canonical_media_sha256,
                 options

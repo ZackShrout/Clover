@@ -5,7 +5,7 @@
 
 #include "clover/frontend/EmulatorCore.h"
 #include "clover/frontend/SnesEmulatorCore.h"
-#include "clover/workbench/SnesDebugger.h"
+#include "clover/workbench/snes/SnesDebugger.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -106,7 +106,7 @@ int main()
     emulator->power_on();
 
     frontend::debug_target_t* const target{ emulator->debug_target() };
-    workbench::snes_debugger_t debugger{};
+    workbench::snes::snes_debugger_t debugger{};
     std::string error{};
     if (target == nullptr || !debugger.initialize(*target, error)
         || !debugger.resume(error))

@@ -6,7 +6,9 @@
 #pragma once
 
 #include "clover/frontend/EmulatorCore.h"
+#include "clover/workbench/AnalysisServices.h"
 #include "clover/workbench/Debugger.h"
+#include "clover/workbench/InstructionServices.h"
 #include "clover/workbench/ToolRegistry.h"
 
 #include <cstddef>
@@ -32,6 +34,12 @@ namespace clover::workbench
             create_core() const noexcept = 0;
         [[nodiscard]] virtual std::unique_ptr<debugger_t>
             create_debugger() const = 0;
+        [[nodiscard]] virtual std::unique_ptr<instruction_services_t>
+            create_instruction_services() const = 0;
+        [[nodiscard]] virtual std::unique_ptr<analysis_services_t>
+            create_analysis_services(
+                const frontend::debug_target_t& target
+            ) const = 0;
         [[nodiscard]] virtual bool prepare_project(
             project_t& project,
             const std::filesystem::path& projects_root,
@@ -47,4 +55,6 @@ namespace clover::workbench
 
     [[nodiscard]] std::unique_ptr<workbench_target_support_t>
         create_workbench_target_support(frontend::system_id_t system);
+    [[nodiscard]] std::unique_ptr<workbench_target_support_t>
+        identify_workbench_target_support(std::span<const std::byte> media);
 }

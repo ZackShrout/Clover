@@ -5,7 +5,7 @@
 
 #include "clover/frontend/EmulatorCore.h"
 #include "clover/frontend/SnesEmulatorCore.h"
-#include "clover/workbench/SnesDebugger.h"
+#include "clover/workbench/snes/SnesDebugger.h"
 #include "clover/workbench/WorkbenchTargetSupport.h"
 #include "clover/workbench/snes/SnesInstructionServices.h"
 
@@ -81,13 +81,13 @@ int main()
         support == nullptr ? nullptr : support->create_debugger()
     };
     auto* const snes_debugger{
-        dynamic_cast<snes_debugger_t*>(debugger_owner.get())
+        dynamic_cast<snes::snes_debugger_t*>(debugger_owner.get())
     };
     if (target == nullptr
         || snes_debugger == nullptr
         || !debugger_owner->initialize(*target, error))
         return fail("initialize", error);
-    snes_debugger_t& debugger{ *snes_debugger };
+    snes::snes_debugger_t& debugger{ *snes_debugger };
 
     live_processor_state_t state{};
     if (!debugger.live_state(state, error))

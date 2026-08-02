@@ -5,10 +5,10 @@
 
 #pragma once
 
-#include "clover/analysis/Palette.h"
-#include "clover/analysis/TileGraphics.h"
-#include "clover/analysis/TileMap.h"
-#include "clover/frontend/EmulatorCore.h"
+#include "clover/analysis/snes/Palette.h"
+#include "clover/analysis/snes/TileGraphics.h"
+#include "clover/analysis/snes/TileMap.h"
+#include "clover/frontend/snes/SnesDiagnosticCapabilities.h"
 
 #include <array>
 #include <cstddef>
@@ -16,11 +16,11 @@
 #include <optional>
 #include <string>
 
-namespace clover::workbench
+namespace clover::workbench::snes
 {
     struct live_ppu_snapshot_t
     {
-        frontend::tile_layer_state_t layer{};
+        frontend::snes::tile_layer_state_t layer{};
         std::array<std::byte, 65536u> vram{};
         std::array<std::byte, 512u> cgram{};
 
@@ -37,7 +37,7 @@ namespace clover::workbench
     };
 
     [[nodiscard]] bool capture_live_ppu_snapshot(
-        frontend::emulator_core_t& core,
+        const frontend::snes::tile_layer_diagnostics_t& diagnostics,
         frontend::debug_target_t& target,
         size_t layer_index,
         live_ppu_snapshot_t& destination,
@@ -45,6 +45,6 @@ namespace clover::workbench
     );
 
     [[nodiscard]] std::optional<live_bg_assets_t> make_live_bg_assets(
-        const frontend::tile_layer_state_t& layer
+        const frontend::snes::tile_layer_state_t& layer
     );
 }

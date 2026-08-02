@@ -5,11 +5,13 @@
 
 #include "clover/analysis/snes/HybridAnalyzer.h"
 #include "clover/analysis/snes/StaticListing.h"
+#include "clover/frontend/snes/SnesDiagnosticCapabilities.h"
 #include "clover/frontend/EmulatorCore.h"
 #include "clover/frontend/SnesEmulatorCore.h"
 #include "clover/utils/FileSystem.h"
 #include "clover/workbench/Project.h"
-#include "clover/workbench/SnesDebugger.h"
+#include "clover/workbench/snes/SnesAnalysisServices.h"
+#include "clover/workbench/snes/SnesDebugger.h"
 
 #include <algorithm>
 #include <array>
@@ -110,7 +112,7 @@ int main(int argc, char** argv)
     };
     analysis::snes::hybrid_analysis_options_t options{};
     options.seeds = analysis::snes::default_snes_vector_seeds(source);
-    workbench::snes_debugger_t debugger{};
+    workbench::snes::snes_debugger_t debugger{};
     std::string error{};
     if (run_instructions != 0u)
     {
@@ -165,11 +167,21 @@ int main(int argc, char** argv)
             )
         );
         std::printf("\n");
-        std::array<frontend::tile_layer_state_t, 4> layers{};
-        const size_t layer_count{ core->inspect_tile_layers(layers) };
+        const auto* const tile_diagnostics{
+            dynamic_cast<const frontend::snes::tile_layer_diagnostics_t*>(core.get())
+        };
+        if (tile_diagnostics == nullptr)
+        {
+            std::fprintf(stderr, "SNES tile-layer diagnostics are unavailable.\n");
+            return 1;
+        }
+        std::array<frontend::snes::tile_layer_state_t, 4> layers{};
+        const size_t layer_count{
+            tile_diagnostics->inspect_tile_layers(layers)
+        };
         for (size_t index{}; index < layer_count; ++index)
         {
-            const frontend::tile_layer_state_t& layer{ layers[index] };
+            const frontend::snes::tile_layer_state_t& layer{ layers[index] };
             std::printf(
                 "  %.*s: active=%u map=$%04llX tiles=$%04llX "
                 "format=%u geometry=%ux%u/%upx\n",
@@ -269,8 +281,8 @@ int main(int argc, char** argv)
         };
         if (!project.publish_analysis(
                 result.model,
-                workbench::k_analyzer_version,
-                workbench::k_decoder_version,
+                workbench::snes::k_snes_analyzer_version,
+                workbench::snes::k_snes_decoder_version,
                 fingerprint,
                 generation,
                 error

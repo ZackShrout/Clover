@@ -19,4 +19,32 @@ namespace clover::workbench
         }
         return nullptr;
     }
+
+    std::unique_ptr<workbench_target_support_t>
+        identify_workbench_target_support(std::span<const std::byte> media)
+    {
+        // The registry is intentionally centralized here. Adding a system
+        // extends this list without adding system branches to the host.
+        constexpr frontend::system_id_t systems[]{
+            frontend::system_id_t::snes
+        };
+        for (const frontend::system_id_t system : systems)
+        {
+            std::unique_ptr<workbench_target_support_t> support{
+                create_workbench_target_support(system)
+            };
+            if (support == nullptr)
+            {
+                continue;
+            }
+            std::unique_ptr<frontend::emulator_core_t> core{
+                support->create_core()
+            };
+            if (core != nullptr && core->load_media(media))
+            {
+                return support;
+            }
+        }
+        return nullptr;
+    }
 }

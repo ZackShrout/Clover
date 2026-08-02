@@ -5,10 +5,10 @@
 
 #pragma once
 
-#include "clover/analysis/Palette.h"
+#include "clover/analysis/snes/Palette.h"
 #include "clover/analysis/ProgramModel.h"
-#include "clover/analysis/TileGraphics.h"
-#include "clover/analysis/TileMap.h"
+#include "clover/analysis/snes/TileGraphics.h"
+#include "clover/analysis/snes/TileMap.h"
 #include "clover/analysis/TypedData.h"
 #include "clover/frontend/EmulatorCore.h"
 
@@ -26,8 +26,6 @@ struct sqlite3;
 namespace clover::workbench
 {
     inline constexpr uint32_t k_project_schema_version{ 8u };
-    inline constexpr std::string_view k_analyzer_version{ "clover-analyzer-2" };
-    inline constexpr std::string_view k_decoder_version{ "wdc65c816-decoder-1" };
 
     enum class fact_layer_t : uint8_t
     {
@@ -202,7 +200,11 @@ namespace clover::workbench
                                              std::string_view label,
                                              std::string_view source,
                                              std::string& error);
-        [[nodiscard]] bool import_snes_hardware_symbols(std::string& error);
+        [[nodiscard]] bool replace_imported_symbols(
+            std::string_view source,
+            std::span<const symbol_t> symbols,
+            std::string& error
+        );
 
         [[nodiscard]] std::vector<named_fact_t> labels(std::string& error) const;
         [[nodiscard]] std::vector<named_fact_t> comments(std::string& error) const;

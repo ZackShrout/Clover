@@ -2,12 +2,13 @@
 // Copyright (c) 2026 BunnySoft. All rights reserved.
 //
 
-#include "clover/analysis/Oam.h"
-#include "clover/analysis/Palette.h"
-#include "clover/analysis/TileGraphics.h"
+#include "clover/analysis/snes/Oam.h"
+#include "clover/analysis/snes/Palette.h"
+#include "clover/analysis/snes/TileGraphics.h"
+#include "clover/frontend/snes/SnesDiagnosticCapabilities.h"
 #include "clover/frontend/EmulatorCore.h"
 #include "clover/frontend/SnesEmulatorCore.h"
-#include "clover/workbench/SnesDebugger.h"
+#include "clover/workbench/snes/SnesDebugger.h"
 
 #include <array>
 #include <cstddef>
@@ -83,9 +84,15 @@ int main()
         return fail("load");
     emulator->power_on();
     frontend::debug_target_t* const target{ emulator->debug_target() };
-    workbench::snes_debugger_t debugger{};
+    const auto* const object_diagnostics{
+        dynamic_cast<const frontend::snes::object_layer_diagnostics_t*>(
+            emulator.get()
+        )
+    };
+    workbench::snes::snes_debugger_t debugger{};
     std::string error{};
-    if (target == nullptr || !debugger.initialize(*target, error))
+    if (target == nullptr || object_diagnostics == nullptr
+        || !debugger.initialize(*target, error))
         return fail("debugger", error);
     for (size_t step{}; step < 40u; ++step)
     {
@@ -93,8 +100,8 @@ int main()
             return fail("execute_upload", error);
     }
 
-    frontend::object_layer_state_t layer{};
-    if (!emulator->inspect_object_layer(layer)
+    frontend::snes::object_layer_state_t layer{};
+    if (!object_diagnostics->inspect_object_layer(layer)
         || !layer.active
         || layer.tile_base_word_address != 0u
         || layer.base_size != 0u)

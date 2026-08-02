@@ -1,4 +1,5 @@
 //
+// Created by Zack Shrout on 8/1/26.
 // Copyright (c) 2026 BunnySoft. All rights reserved.
 //
 
@@ -9,6 +10,7 @@
 #include "clover/analysis/snes/StaticListing.h"
 #include "clover/frontend/DebugTarget.h"
 #include "clover/workbench/Debugger.h"
+#include "clover/workbench/InstructionServices.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -19,12 +21,15 @@
 #include <unordered_map>
 #include <vector>
 
-namespace clover::workbench
+namespace clover::workbench::snes
 {
     class snes_debugger_t final : public debugger_t
     {
     public:
-        snes_debugger_t() = default;
+        snes_debugger_t();
+        explicit snes_debugger_t(
+            std::unique_ptr<instruction_services_t> instruction_services
+        );
         ~snes_debugger_t() override;
 
         snes_debugger_t(const snes_debugger_t&) = delete;
@@ -114,7 +119,7 @@ namespace clover::workbench
                   frontend::debug_address_t address,
                   std::string detail = {});
         void observe_control_flow(
-            const analysis::snes::decoded_instruction_t& instruction,
+            const instruction_semantics_t& instruction,
             frontend::debug_address_t after
         );
         void observe_runtime_edge(
@@ -123,6 +128,7 @@ namespace clover::workbench
         );
 
         frontend::debug_target_t* _target{ nullptr };
+        std::unique_ptr<instruction_services_t> _instruction_services{};
         frontend::execution_control_t* _execution{ nullptr };
         frontend::observation_control_t* _observations{ nullptr };
         frontend::debug_session_control_t* _session{ nullptr };

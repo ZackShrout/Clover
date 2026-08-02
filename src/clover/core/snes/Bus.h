@@ -160,6 +160,14 @@ namespace clover::core
                                      bool is_write,
                                      uint32_t instruction_address) noexcept
         {
+#if defined(CLOVER_WORKBENCH_DMA_PROVENANCE)
+            record_workbench_dma_control_write(
+                address,
+                value,
+                is_write,
+                instruction_address
+            );
+#endif
             if (_cpu_memory_observation_enabled)
             {
                 record_cpu_memory_access(
@@ -170,6 +178,11 @@ namespace clover::core
                 );
             }
         }
+#if defined(CLOVER_WORKBENCH_DMA_PROVENANCE)
+        [[nodiscard]] master_clock_count_t workbench_dma_master_clock() const noexcept;
+        [[nodiscard]] uint64_t workbench_dma_frame_index() const noexcept;
+        [[nodiscard]] timing_snapshot_t workbench_dma_timing() const noexcept;
+#endif
         void trace_cpu_apu_port_access(uint32_t address,
                                        uint8_t value,
                                        bool is_write,
@@ -185,6 +198,12 @@ namespace clover::core
                                       uint8_t value,
                                       bool is_write,
                                       uint32_t instruction_address) noexcept;
+#if defined(CLOVER_WORKBENCH_DMA_PROVENANCE)
+        void record_workbench_dma_control_write(uint32_t address,
+                                                uint8_t value,
+                                                bool is_write,
+                                                uint32_t instruction_address) noexcept;
+#endif
         void dispatch_write_u8(uint32_t address, uint8_t value) noexcept;
         void advance_apu_to(master_clock_delta_t target_clocks) noexcept;
         void dispatch_pending_apu_writes_to(master_clock_delta_t target_clocks) noexcept;

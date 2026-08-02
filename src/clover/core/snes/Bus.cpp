@@ -711,6 +711,46 @@ namespace clover::core
         });
     }
 
+#if defined(CLOVER_WORKBENCH_DMA_PROVENANCE)
+    void bus_t::record_workbench_dma_control_write(
+        uint32_t address,
+        uint8_t value,
+        bool is_write,
+        uint32_t instruction_address
+    ) noexcept
+    {
+        const uint16_t register_address{ static_cast<uint16_t>(address) };
+        if (!is_write || _dma == nullptr
+            || (register_address != 0x420bu && register_address != 0x420cu))
+        {
+            return;
+        }
+
+        _dma->record_control_write(
+            register_address,
+            value,
+            instruction_address,
+            workbench_dma_frame_index(),
+            workbench_dma_timing()
+        );
+    }
+
+    master_clock_count_t bus_t::workbench_dma_master_clock() const noexcept
+    {
+        return _cpu != nullptr ? _cpu->master_clock() : 0u;
+    }
+
+    uint64_t bus_t::workbench_dma_frame_index() const noexcept
+    {
+        return _ppu != nullptr ? _ppu->frame_index() : 0u;
+    }
+
+    timing_snapshot_t bus_t::workbench_dma_timing() const noexcept
+    {
+        return _ppu != nullptr ? _ppu->timing() : timing_snapshot_t{};
+    }
+#endif
+
     void bus_t::trace_cpu_apu_port_access(uint32_t address,
                                           uint8_t value,
                                           bool is_write,

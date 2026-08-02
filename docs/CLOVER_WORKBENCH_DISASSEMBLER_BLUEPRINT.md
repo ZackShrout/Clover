@@ -60,8 +60,8 @@ The disassembler is the first major view into that system, but it is only one vi
 
 This document is a product north star and architectural direction. Section 28
 also serves as the authoritative delivery ledger. As of August 1, 2026, Stages
-0 through 4 and the Stage 5.1-5.5 typed-data, palette, tile-graphics,
-tile-map, and OAM foundations are complete: Clover has the inspection and checkpoint
+0 through 4 and the Stage 5.1-5.6 typed-data, palette, tile-graphics,
+tile-map, OAM, and DMA-provenance foundations are complete: Clover has the inspection and checkpoint
 substrate, the structured decoder, the persistent Workbench, live debugger
 integration, the hybrid analyzer, durable typed definitions and object
 bindings, and persistent palette, tile, and background-map inspection.
@@ -78,8 +78,7 @@ Established
     blocks, cross-references, runtime coverage, provenance, and conflicts
 
 Next
-    Typed data, graphics and audio views, DMA provenance, and hardware-aware
-    inspectors
+    Asset and script definitions, audio views, and hardware-aware inspectors
 
 Medium term
     Reverse-debugging workflows built on the checkpoint substrate and temporal
@@ -3445,11 +3444,37 @@ and object-layer snapshot. `clover_workbench_oam_integration_test` executes
 real `$2101/$2104`, VRAM, and CGRAM writes and follows them through the
 frontend boundary to decoded object graphics.
 
+### Stage 5.6: DMA and HDMA provenance
+
+Add a bounded, Workbench-only history at the DMA engine's existing byte
+transfer boundary. Each record preserves whether the transfer was MDMA or
+HDMA, channel and enable mask, transfer mode and direction, initiating
+`$420B/$420C` instruction, A-bus range, all B-bus offsets selected by the mode,
+first and last values, byte count, access validity, frame, raster position, and
+master-clock interval. Coalesce consecutive MDMA bytes and keep HDMA records
+separate per scanline.
+
+Expose only system-neutral copies through the frontend. The Workbench lists
+the bounded history, follows either its initiating instruction or A-bus source,
+reports overwritten records explicitly, and can clear the history without
+altering emulated state. The capture ring is fixed-capacity and the transfer
+hot path performs no allocation, logging, I/O, or UI callback.
+
+**Implementation status:** complete on August 1, 2026.
+`clover_workbench_dma_provenance_integration_test` executes a real two-byte
+MDMA and a later scanline HDMA transfer, then verifies the exact initiating
+instructions, A-bus payload addresses and values, B-bus target, channel,
+mode, direction, and clear operation through the frontend boundary.
+`CLOVER_WORKBENCH_DMA_PROVENANCE` is defined only for the separately compiled
+release-optimized Workbench core. Rebuilding the normal Player core after the
+change produced byte-identical `Dma.cpp` and `Bus.cpp` object files against a
+pre-change baseline, proving that the Player contains no diagnostic path or
+performance cost.
+
 ### Remaining Stage 5 work
 
 Implement:
 
-- DMA source tracking;
 - asset definitions;
 - script definitions;
 - APU and DSP inspection.

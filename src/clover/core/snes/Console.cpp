@@ -232,6 +232,20 @@ namespace clover::core
         _bus.set_observation_sink(sink);
     }
 
+#if defined(CLOVER_WORKBENCH_DMA_PROVENANCE)
+    dma_provenance_snapshot_t console_t::copy_dma_provenance_records(
+        std::span<dma_provenance_record_t> destination
+    ) const noexcept
+    {
+        return _dma.copy_provenance_records(destination);
+    }
+
+    void console_t::clear_dma_provenance_records() noexcept
+    {
+        _dma.clear_provenance_records();
+    }
+#endif
+
     hardware_step_result_t console_t::step_hardware() noexcept
     {
         if (!_powered_on)

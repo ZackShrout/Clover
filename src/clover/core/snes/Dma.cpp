@@ -57,6 +57,11 @@ namespace clover::core
         _suspended_general_dma_batch_started = false;
         _suspended_general_dma_units_remaining = 0;
         _suspended_general_dma_transfer_index = 0;
+#if defined(CLOVER_WORKBENCH_DMA_PROVENANCE)
+        clear_provenance_records();
+        _general_dma_initiator = {};
+        _hdma_initiator = {};
+#endif
     }
 
     void dma_t::request_general_dma() noexcept
@@ -229,6 +234,14 @@ namespace clover::core
             state.suspended_general_dma_units_remaining;
         _suspended_general_dma_transfer_index =
             state.suspended_general_dma_transfer_index;
+#if defined(CLOVER_WORKBENCH_DMA_PROVENANCE)
+        // Diagnostic history is deliberately outside causal checkpoints. A
+        // restore starts a new observation timeline instead of retaining
+        // transfers or initiators from the abandoned future.
+        clear_provenance_records();
+        _general_dma_initiator = {};
+        _hdma_initiator = {};
+#endif
         return true;
     }
 
@@ -596,7 +609,11 @@ namespace clover::core
         bus.write_cpu_u8(0x00002100u | address, value, 8);
     }
 
+#if defined(CLOVER_WORKBENCH_DMA_PROVENANCE)
     void dma_t::transfer_byte(bus_t& bus,
+#else
+    void dma_t::transfer_byte(bus_t& bus,
+#endif
                               dma_channel_t& channel,
                               uint32_t source_address,
                               uint8_t transfer_index) noexcept
@@ -610,13 +627,174 @@ namespace clover::core
         {
             const uint8_t value{ read_a_bus(bus, source_address) };
             write_b_bus(bus, target_address, value, valid_b_write);
+#if defined(CLOVER_WORKBENCH_DMA_PROVENANCE)
+            record_transfer_byte(
+                bus, channel, source_address, target_address, value,
+                valid_b_write
+            );
+#endif
         }
         else
         {
             const uint8_t value{ read_b_bus(bus, target_address, valid_b_write) };
             write_a_bus(bus, source_address, value);
+#if defined(CLOVER_WORKBENCH_DMA_PROVENANCE)
+            record_transfer_byte(
+                bus, channel, source_address, target_address, value,
+                valid_b_write
+            );
+#endif
         }
     }
+
+#if defined(CLOVER_WORKBENCH_DMA_PROVENANCE)
+    void dma_t::record_control_write(uint16_t address,
+                                     uint8_t value,
+                                     uint32_t instruction_address,
+                                     uint64_t frame_index,
+                                     timing_snapshot_t timing) noexcept
+    {
+        dma_provenance_initiator_t& initiator{
+            address == 0x420bu ? _general_dma_initiator : _hdma_initiator
+        };
+        initiator = {
+            .instruction_address = instruction_address & 0x00ffffffu,
+            .frame_index = frame_index,
+            .timing = timing,
+            .channel_mask = value
+        };
+    }
+
+    void dma_t::record_transfer_byte(bus_t& bus,
+                                     const dma_channel_t& channel,
+                                     uint32_t source_address,
+                                     uint8_t target_address,
+                                     uint8_t value,
+                                     bool valid_b_access) noexcept
+    {
+        const dma_provenance_initiator_t& initiator{
+            _activity == dma_activity_t::general_dma
+                ? _general_dma_initiator
+                : _hdma_initiator
+        };
+        const master_clock_count_t master_clock{
+            bus.workbench_dma_master_clock()
+        };
+        const uint64_t frame_index{ bus.workbench_dma_frame_index() };
+        const timing_snapshot_t timing{ bus.workbench_dma_timing() };
+        const uint8_t target_offset{
+            static_cast<uint8_t>(target_address - channel.target_address)
+        };
+
+        const bool continue_record{
+            _provenance_open
+                && _provenance_records[_open_provenance_index].activity
+                    == _activity
+                && _provenance_records[_open_provenance_index].channel
+                    == _active_channel_index
+                && _provenance_records[_open_provenance_index].control
+                    == channel.control
+                && _provenance_records[_open_provenance_index].initiator_address
+                    == initiator.instruction_address
+                && (_activity == dma_activity_t::general_dma
+                    || _provenance_records[_open_provenance_index]
+                           .last_timing.raster.scanline
+                        == timing.raster.scanline)
+        };
+
+        if (!continue_record)
+        {
+            size_t index{};
+            if (_provenance_count < k_provenance_capacity)
+            {
+                index = (_provenance_start + _provenance_count)
+                    % k_provenance_capacity;
+                ++_provenance_count;
+            }
+            else
+            {
+                index = _provenance_start;
+                _provenance_start = (_provenance_start + 1u)
+                    % k_provenance_capacity;
+                ++_provenance_dropped;
+            }
+
+            _open_provenance_index = index;
+            _provenance_open = true;
+            _provenance_records[index] = {
+                .sequence = _next_provenance_sequence++,
+                .first_master_clock = master_clock,
+                .last_master_clock = master_clock,
+                .frame_index = frame_index,
+                .first_timing = timing,
+                .last_timing = timing,
+                .initiator_address = initiator.instruction_address,
+                .first_a_bus_address = source_address & 0x00ffffffu,
+                .last_a_bus_address = source_address & 0x00ffffffu,
+                .byte_count = 1u,
+                .channel = _active_channel_index,
+                .channel_mask = initiator.channel_mask,
+                .control = channel.control,
+                .b_bus_base = channel.target_address,
+                .b_bus_offset_mask = static_cast<uint8_t>(
+                    target_offset < 8u ? 1u << target_offset : 0u
+                ),
+                .first_value = value,
+                .last_value = value,
+                .activity = _activity,
+                .direction_to_b_bus = direction_to_b_bus(channel),
+                .b_bus_access_valid = valid_b_access
+            };
+            return;
+        }
+
+        dma_provenance_record_t& record{
+            _provenance_records[_open_provenance_index]
+        };
+        record.last_master_clock = master_clock;
+        record.last_timing = timing;
+        record.last_a_bus_address = source_address & 0x00ffffffu;
+        ++record.byte_count;
+        if (target_offset < 8u)
+        {
+            record.b_bus_offset_mask |= static_cast<uint8_t>(
+                1u << target_offset
+            );
+        }
+        record.last_value = value;
+        record.b_bus_access_valid = record.b_bus_access_valid
+            && valid_b_access;
+    }
+
+    dma_provenance_snapshot_t dma_t::copy_provenance_records(
+        std::span<dma_provenance_record_t> destination
+    ) const noexcept
+    {
+        const size_t count{ std::min(destination.size(), _provenance_count) };
+        const size_t skip{ _provenance_count - count };
+        for (size_t index{}; index < count; ++index)
+        {
+            destination[index] = _provenance_records[
+                (_provenance_start + skip + index) % k_provenance_capacity
+            ];
+        }
+        return {
+            .record_count = count,
+            .records_dropped = _provenance_dropped
+        };
+    }
+
+    void dma_t::clear_provenance_records() noexcept
+    {
+        _provenance_records = {};
+        _provenance_start = 0u;
+        _provenance_count = 0u;
+        _open_provenance_index = 0u;
+        _next_provenance_sequence = 1u;
+        _provenance_dropped = 0u;
+        _provenance_open = false;
+    }
+#endif
 
     uint32_t dma_t::current_general_dma_transfer_count(const dma_channel_t& channel) const noexcept
     {
@@ -943,6 +1121,9 @@ namespace clover::core
 
     void dma_t::finish_active_channel() noexcept
     {
+#if defined(CLOVER_WORKBENCH_DMA_PROVENANCE)
+        _provenance_open = false;
+#endif
         dma_channel_t& channel{ _channels[_active_channel_index] };
         if (_activity == dma_activity_t::general_dma)
         {

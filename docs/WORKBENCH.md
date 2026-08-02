@@ -56,6 +56,9 @@ Use `--project-root <path>` to override the platform application-data location.
 | Arrow keys in tile-map view | Select a map entry |
 | O | Open or close the live OAM object viewer |
 | Arrow keys in OAM view | Select one of the 128 object entries |
+| I / Shift+I | Open or close the live DMA/HDMA history / clear its history |
+| Arrow keys in DMA view | Select a captured transfer |
+| Enter / Shift+Enter in DMA view | Follow the initiating instruction / A-bus source |
 | Up / Down | Select an instruction |
 | Enter | Follow a statically known direct target |
 | Page Up / Page Down | Move the linear listing |
@@ -210,6 +213,27 @@ sprite, and range/time overflow flags. SNES OAM has no enable bit, so a fully
 transparent in-range entry is shown accurately rather than labeled disabled.
 The read-only `snes.oam` debug space does not access `$2138` or disturb its
 address latch.
+
+## DMA and HDMA provenance
+
+Press `I` to inspect the specialized Workbench core's bounded live transfer
+history. Each row identifies MDMA or HDMA, channel, byte count, A-bus address
+or range, every B-bus register selected by the transfer mode, frame, and
+raster position. The inspector also retains the exact CPU instruction that
+wrote the enabling `$420B` or `$420C`, the channel mask, direction, first and
+last values, and whether the B-bus access was valid. Arrow keys select a row;
+Enter follows its initiating instruction and Shift+Enter follows the A-bus
+source. Shift+I clears the diagnostic history.
+
+Capture occurs directly at the existing DMA byte-transfer boundary, so the
+reported addresses and values are observations of transfers the core actually
+performed rather than a reconstruction from later PPU memory. Consecutive
+MDMA bytes are coalesced, while HDMA records remain separated by scanline.
+Storage is a fixed 512-record ring with explicit dropped-record accounting;
+the hot path does not allocate, log, perform I/O, or invoke UI callbacks.
+`CLOVER_WORKBENCH_DMA_PROVENANCE` is defined only for
+`clover_core_workbench`. The normal Player target contains neither the ring nor
+capture instructions.
 
 ## Project storage
 

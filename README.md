@@ -177,6 +177,13 @@ size, tile, palette, priority, and flips, and render the selected object from
 live 4bpp VRAM and OBJ CGRAM. Off-viewport entries are identified without
 inventing an enable bit that SNES OAM does not provide.
 
+Stage 5.6 adds bounded live MDMA and HDMA provenance to the specialized
+Workbench core. Press `I` to inspect transfers by kind, channel, initiating
+`$420B/$420C` instruction, A-bus range, B-bus register set, byte count, mode,
+frame, and raster position. Arrow keys select a transfer, Enter follows its
+initiating instruction, Shift+Enter follows its A-bus source, and Shift+I
+clears the history. This capture is compiled out of the normal Player core.
+
 ## SDL Desktop App
 
 The checked-in `SDL Release` CMake preset builds the optimized `clover_sdl`

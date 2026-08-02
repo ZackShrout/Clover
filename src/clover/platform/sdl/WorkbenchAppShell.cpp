@@ -127,6 +127,32 @@ namespace
         return output.str();
     }
 
+    [[nodiscard]] std::string formatted_b_bus_targets(
+        uint8_t base,
+        uint8_t offset_mask
+    )
+    {
+        std::ostringstream output{};
+        output << std::uppercase << std::hex << std::setfill('0');
+        bool first{ true };
+        for (uint8_t offset{ 0u }; offset < 4u; ++offset)
+        {
+            if ((offset_mask & static_cast<uint8_t>(1u << offset)) == 0u)
+                continue;
+            if (!first)
+                output << '/';
+            output << "$21" << std::setw(2)
+                   << static_cast<unsigned>(base + offset);
+            first = false;
+        }
+        if (first)
+        {
+            output << "$21" << std::setw(2)
+                   << static_cast<unsigned>(base);
+        }
+        return output.str();
+    }
+
     [[nodiscard]] std::string formatted_bytes(
         const decoded_instruction_t& instruction
     )
@@ -191,9 +217,19 @@ namespace
     void draw_text(SDL_Renderer* renderer,
                    float x,
                    float y,
-                   std::string_view text)
+                   std::string_view text,
+                   Uint8 red = 207u,
+                   Uint8 green = 220u,
+                   Uint8 blue = 240u)
     {
         const std::string owned{ text };
+        static_cast<void>(SDL_SetRenderDrawColor(
+            renderer,
+            red,
+            green,
+            blue,
+            255u
+        ));
         static_cast<void>(SDL_RenderDebugText(renderer, x, y, owned.c_str()));
     }
 
@@ -600,6 +636,10 @@ namespace clover::platform
         bool tile_map_full_view{ false };
         bool object_view{ false };
         uint8_t selected_object{ 0u };
+        bool dma_view{ false };
+        std::array<frontend::dma_transfer_record_t, 512u> dma_transfers{};
+        frontend::dma_transfer_inspection_result_t dma_inspection{};
+        size_t selected_dma_transfer{ 0u };
         uint64_t debugger_instructions_executed{};
         edit_kind_t edit_kind{ edit_kind_t::none };
         std::string edit_buffer{};
@@ -921,6 +961,7 @@ namespace clover::platform
                             palette_view = false;
                             graphics_view = false;
                             object_view = false;
+                            dma_view = false;
                         }
                         pending_tile_map_id.clear();
                     }
@@ -961,6 +1002,30 @@ namespace clover::platform
                 if (!error.empty())
                     status = error;
                 refresh_facts = false;
+            }
+            if (dma_view)
+            {
+                const bool followed_latest{
+                    dma_inspection.record_count == 0u
+                        || selected_dma_transfer + 1u
+                            == dma_inspection.record_count
+                };
+                dma_inspection = core->inspect_dma_transfers(dma_transfers);
+                if (dma_inspection.record_count == 0u)
+                {
+                    selected_dma_transfer = 0u;
+                }
+                else if (followed_latest)
+                {
+                    selected_dma_transfer = dma_inspection.record_count - 1u;
+                }
+                else
+                {
+                    selected_dma_transfer = std::min(
+                        selected_dma_transfer,
+                        dma_inspection.record_count - 1u
+                    );
+                }
             }
 
             SDL_Event event{};
@@ -1079,6 +1144,7 @@ namespace clover::platform
                         graphics_view = false;
                         tile_map_view = false;
                         object_view = false;
+                        dma_view = false;
                     }
                     status = output_view
                         ? "Live game output"
@@ -1199,6 +1265,7 @@ namespace clover::platform
                             graphics_view = false;
                             tile_map_view = false;
                             object_view = false;
+                            dma_view = false;
                         }
                         selected_color = 0u;
                         status = "Palette "
@@ -1262,6 +1329,7 @@ namespace clover::platform
                             palette_view = false;
                             tile_map_view = false;
                             object_view = false;
+                            dma_view = false;
                         }
                         selected_tile = 0u;
                         selected_pixel_x = 0u;
@@ -1296,6 +1364,7 @@ namespace clover::platform
                             palette_view = false;
                             graphics_view = false;
                             object_view = false;
+                            dma_view = false;
                         }
                         selected_map_x = 0u;
                         selected_map_y = 0u;
@@ -1319,12 +1388,45 @@ namespace clover::platform
                         palette_view = false;
                         graphics_view = false;
                         tile_map_view = false;
+                        dma_view = false;
                         selected_object = 0u;
                         status = "Live OAM objects";
                     }
                     else
                     {
                         status = "Disassembly view";
+                    }
+                }
+                else if (event.key.scancode == SDL_SCANCODE_I)
+                {
+                    if ((event.key.mod & SDL_KMOD_SHIFT) != 0)
+                    {
+                        core->clear_dma_transfers();
+                        dma_inspection = {};
+                        selected_dma_transfer = 0u;
+                        status = "Cleared DMA transfer history";
+                    }
+                    else
+                    {
+                        dma_view = !dma_view;
+                        if (dma_view)
+                        {
+                            output_view = false;
+                            palette_view = false;
+                            graphics_view = false;
+                            tile_map_view = false;
+                            object_view = false;
+                            dma_inspection = core->inspect_dma_transfers(
+                                dma_transfers
+                            );
+                            selected_dma_transfer = dma_inspection.record_count
+                                == 0u ? 0u : dma_inspection.record_count - 1u;
+                            status = "DMA transfer history";
+                        }
+                        else
+                        {
+                            status = "Disassembly view";
+                        }
                     }
                 }
                 else if (event.key.scancode == SDL_SCANCODE_F
@@ -1565,6 +1667,19 @@ namespace clover::platform
                         selected_object + 16u
                     );
                 }
+                else if (dma_view
+                         && event.key.scancode == SDL_SCANCODE_UP
+                         && selected_dma_transfer > 0u)
+                {
+                    --selected_dma_transfer;
+                }
+                else if (dma_view
+                         && event.key.scancode == SDL_SCANCODE_DOWN
+                         && selected_dma_transfer + 1u
+                            < dma_inspection.record_count)
+                {
+                    ++selected_dma_transfer;
+                }
                 else if (graphics_view
                          && event.key.scancode == SDL_SCANCODE_LEFT)
                 {
@@ -1640,12 +1755,12 @@ namespace clover::platform
                     );
                 }
                 else if (!palette_view && !graphics_view && !tile_map_view
-                         && !object_view
+                         && !object_view && !dma_view
                          && event.key.scancode == SDL_SCANCODE_UP
                          && selected > 0u)
                     --selected;
                 else if (!palette_view && !graphics_view && !tile_map_view
-                         && !object_view
+                         && !object_view && !dma_view
                          && event.key.scancode == SDL_SCANCODE_DOWN
                          && selected + 1u < listing.instructions.size())
                     ++selected;
@@ -1653,6 +1768,26 @@ namespace clover::platform
                     navigate((listing_address - 0x40u) & 0x00ffffffu);
                 else if (event.key.scancode == SDL_SCANCODE_PAGEDOWN)
                     navigate(listing.next_address);
+                else if (event.key.scancode == SDL_SCANCODE_RETURN
+                         && dma_view
+                         && selected_dma_transfer < dma_inspection.record_count)
+                {
+                    const frontend::dma_transfer_record_t& transfer{
+                        dma_transfers[selected_dma_transfer]
+                    };
+                    const bool follow_source{
+                        (event.key.mod & SDL_KMOD_SHIFT) != 0
+                    };
+                    navigate(
+                        follow_source
+                            ? transfer.first_a_bus_address
+                            : transfer.initiator_address
+                    );
+                    dma_view = false;
+                    status = follow_source
+                        ? "Followed DMA source"
+                        : "Followed DMA initiator";
+                }
                 else if (event.key.scancode == SDL_SCANCODE_RETURN
                          && !listing.instructions.empty())
                 {
@@ -2018,7 +2153,6 @@ namespace clover::platform
             draw_panel(sdl.renderer, center, 18, 22, 30);
             draw_panel(sdl.renderer, right, 20, 25, 34);
 
-            static_cast<void>(SDL_SetRenderDrawColor(sdl.renderer, 207, 220, 240, 255));
             draw_text(sdl.renderer, 12.f, 12.f, "CLOVER WORKBENCH  |  Persistent SNES analysis project");
             draw_text(sdl.renderer, left.x + 10.f, 48.f, "PROJECT FACTS");
             draw_text(
@@ -2101,6 +2235,9 @@ namespace clover::platform
                 displayed_bg_frame{};
             std::optional<frontend::object_layer_state_t> displayed_object_layer{};
             std::optional<analysis::decoded_snes_oam_t> displayed_oam{};
+            const frontend::dma_transfer_record_t* displayed_dma_transfer{
+                nullptr
+            };
             if (output_view)
             {
                 draw_text(
@@ -2175,6 +2312,107 @@ namespace clover::platform
                         76.f,
                         "Game output is unavailable"
                     );
+                }
+            }
+            else if (dma_view)
+            {
+                draw_text(
+                    sdl.renderer,
+                    center.x + 10.f,
+                    48.f,
+                    "DMA / HDMA TRANSFERS  "
+                        + std::to_string(dma_inspection.record_count)
+                        + (dma_inspection.records_dropped == 0u
+                            ? std::string{}
+                            : "  (" + std::to_string(
+                                dma_inspection.records_dropped
+                            ) + " older dropped)")
+                );
+                if (dma_inspection.record_count == 0u)
+                {
+                    draw_text(
+                        sdl.renderer,
+                        center.x + 10.f,
+                        76.f,
+                        "No DMA transfers captured yet; run the ROM"
+                    );
+                }
+                else
+                {
+                    selected_dma_transfer = std::min(
+                        selected_dma_transfer,
+                        dma_inspection.record_count - 1u
+                    );
+                    displayed_dma_transfer =
+                        &dma_transfers[selected_dma_transfer];
+                    const size_t visible_rows{ std::max<size_t>(
+                        1u,
+                        static_cast<size_t>((center.h - 70.f) / 18.f)
+                    ) };
+                    const size_t first_row{
+                        selected_dma_transfer >= visible_rows
+                            ? selected_dma_transfer - visible_rows + 1u
+                            : 0u
+                    };
+                    const size_t last_row{ std::min(
+                        dma_inspection.record_count,
+                        first_row + visible_rows
+                    ) };
+                    float row_y{ 74.f };
+                    for (size_t index{ first_row }; index < last_row; ++index)
+                    {
+                        const frontend::dma_transfer_record_t& transfer{
+                            dma_transfers[index]
+                        };
+                        if (index == selected_dma_transfer)
+                        {
+                            static_cast<void>(SDL_SetRenderDrawColor(
+                                sdl.renderer, 50u, 84u, 128u, 255u
+                            ));
+                            const SDL_FRect highlight{
+                                center.x + 6.f,
+                                row_y - 2.f,
+                                center.w - 12.f,
+                                18.f
+                            };
+                            static_cast<void>(SDL_RenderFillRect(
+                                sdl.renderer, &highlight
+                            ));
+                        }
+
+                        std::ostringstream row{};
+                        row << (index == selected_dma_transfer ? "> " : "  ")
+                            << '#' << transfer.sequence << ' '
+                            << (transfer.kind
+                                    == frontend::dma_transfer_kind_t::general
+                                ? "MDMA"
+                                : "HDMA")
+                            << " C" << static_cast<unsigned>(transfer.channel)
+                            << ' ' << std::dec << transfer.byte_count << " B  "
+                            << formatted_address(transfer.first_a_bus_address);
+                        if (transfer.last_a_bus_address
+                            != transfer.first_a_bus_address)
+                        {
+                            row << '-' << formatted_address(
+                                transfer.last_a_bus_address
+                            );
+                        }
+                        row << (transfer.direction_to_b_bus ? " -> " : " <- ")
+                            << formatted_b_bus_targets(
+                                transfer.b_bus_base,
+                                transfer.b_bus_offset_mask
+                            )
+                            << "  F" << std::dec << transfer.frame_index
+                            << ' ' << transfer.first_scanline
+                            << ':' << transfer.first_dot;
+                        draw_text(
+                            sdl.renderer,
+                            center.x + 10.f,
+                            row_y,
+                            row.str()
+                        );
+                        row_y += 18.f;
+                    }
                 }
             }
             else if (tile_map_view
@@ -3733,8 +3971,124 @@ namespace clover::platform
                 );
                 inspector_y += 18.f;
             }
+            if (displayed_dma_transfer != nullptr)
+            {
+                const frontend::dma_transfer_record_t& transfer{
+                    *displayed_dma_transfer
+                };
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    std::string{
+                        transfer.kind == frontend::dma_transfer_kind_t::general
+                            ? "General DMA"
+                            : "Horizontal-blank DMA"
+                    } + "  Channel " + std::to_string(transfer.channel)
+                );
+                inspector_y += 18.f;
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    "Initiator: " + formatted_address(
+                        transfer.initiator_address
+                    )
+                );
+                inspector_y += 18.f;
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    "A-bus: " + formatted_address(
+                        transfer.first_a_bus_address
+                    ) + (transfer.last_a_bus_address
+                            == transfer.first_a_bus_address
+                        ? std::string{}
+                        : " - " + formatted_address(
+                            transfer.last_a_bus_address
+                        ))
+                );
+                inspector_y += 18.f;
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    "B-bus: " + formatted_b_bus_targets(
+                        transfer.b_bus_base,
+                        transfer.b_bus_offset_mask
+                    ) + (transfer.direction_to_b_bus
+                        ? " destination"
+                        : " source")
+                );
+                inspector_y += 18.f;
+                std::ostringstream transfer_size{};
+                transfer_size << "Bytes: " << std::dec << transfer.byte_count
+                              << "  Mask: $" << std::uppercase << std::hex
+                              << std::setfill('0') << std::setw(2)
+                              << static_cast<unsigned>(transfer.channel_mask);
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    transfer_size.str()
+                );
+                inspector_y += 18.f;
+                std::ostringstream transfer_values{};
+                transfer_values << "Mode " << std::dec
+                                << static_cast<unsigned>(
+                                    transfer.control & 0x07u
+                                )
+                                << (transfer.direction_to_b_bus
+                                    ? "  A->B  $"
+                                    : "  B->A  $")
+                                << std::uppercase << std::hex
+                                << std::setfill('0') << std::setw(2)
+                                << static_cast<unsigned>(transfer.first_value);
+                if (transfer.byte_count > 1u)
+                {
+                    transfer_values << "..$" << std::setw(2)
+                                    << static_cast<unsigned>(
+                                        transfer.last_value
+                                    );
+                }
+                transfer_values << (transfer.b_bus_access_valid
+                    ? "  valid"
+                    : "  INVALID");
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    transfer_values.str()
+                );
+                inspector_y += 18.f;
+                std::ostringstream transfer_timing{};
+                transfer_timing << "F" << transfer.frame_index << "  "
+                                << transfer.first_scanline << ':'
+                                << transfer.first_dot;
+                if (transfer.last_scanline != transfer.first_scanline
+                    || transfer.last_dot != transfer.first_dot)
+                {
+                    transfer_timing << " - " << transfer.last_scanline
+                                    << ':' << transfer.last_dot;
+                }
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    transfer_timing.str()
+                );
+                inspector_y += 18.f;
+                draw_text(
+                    sdl.renderer,
+                    right.x + 10.f,
+                    inspector_y,
+                    "ENTER initiator; SHIFT+ENTER source"
+                );
+                inspector_y += 18.f;
+            }
             if (!palette_view && !graphics_view && !tile_map_view
-                && !object_view)
+                && !object_view && !dma_view)
             {
                 if (const auto* label{ fact_at(labels, current) };
                     label != nullptr)
@@ -4047,12 +4401,13 @@ namespace clover::platform
             draw_text(sdl.renderer, right.x + 10.f, inspector_y + 96.f, "R        rendered / backing map");
             draw_text(sdl.renderer, right.x + 10.f, inspector_y + 112.f, "H / SHIFT+H map / close; F full");
             draw_text(sdl.renderer, right.x + 10.f, inspector_y + 128.f, "O        live OAM / close");
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 144.f, "Y / SHIFT+Y byte / string");
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 160.f, "J / P    typed object / pointer");
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 176.f, "A        analyze / publish");
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 192.f, "N / K    function / conflict");
-            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 208.f, "X / SHIFT+X xref out / in");
-            inspector_y += 224.f;
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 144.f, "I / SHIFT+I DMA / clear");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 160.f, "Y / SHIFT+Y byte / string");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 176.f, "J / P    typed object / pointer");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 192.f, "A        analyze / publish");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 208.f, "N / K    function / conflict");
+            draw_text(sdl.renderer, right.x + 10.f, inspector_y + 224.f, "X / SHIFT+X xref out / in");
+            inspector_y += 240.f;
             draw_text(sdl.renderer, right.x + 10.f, inspector_y, "TAB / F5 output / fast run");
             draw_text(sdl.renderer, right.x + 10.f, inspector_y + 16.f, "F9       breakpoint");
             draw_text(sdl.renderer, right.x + 10.f, inspector_y + 32.f, "F10      step over");
@@ -4067,7 +4422,6 @@ namespace clover::platform
             draw_text(sdl.renderer, right.x + 10.f, inspector_y + 192.f, "C / D    code / data");
             draw_text(sdl.renderer, right.x + 10.f, inspector_y + 208.f, "ALT+LEFT/RIGHT history");
 
-            static_cast<void>(SDL_SetRenderDrawColor(sdl.renderer, 159, 176, 202, 255));
             const std::string footer{
                 edit_kind == edit_kind_t::none
                     ? status
@@ -4078,7 +4432,15 @@ namespace clover::platform
                             : "Watch address: "))
                         + edit_buffer + "_"
             };
-            draw_text(sdl.renderer, 12.f, height - 26.f, footer);
+            draw_text(
+                sdl.renderer,
+                12.f,
+                height - 26.f,
+                footer,
+                159u,
+                176u,
+                202u
+            );
             static_cast<void>(SDL_RenderPresent(sdl.renderer));
             SDL_Delay(
                 debugger.run_state()

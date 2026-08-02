@@ -356,6 +356,66 @@ namespace clover::frontend
         return true;
     }
 
+    dma_transfer_inspection_result_t snes_emulator_core_t::inspect_dma_transfers(
+        std::span<dma_transfer_record_t> destination
+    ) const noexcept
+    {
+#if defined(CLOVER_WORKBENCH_DMA_PROVENANCE)
+        std::array<core::dma_provenance_record_t, 512u> records{};
+        const core::dma_provenance_snapshot_t snapshot{
+            _console.copy_dma_provenance_records(records)
+        };
+        const size_t count{ std::min(destination.size(), snapshot.record_count) };
+        const size_t source_start{ snapshot.record_count - count };
+        for (size_t index{}; index < count; ++index)
+        {
+            const core::dma_provenance_record_t& source{
+                records[source_start + index]
+            };
+            destination[index] = {
+                .sequence = source.sequence,
+                .first_master_clock = source.first_master_clock,
+                .last_master_clock = source.last_master_clock,
+                .frame_index = source.frame_index,
+                .initiator_address = source.initiator_address,
+                .first_a_bus_address = source.first_a_bus_address,
+                .last_a_bus_address = source.last_a_bus_address,
+                .byte_count = source.byte_count,
+                .first_scanline = source.first_timing.raster.scanline,
+                .first_dot = source.first_timing.raster.dot,
+                .last_scanline = source.last_timing.raster.scanline,
+                .last_dot = source.last_timing.raster.dot,
+                .channel = source.channel,
+                .channel_mask = source.channel_mask,
+                .control = source.control,
+                .b_bus_base = source.b_bus_base,
+                .b_bus_offset_mask = source.b_bus_offset_mask,
+                .first_value = source.first_value,
+                .last_value = source.last_value,
+                .kind = source.activity == core::dma_activity_t::general_dma
+                    ? dma_transfer_kind_t::general
+                    : dma_transfer_kind_t::horizontal_blank,
+                .direction_to_b_bus = source.direction_to_b_bus,
+                .b_bus_access_valid = source.b_bus_access_valid
+            };
+        }
+        return {
+            .record_count = count,
+            .records_dropped = snapshot.records_dropped
+        };
+#else
+        static_cast<void>(destination);
+        return {};
+#endif
+    }
+
+    void snes_emulator_core_t::clear_dma_transfers() noexcept
+    {
+#if defined(CLOVER_WORKBENCH_DMA_PROVENANCE)
+        _console.clear_dma_provenance_records();
+#endif
+    }
+
     std::span<const execution_domain_descriptor_t>
         snes_emulator_core_t::execution_domains() const noexcept
     {

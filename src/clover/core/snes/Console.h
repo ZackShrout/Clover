@@ -128,6 +128,12 @@ namespace clover::core
             uint64_t& frame_index
         ) const noexcept;
 #endif
+#if defined(CLOVER_WORKBENCH_DMA_PROVENANCE)
+        [[nodiscard]] dma_provenance_snapshot_t copy_dma_provenance_records(
+            std::span<dma_provenance_record_t> destination
+        ) const noexcept;
+        void clear_dma_provenance_records() noexcept;
+#endif
         [[nodiscard]] std::size_t ppu_cgram_write_trace_count() const noexcept;
         [[nodiscard]] const std::array<ppu_cgram_write_trace_t, ppu_cgram_write_trace_capacity>&
             ppu_cgram_write_trace() const noexcept;

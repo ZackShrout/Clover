@@ -9,6 +9,7 @@
 
 #include <array>
 #include <cstdint>
+#include <span>
 
 namespace clover::core
 {
@@ -91,6 +92,46 @@ namespace clover::core
         [[nodiscard]] bool operator==(const dma_causal_state_t&) const noexcept = default;
     };
 
+#if defined(CLOVER_WORKBENCH_DMA_PROVENANCE)
+    struct dma_provenance_initiator_t
+    {
+        uint32_t instruction_address{ 0 };
+        uint64_t frame_index{ 0 };
+        timing_snapshot_t timing{};
+        uint8_t channel_mask{ 0 };
+    };
+
+    struct dma_provenance_record_t
+    {
+        uint64_t sequence{ 0 };
+        master_clock_count_t first_master_clock{ 0 };
+        master_clock_count_t last_master_clock{ 0 };
+        uint64_t frame_index{ 0 };
+        timing_snapshot_t first_timing{};
+        timing_snapshot_t last_timing{};
+        uint32_t initiator_address{ 0 };
+        uint32_t first_a_bus_address{ 0 };
+        uint32_t last_a_bus_address{ 0 };
+        uint32_t byte_count{ 0 };
+        uint8_t channel{ 0 };
+        uint8_t channel_mask{ 0 };
+        uint8_t control{ 0 };
+        uint8_t b_bus_base{ 0 };
+        uint8_t b_bus_offset_mask{ 0 };
+        uint8_t first_value{ 0 };
+        uint8_t last_value{ 0 };
+        dma_activity_t activity{ dma_activity_t::idle };
+        bool direction_to_b_bus{ true };
+        bool b_bus_access_valid{ true };
+    };
+
+    struct dma_provenance_snapshot_t
+    {
+        size_t record_count{ 0 };
+        uint64_t records_dropped{ 0 };
+    };
+#endif
+
     struct dma_t
     {
     public:
@@ -109,6 +150,17 @@ namespace clover::core
         [[nodiscard]] dma_activity_t activity() const noexcept;
         [[nodiscard]] dma_causal_state_t capture_causal_state() const noexcept;
         [[nodiscard]] bool restore_causal_state(const dma_causal_state_t& state) noexcept;
+#if defined(CLOVER_WORKBENCH_DMA_PROVENANCE)
+        void record_control_write(uint16_t address,
+                                  uint8_t value,
+                                  uint32_t instruction_address,
+                                  uint64_t frame_index,
+                                  timing_snapshot_t timing) noexcept;
+        [[nodiscard]] dma_provenance_snapshot_t copy_provenance_records(
+            std::span<dma_provenance_record_t> destination
+        ) const noexcept;
+        void clear_provenance_records() noexcept;
+#endif
 
     private:
         [[nodiscard]] static uint8_t first_channel_index(uint8_t channel_mask) noexcept;
@@ -128,10 +180,23 @@ namespace clover::core
         static void write_a_bus(bus_t& bus, uint32_t address, uint8_t value) noexcept;
         [[nodiscard]] static uint8_t read_b_bus(bus_t& bus, uint8_t address, bool valid) noexcept;
         static void write_b_bus(bus_t& bus, uint8_t address, uint8_t value, bool valid) noexcept;
+#if defined(CLOVER_WORKBENCH_DMA_PROVENANCE)
+        void transfer_byte(bus_t& bus,
+                           dma_channel_t& channel,
+                           uint32_t source_address,
+                           uint8_t transfer_index) noexcept;
+        void record_transfer_byte(bus_t& bus,
+                                  const dma_channel_t& channel,
+                                  uint32_t source_address,
+                                  uint8_t target_address,
+                                  uint8_t value,
+                                  bool valid_b_access) noexcept;
+#else
         static void transfer_byte(bus_t& bus,
                                   dma_channel_t& channel,
                                   uint32_t source_address,
                                   uint8_t transfer_index) noexcept;
+#endif
         [[nodiscard]] uint32_t current_general_dma_transfer_count(const dma_channel_t& channel) const noexcept;
         [[nodiscard]] master_clock_delta_t run_general_dma(bus_t& bus, dma_channel_t& channel) noexcept;
         [[nodiscard]] master_clock_delta_t run_hdma_setup(bus_t& bus, dma_channel_t& channel) noexcept;
@@ -168,5 +233,18 @@ namespace clover::core
         bool _suspended_general_dma_batch_started{ false };
         uint32_t _suspended_general_dma_units_remaining{ 0 };
         uint8_t _suspended_general_dma_transfer_index{ 0 };
+#if defined(CLOVER_WORKBENCH_DMA_PROVENANCE)
+        static constexpr size_t k_provenance_capacity{ 512u };
+        std::array<dma_provenance_record_t, k_provenance_capacity>
+            _provenance_records{};
+        dma_provenance_initiator_t _general_dma_initiator{};
+        dma_provenance_initiator_t _hdma_initiator{};
+        size_t _provenance_start{ 0 };
+        size_t _provenance_count{ 0 };
+        size_t _open_provenance_index{ 0 };
+        uint64_t _next_provenance_sequence{ 1 };
+        uint64_t _provenance_dropped{ 0 };
+        bool _provenance_open{ false };
+#endif
     };
 }

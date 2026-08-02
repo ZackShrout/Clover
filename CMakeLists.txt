@@ -140,6 +140,7 @@ add_library(clover_core_workbench STATIC ${CLOVER_CORE_SOURCES})
 target_include_directories(clover_core_workbench PUBLIC src)
 target_compile_definitions(clover_core_workbench PUBLIC
     CLOVER_WORKBENCH_PPU_LAYER_CAPTURE=1
+    CLOVER_WORKBENCH_DMA_PROVENANCE=1
 )
 
 add_library(clover_media_identity STATIC
@@ -619,6 +620,19 @@ add_executable(clover_workbench_layer_frame_integration_test
     src/clover/frontend/EmulatorCore.cpp
     src/clover/frontend/SnesEmulatorCore.cpp
 )
+
+add_executable(clover_workbench_dma_provenance_integration_test
+    tests/WorkbenchDmaProvenanceIntegrationTest.cpp
+    src/clover/frontend/EmulatorCore.cpp
+    src/clover/frontend/SnesEmulatorCore.cpp
+)
+target_include_directories(
+    clover_workbench_dma_provenance_integration_test PRIVATE src
+)
+target_link_libraries(clover_workbench_dma_provenance_integration_test PRIVATE
+    clover_core_workbench
+    clover_snes_checkpoint_workbench
+)
 target_include_directories(
     clover_workbench_layer_frame_integration_test PRIVATE src
 )
@@ -665,6 +679,7 @@ if(MSVC)
         clover_workbench_tile_map_integration_test
         clover_workbench_oam_integration_test
         clover_workbench_layer_frame_integration_test
+        clover_workbench_dma_provenance_integration_test
     )
     if(TARGET clover_rom_library_test)
         list(APPEND CLOVER_TEST_TARGETS clover_rom_library_test)
@@ -719,6 +734,10 @@ add_test(
 add_test(
     NAME clover_workbench_layer_frame_integration_test
     COMMAND clover_workbench_layer_frame_integration_test
+)
+add_test(
+    NAME clover_workbench_dma_provenance_integration_test
+    COMMAND clover_workbench_dma_provenance_integration_test
 )
 if(CLOVER_BUILD_SDL_FRONTEND)
     add_test(NAME clover_rom_library_test COMMAND clover_rom_library_test)

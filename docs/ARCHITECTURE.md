@@ -178,6 +178,17 @@ snapshot; the analysis module independently decodes entries and resolves OBJ
 tile addresses. The UI assembles selected sprites through the existing VRAM
 tile and CGRAM palette readers and never receives a PPU implementation object.
 
+DMA provenance is another Workbench-only observation boundary. A compile-time
+definition on `clover_core_workbench` adds a fixed-capacity transfer ring to
+the DMA engine. CPU writes to `$420B/$420C` are associated with the currently
+dispatching instruction through the existing bus observation point, and the
+DMA byte-transfer boundary records the A-bus address, B-bus target, value,
+channel, mode, direction, frame, and raster time that the core actually used.
+MDMA bytes are coalesced into transfer records; HDMA remains separated by
+scanline. The frontend copies these system facts into system-neutral records
+for the Workbench UI. The ordinary `clover_core` compilation excludes the
+types, storage, calls, and capture code entirely.
+
 The project schema publishes a complete program model as one analysis
 generation transaction. A candidate is built outside SQLite; the prior
 generation remains current and readable until every new row and constraint

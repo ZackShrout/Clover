@@ -67,6 +67,10 @@ namespace clover::frontend
         [[nodiscard]] bool inspect_object_layer(
             object_layer_state_t& destination
         ) const noexcept override;
+        [[nodiscard]] dma_transfer_inspection_result_t inspect_dma_transfers(
+            std::span<dma_transfer_record_t> destination
+        ) const noexcept override;
+        void clear_dma_transfers() noexcept override;
         [[nodiscard]] std::span<const execution_domain_descriptor_t>
             execution_domains() const noexcept override;
         [[nodiscard]] std::span<const address_space_descriptor_t>
